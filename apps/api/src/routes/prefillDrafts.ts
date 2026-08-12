@@ -9,6 +9,8 @@ import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { shortenUrl } from "../lib/shortLinks";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
+import { sendClientEmail } from "../lib/clientEmail";
+import { renderClientEmailHtml } from "../lib/emailTemplate";
 import { resolveIntakeForm } from "../lib/intakeForms";
 
 const router = Router();
@@ -20,10 +22,14 @@ const PREFILL_TOKEN_TTL_DAYS = 7;
 // confirm the extracted fields.
 router.post("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const { studioId, userId } = req.user!;
-  const { payload, conversationId, clientId, formSlug } = req.body ?? {};
+  const { payload, conversationId, clientId, formSlug, channel } = req.body ?? {};
 
   if (formSlug !== undefined && formSlug !== null && typeof formSlug !== "string") {
     return res.status(400).json({ error: "formSlug must be a string" });
+  }
+
+  if (channel !== undefined && channel !== "SMS" && channel !== "EMAIL") {
+    return res.status(400).json({ error: "channel must be SMS or EMAIL" });
   }
 
   const sanitized = sanitizePrefillPayload(payload);
@@ -106,15 +112,39 @@ router.post("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (r
   // prefilled link", the one caller that isn't already headed for a
   // composer Send). Best-effort, same as the other auto-sends in this
   // package.
-  let prefillSendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
+  let prefillSendResult:
+    | Awaited<ReturnType<typeof sendClientSms>>
+    | Awaited<ReturnType<typeof sendClientEmail>>
+    | null = null;
   if (client) {
-    prefillSendResult = await sendClientSms({
-      studioId,
-      clientId,
-      conversationId: (await getOrCreateClientConversation(studioId, clientId, userId)).conversation.id,
-      body: `Hi ${client.firstName}, here's a link to start a new inquiry with ${studio?.name ?? "our studio"} -- your info's already filled in: ${prefillUrl}`,
-      actorUserId: userId,
-    });
+    const prefillConversationId = (await getOrCreateClientConversation(studioId, clientId, userId)).conversation.id;
+    const prefillMessage = `Hi ${client.firstName}, here's a link to start a new inquiry with ${studio?.name ?? "our studio"} -- your info's already filled in: ${prefillUrl}`;
+    prefillSendResult =
+      channel === "EMAIL"
+        ? await sendClientEmail({
+            studioId,
+            clientId,
+            conversationId: prefillConversationId,
+            subject: `Start your inquiry -- ${studio?.name ?? "our studio"}`,
+            bodyText: prefillMessage,
+            bodyHtml: renderClientEmailHtml({
+              studioName: studio?.name ?? "Your studio",
+              heading: "Start your inquiry",
+              bodyParagraphs: [`Hi ${client.firstName}, here's a link to start a new inquiry -- your info's already filled in.`],
+              buttonText: "Start inquiry",
+              buttonUrl: prefillUrl,
+            }),
+            actorUserId: userId,
+            logAttemptEvenOnFailure: true,
+          })
+        : await sendClientSms({
+            studioId,
+            clientId,
+            conversationId: prefillConversationId,
+            body: prefillMessage,
+            actorUserId: userId,
+            logAttemptEvenOnFailure: true,
+          });
   }
 
   res.status(201).json({

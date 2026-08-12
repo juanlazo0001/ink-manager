@@ -35,6 +35,7 @@ import EstimateFieldsEditor, {
 import { apiFetch, ApiError, downloadFile } from '../lib/api'
 import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describeInquiryStatus, formatPriceEstimate } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
+import SendChannelButton, { type SendChannel } from '../components/SendChannelButton'
 import {
   AppointmentsIcon,
   ArrowLeftIcon,
@@ -353,29 +354,6 @@ interface DeletePreview {
 
 const DELETE_CONFIRM_TEXT = 'DELETE'
 
-// Mirrors clientSms.ts's SendClientSmsResult -- send-estimate auto-sends
-// through that same real path now, so the same skip reasons apply. The
-// estimate itself is always generated regardless of this outcome (see the
-// route's own comment), so a skip/failure here is informational, not an
-// error the user needs to retry past -- the link is still on-screen to
-// share manually either way.
-function describeEstimateSendResult(
-  result:
-    | { sent: true }
-    | { sent: false; reason: 'not_connected' | 'no_phone' | 'opted_out' | 'send_failed'; error?: string },
-): string {
-  if (result.sent) return 'Estimate sent to the client via text — check Conversations.'
-  switch (result.reason) {
-    case 'not_connected':
-      return 'Estimate generated, but SMS isn\'t connected for this studio — share the link below manually.'
-    case 'no_phone':
-      return 'Estimate generated, but this client has no phone on file — share the link below manually.'
-    case 'opted_out':
-      return 'Estimate generated, but this client has opted out of texts — share the link below manually.'
-    default:
-      return 'Estimate generated, but the text failed to send — share the link below manually.'
-  }
-}
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
@@ -1131,7 +1109,7 @@ export default function InquiryDetail() {
     }
   }
 
-  async function handleSendEstimate() {
+  async function handleSendEstimate(channel: SendChannel = 'SMS') {
     if (!id) return
 
     if (estimateValidationError) {
@@ -1144,19 +1122,16 @@ export default function InquiryDetail() {
     setEstimateSendNotice(null)
 
     try {
-      const result = await apiFetch<{
-        estimateSendResult:
-          | { sent: true }
-          | { sent: false; reason: 'not_connected' | 'no_phone' | 'opted_out' | 'send_failed'; error?: string }
-      }>(`/inquiries/${id}/send-estimate`, {
+      const result = await apiFetch<{ estimateSendResult: ClientSendResult }>(`/inquiries/${id}/send-estimate`, {
         method: 'POST',
         body: JSON.stringify({
           ...estimateDraftToRequestFields(estimateDraft),
           sessions: estimateDraftToSessionsPayload(estimateDraft, (inquiry?.plannedSessions.length ?? 0) > 0),
+          channel,
         }),
       })
 
-      setEstimateSendNotice(describeEstimateSendResult(result.estimateSendResult))
+      setEstimateSendNotice(describeSendResult('Estimate', result.estimateSendResult, channel))
       setEditingEstimate(false)
       invalidateInquiry()
     } catch (err) {
@@ -1178,7 +1153,7 @@ export default function InquiryDetail() {
     setShowReviseEstimateModal(true)
   }
 
-  async function handleReviseEstimate() {
+  async function handleReviseEstimate(channel: SendChannel = 'SMS') {
     if (!id) return
 
     if (reviseEstimateValidationError) {
@@ -1190,11 +1165,7 @@ export default function InquiryDetail() {
     setReviseEstimateError(null)
 
     try {
-      const result = await apiFetch<{
-        revisionSendResult:
-          | { sent: true }
-          | { sent: false; reason: 'not_connected' | 'no_phone' | 'opted_out' | 'send_failed'; error?: string }
-      }>(`/inquiries/${id}/revise-estimate`, {
+      const result = await apiFetch<{ revisionSendResult: ClientSendResult }>(`/inquiries/${id}/revise-estimate`, {
         method: 'POST',
         body: JSON.stringify({
           ...estimateDraftToRequestFields(reviseEstimateDraft),
@@ -1204,10 +1175,11 @@ export default function InquiryDetail() {
             reviseLockedSessions,
           ),
           reason: reviseReasonInput.trim(),
+          channel,
         }),
       })
 
-      setRevisionSendNotice(describeEstimateSendResult(result.revisionSendResult))
+      setRevisionSendNotice(describeSendResult('Revised estimate', result.revisionSendResult, channel))
       setShowReviseEstimateModal(false)
       invalidateInquiry()
     } catch (err) {
@@ -2633,18 +2605,12 @@ export default function InquiryDetail() {
                       {sendEstimateError && <p className="mt-3 text-sm text-danger">{sendEstimateError}</p>}
 
                       <div className="mt-3 flex flex-wrap gap-3">
-                        <button
-                          type="button"
-                          onClick={handleSendEstimate}
-                          disabled={sendingEstimate}
-                          className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                        >
-                          {sendingEstimate
-                            ? 'Sending…'
-                            : inquiry.estimateSentAt
-                              ? 'Generate & Resend Estimate'
-                              : 'Generate & Send Estimate'}
-                        </button>
+                        <SendChannelButton
+                          label={inquiry.estimateSentAt ? 'Generate & Resend Estimate' : 'Generate & Send Estimate'}
+                          client={{ phone: inquiry.client.phone, email: inquiry.client.email }}
+                          sending={sendingEstimate}
+                          onSend={(channel) => handleSendEstimate(channel)}
+                        />
                         {inquiry.estimateSentAt && (
                           <button
                             type="button"
@@ -4230,14 +4196,13 @@ export default function InquiryDetail() {
                     {reviseEstimateError && <p className="text-sm text-danger">{reviseEstimateError}</p>}
 
                     <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={handleReviseEstimate}
-                        disabled={revisingEstimate}
-                        className="flex-1 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {revisingEstimate ? 'Sending…' : 'Revise & Send for Approval'}
-                      </button>
+                      <SendChannelButton
+                        label="Revise & Send for Approval"
+                        client={{ phone: inquiry.client.phone, email: inquiry.client.email }}
+                        sending={revisingEstimate}
+                        onSend={(channel) => handleReviseEstimate(channel)}
+                        className="flex flex-1 items-center justify-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+                      />
                       <button
                         type="button"
                         onClick={() => setShowReviseEstimateModal(false)}

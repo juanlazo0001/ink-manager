@@ -6,6 +6,8 @@ import { dollarsToCents } from "./money";
 import { computeGiftCardExpiration, generateUniqueGiftCardCode } from "./giftCards";
 import { getOrCreateClientConversation } from "./conversations";
 import { sendClientSms } from "./clientSms";
+import { sendClientEmail } from "./clientEmail";
+import { renderClientEmailHtml } from "./emailTemplate";
 import { shortenUrl } from "./shortLinks";
 import { PUBLIC_APP_URL } from "./publicUrl";
 import { getChargeableConnectedAccountId } from "./stripeConnect";
@@ -43,6 +45,10 @@ export interface GenerateAndSendDepositFormOptions {
   // in that the former falls back to the studio's own configured
   // default) falls back to StudioSettings.defaultDepositAmountMode.
   amountMode?: DepositAmountMode;
+  // Send-channel picker: which channel this send should use. Defaults to
+  // SMS so every existing caller (none of which pass this yet) is
+  // unaffected.
+  channel?: "SMS" | "EMAIL";
 }
 
 export type GenerateAndSendDepositFormResult =
@@ -50,7 +56,7 @@ export type GenerateAndSendDepositFormResult =
       ok: true;
       depositForm: Awaited<ReturnType<typeof prisma.depositForm.create>>;
       depositUrl: string;
-      depositSendResult: Awaited<ReturnType<typeof sendClientSms>> | null;
+      depositSendResult: Awaited<ReturnType<typeof sendClientSms>> | Awaited<ReturnType<typeof sendClientEmail>> | null;
     }
   | { ok: false; status: number; error: string };
 
@@ -68,7 +74,7 @@ export async function generateAndSendDepositForm(
   inquiryId: string,
   opts: GenerateAndSendDepositFormOptions,
 ): Promise<GenerateAndSendDepositFormResult> {
-  const { studioId, actorUserId, proposedStartAt, proposedEndAt, autoSend, plannedSessionId, amountMode } = opts;
+  const { studioId, actorUserId, proposedStartAt, proposedEndAt, autoSend, plannedSessionId, amountMode, channel } = opts;
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { id: inquiryId },
@@ -216,26 +222,51 @@ export async function generateAndSendDepositForm(
 
   const depositUrl = await shortenUrl(`${PUBLIC_APP_URL}/deposit/${token}`);
 
-  let depositSendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
+  let depositSendResult: Awaited<ReturnType<typeof sendClientSms>> | Awaited<ReturnType<typeof sendClientEmail>> | null =
+    null;
   if (autoSend !== false) {
     const studio = await prisma.studio.findUnique({ where: { id: studioId }, select: { name: true } });
-    depositSendResult = await sendClientSms({
-      studioId,
-      clientId: inquiry.clientId,
-      conversationId: (await getOrCreateClientConversation(studioId, inquiry.clientId, actorUserId)).conversation.id,
-      body: `Hi ${inquiry.client.firstName}, here's your deposit form to secure your appointment with ${studio?.name ?? "our studio"}: ${depositUrl} (expires in 48 hours)`,
-      actorUserId,
-      // Conversations-logging gap (REPORT.md: "Conversations logging on
-      // sent forms"): this is a one-shot, staff/system-initiated send
-      // (Approve, or the manual "Generate & Send" button), never a
-      // retried background job -- unlike reminderTicker.ts, there's no
-      // risk of this logging the same failed attempt over and over. The
-      // deposit form + its URL/token exist in the DB regardless of SMS
-      // outcome; Conversations should reflect that an attempt was made
-      // even when the channel itself failed or isn't connected, so staff
-      // aren't left thinking nothing happened.
-      logAttemptEvenOnFailure: true,
-    });
+    const conversationId = (await getOrCreateClientConversation(studioId, inquiry.clientId, actorUserId)).conversation.id;
+    // Conversations-logging gap (REPORT.md: "Conversations logging on
+    // sent forms"): this is a one-shot, staff/system-initiated send
+    // (Approve, or the manual "Generate & Send" button), never a
+    // retried background job -- unlike reminderTicker.ts, there's no
+    // risk of this logging the same failed attempt over and over. The
+    // deposit form + its URL/token exist in the DB regardless of send
+    // outcome; Conversations should reflect that an attempt was made
+    // even when the channel itself failed or isn't connected, so staff
+    // aren't left thinking nothing happened.
+    if (channel === "EMAIL") {
+      const heading = "Your deposit form is ready";
+      depositSendResult = await sendClientEmail({
+        studioId,
+        clientId: inquiry.clientId,
+        conversationId,
+        subject: `Deposit form -- ${studio?.name ?? "your studio"}`,
+        bodyText: `Hi ${inquiry.client.firstName}, here's your deposit form to secure your appointment with ${studio?.name ?? "our studio"}: ${depositUrl} (expires in 48 hours)`,
+        bodyHtml: renderClientEmailHtml({
+          studioName: studio?.name ?? "Your studio",
+          heading,
+          bodyParagraphs: [
+            `Hi ${inquiry.client.firstName}, here's your deposit form to secure your appointment.`,
+          ],
+          buttonText: "Pay deposit",
+          buttonUrl: depositUrl,
+          footnote: "This link expires in 48 hours.",
+        }),
+        actorUserId,
+        logAttemptEvenOnFailure: true,
+      });
+    } else {
+      depositSendResult = await sendClientSms({
+        studioId,
+        clientId: inquiry.clientId,
+        conversationId,
+        body: `Hi ${inquiry.client.firstName}, here's your deposit form to secure your appointment with ${studio?.name ?? "our studio"}: ${depositUrl} (expires in 48 hours)`,
+        actorUserId,
+        logAttemptEvenOnFailure: true,
+      });
+    }
   }
 
   // Real-time audit gap, found while extracting this function: the

@@ -4,6 +4,8 @@ import { InquiryStatus } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "./audit";
 import { getOrCreateClientConversation } from "./conversations";
 import { sendClientSms } from "./clientSms";
+import { sendClientEmail } from "./clientEmail";
+import { renderClientEmailHtml } from "./emailTemplate";
 import { shortenUrl } from "./shortLinks";
 import { PUBLIC_APP_URL } from "./publicUrl";
 import { emitInvalidation } from "./realtime/registry";
@@ -305,10 +307,17 @@ async function reconcilePlannedSessions(
 export interface GenerateAndSendEstimateOptions extends EstimateFieldsOptions {
   studioId: string;
   actorUserId: string;
+  // Send-channel picker: defaults to SMS so every existing caller (none of
+  // which pass this yet) is unaffected.
+  channel?: "SMS" | "EMAIL";
 }
 
 export type GenerateAndSendEstimateResult =
-  | { ok: true; estimateUrl: string; estimateSendResult: Awaited<ReturnType<typeof sendClientSms>> }
+  | {
+      ok: true;
+      estimateUrl: string;
+      estimateSendResult: Awaited<ReturnType<typeof sendClientSms>> | Awaited<ReturnType<typeof sendClientEmail>>;
+    }
   | { ok: false; status: number; error: string };
 
 // Extracted from POST /inquiries/:id/send-estimate so a second caller --
@@ -328,7 +337,7 @@ export async function generateAndSendEstimate(
   inquiryId: string,
   opts: GenerateAndSendEstimateOptions,
 ): Promise<GenerateAndSendEstimateResult> {
-  const { studioId, actorUserId, ...fields } = opts;
+  const { studioId, actorUserId, channel, ...fields } = opts;
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { id: inquiryId },
@@ -393,13 +402,33 @@ export async function generateAndSendEstimate(
   const estimateUrl = await shortenUrl(`${PUBLIC_APP_URL}/estimate/${estimateToken}`);
 
   const studio = await prisma.studio.findUnique({ where: { id: studioId }, select: { name: true } });
-  const estimateSendResult = await sendClientSms({
-    studioId,
-    clientId: updated.clientId,
-    conversationId: (await getOrCreateClientConversation(studioId, updated.clientId, actorUserId)).conversation.id,
-    body: `Hi ${inquiry.client.firstName}, here's your tattoo estimate from ${studio?.name ?? "our studio"}: ${estimateUrl}`,
-    actorUserId,
-  });
+  const conversationId = (await getOrCreateClientConversation(studioId, updated.clientId, actorUserId)).conversation.id;
+  const estimateSendResult =
+    channel === "EMAIL"
+      ? await sendClientEmail({
+          studioId,
+          clientId: updated.clientId,
+          conversationId,
+          subject: `Your tattoo estimate -- ${studio?.name ?? "our studio"}`,
+          bodyText: `Hi ${inquiry.client.firstName}, here's your tattoo estimate from ${studio?.name ?? "our studio"}: ${estimateUrl}`,
+          bodyHtml: renderClientEmailHtml({
+            studioName: studio?.name ?? "Your studio",
+            heading: "Your tattoo estimate is ready",
+            bodyParagraphs: [`Hi ${inquiry.client.firstName}, here's your tattoo estimate.`],
+            buttonText: "View estimate",
+            buttonUrl: estimateUrl,
+          }),
+          actorUserId,
+          logAttemptEvenOnFailure: true,
+        })
+      : await sendClientSms({
+          studioId,
+          clientId: updated.clientId,
+          conversationId,
+          body: `Hi ${inquiry.client.firstName}, here's your tattoo estimate from ${studio?.name ?? "our studio"}: ${estimateUrl}`,
+          actorUserId,
+          logAttemptEvenOnFailure: true,
+        });
 
   emitInvalidation({ type: "inquiry.updated", studioId, inquiryId });
 

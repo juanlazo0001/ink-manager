@@ -17739,3 +17739,171 @@ restarted, or killed -- the shared one was already running throughout.
 All throwaway verification/cleanup scripts lived briefly in
 `apps/api/` and were deleted immediately after use; no stray
 screenshot files left in the repo.
+
+# Send-channel picker + email as a client channel
+
+REPORT.md line count before this entry: 17741 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.
+
+## Part 1 -- investigation, before any code
+
+Confirmed against actual code (memory's own standing lesson: verify a
+task's premise before building on it) rather than assumed. Two
+findings, both surfaced before writing anything:
+
+**Email to clients wasn't entirely new.** The Conversations composer
+already has a full, working per-studio Gmail integration
+(`lib/gmail.ts`, `routes/conversations.ts`) -- OAuth-connected, real
+two-way threading. "SMS is the only channel" was true for the other
+~10 one-way document-send actions (deposit form, estimate, waiver,
+gift card receipt, prefilled intake link, ...), which all call
+`sendClientSms` directly with no email branch anywhere, but false for
+the composer itself.
+
+**A platform-level Bird sender already exists** (`lib/platformEmail.ts`,
+its own comment: "CONFIRMED WORKING... real send, HTTP 202") but is
+scoped to account notifications from a fixed address, and its own
+comment explicitly says not to extend it toward client-facing use. A
+new sibling `lib/clientEmail.ts` was needed, not an extension of that
+file.
+
+Two decisions confirmed with the user before building: no reply-to
+header when a studio has no primary `Location.email` on file (the only
+field in this schema that already serves this role -- confirmed via
+`webhooks.ts`'s own HELP auto-reply, which already fills a `studioEmail`
+template variable from exactly that field); build the full picker
+across all representative send sites in one pass, not a partial one.
+
+One more resolved during investigation, not by asking: the
+Conversations composer keeps its existing Gmail-first behavior
+unchanged -- routing it through the new one-way Bird sender instead
+would silently break reply-threading for any studio that already has
+Gmail connected. `clientEmail.ts` embodies this directly: try this
+studio's own connected Gmail first (real threading, zero cost to the
+caller); fall back to the platform Bird sender otherwise. Every
+one-way document-send site gets this automatically just by calling
+`sendClientEmail` -- none of them know or care which mechanism ran.
+
+## What was built
+
+- **`apps/api/src/lib/clientEmail.ts`** (new) -- `sendClientEmail`,
+  mirroring `clientSms.ts`'s exact three-layer shape
+  (`createOutboundEmailMessage` -> the Gmail-or-Bird resolution ->
+  the public function). Refuses a client with no email before
+  attempting anything. A new low-level `sendViaBirdOnBehalfOfStudio`
+  lives here, NOT in `platformEmail.ts` (per that file's own "do not
+  extend" comment) -- studio-branded `from` display name, reply-to
+  resolved from the studio's primary `Location.email`.
+- **`apps/api/src/lib/emailTemplate.ts`** gained a second exported
+  function, `renderClientEmailHtml`, reusing
+  `renderPlatformEmailHtml`'s visual system (palette, fonts,
+  `escapeHtml`, the bulletproof table-based button for cross-client
+  compatibility) but not that function itself -- its footer ("please
+  don't reply directly to this email") is wrong for a client-facing
+  send with a real reply-to.
+- **`~10 one-way send routes`** (`lib/deposits.ts`, `lib/estimates.ts`,
+  `routes/inquiries.ts` x2, `routes/appointments.ts`,
+  `routes/giftCards.ts`, `routes/prefillDrafts.ts`) each gained the
+  same mechanical change: accept `channel: 'SMS' | 'EMAIL'` from the
+  request body (default `'SMS'`, so every existing caller that never
+  passes it is unaffected), branch between the existing `sendClientSms`
+  call and a new `sendClientEmail` call with a subject + HTML body.
+  `logAttemptEvenOnFailure: true` added to all of them (Package J
+  rule: log every attempt, not just successes) -- extending the
+  previously opt-in-only SMS behavior, since every one of these is a
+  one-shot user-initiated action, not the reminder-ticker's own
+  retry-loop case that motivated keeping it opt-in there.
+  Deliberately left as SMS-only, not given the picker: the self-
+  schedule-link reissue on a declined appointment and the referral-
+  reward notice (both automatic side effects, not a manual "Send"
+  button a staff member clicks) and the flash-payment-approval link
+  (an Approve action, not literally a send button) -- scoped out to
+  keep this pass to genuinely manual send sites, flagged here rather
+  than silently expanded past what was asked.
+- **`routes/giftCards.ts`**: `POST /:id/text-receipt` (route path kept
+  for API stability) now accepts `channel`; the audit action reflects
+  which one ran (`"text-receipt"` vs new `"email-receipt"`, both given
+  readable `AuditTrail.tsx` labels).
+- **New `apps/web/src/components/SendChannelButton.tsx`** -- the one
+  shared control every send site swaps its plain button for. SMS
+  needs `client.phone` AND this studio's own SMS connected (reads the
+  same `['sms-integration-status']` cache `ConversationsPanel.tsx`
+  already keeps warm); email only needs `client.email` -- it never
+  gates on the studio's own email integration, since the platform
+  fallback always works regardless, matching the task's own "Email
+  only if they have an email address" wording exactly. Zero available
+  -> disabled with a tooltip; exactly one -> a single-click button
+  named for that channel ("no pointless menu"); both -> "Send…" opens
+  a two-item menu, SMS listed first (default preselection).
+- **`apps/web/src/lib/sendResult.ts`**: `ClientSendResult`'s `reason`
+  union gained `'no_email'`; `describeSendResult` takes a `channel`
+  param so its copy says "via text"/"via email" correctly.
+  `InquiryDetail.tsx` had its own hand-rolled duplicate of this exact
+  function (`describeEstimateSendResult`, pre-dating the shared
+  helper) -- deleted, both call sites now use the real one.
+- Every representative send site now uses `SendChannelButton`:
+  `ClientDetail.tsx` (Send Inquiry, Send Deposit Form, Send Waiver),
+  `InquiryDetail.tsx` (Generate & Send/Resend Estimate, Revise & Send
+  for Approval), `AppointmentDetail.tsx` (Create & Send Waiver, which
+  needed `phone`/`email` added to its own `Appointment.client`
+  fetch -- never selected before), `GiftCardDetail.tsx` ("Text
+  Receipt" is now "Send Receipt," which needed the same `phone`/`email`
+  addition to `GIFT_CARD_DETAIL_INCLUDE`).
+
+## Found only by clicking through, not by reading the code
+
+**`DropdownPortal` supplies no default panel chrome.** The first live
+screenshot of the two-channel "Send…" menu showed floating unstyled
+text overlapping the button underneath it -- every other call site in
+this codebase passes its own `className` for background/border/shadow
+(confirmed against `ClientDetail.tsx`'s own "More actions" menu), which
+`SendChannelButton`'s first draft omitted. Fixed and re-verified live
+before moving on -- exactly the kind of bug no amount of `tsc`/API
+testing would ever catch.
+
+**Two empirical Bird API findings**, confirmed by real sends against a
+real `BIRD_API_KEY`, not guessed at:
+- `reply_to` must be a JSON array of strings, not a bare string --
+  the first real send attempt was rejected outright
+  (`E01001: got string, want array`). Fixed in
+  `sendViaBirdOnBehalfOfStudio`.
+- The `from` display-name-plus-angle-bracket format ("Studio via Ink
+  Manager <address>") was accepted without complaint on the very
+  first try -- no fallback needed, contrary to the plan's own
+  contingency for this.
+
+## Verification
+
+`tsc -b --noEmit` clean on both apps throughout. Live-verified against
+the real dev Bird key: a send to a fake `@example.com` test address
+was correctly rejected by Bird's own anti-spam domain check
+(`E04011`, not a bug -- a legitimate safeguard); a second send to a
+realistic Gmail-domain address succeeded outright
+(`deliveryStatus: "sent"`), confirmed logged into Conversations
+correctly threaded alongside prior SMS messages, and readable in the
+gift card's own activity log ("Dev Owner emailed a receipt"). All
+four `SendChannelButton` states confirmed live: both channels (menu,
+SMS first), SMS-only, email-only, and disabled-with-tooltip for a
+client with neither. No Spanish-language verification needed for any
+of these sends -- none of the ~10 document-send SMS bodies were ever
+localized before this change (all hardcoded English strings, unlike
+the separate client-token public pages, e.g. flash payment, which are
+bilingual), and the new email bodies stay consistent with that
+existing convention rather than introducing a one-off exception.
+
+All test artifacts from live Bird sends (the resulting `Message` rows
+and their `email-receipt` audit rows, on two pre-existing dev-seed
+clients) deleted afterward via a direct query, confirmed against the
+real request the send actually made. Evidence Artifact: "Send-Channel
+Picker + Email -- Verified."
+
+## CLAUDE.md hygiene
+
+No schema touched (`Location.email`/`MessageChannel.EMAIL` both
+already existed). No database reset offered or accepted. No dev
+servers started, restarted, or killed -- the shared one was already
+running throughout, and its `BIRD_API_KEY` is what made the real send
+tests above possible without any additional setup. All throwaway
+verification/cleanup scripts lived briefly in `apps/api/` and were
+deleted immediately after use; no stray screenshot files left in the
+repo.

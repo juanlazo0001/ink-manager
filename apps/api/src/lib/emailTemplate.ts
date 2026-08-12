@@ -165,3 +165,122 @@ export function renderPlatformEmailHtml(content: PlatformEmailContent): string {
 </body>
 </html>`;
 }
+
+// Send-channel picker + email as a client channel: same visual system as
+// renderPlatformEmailHtml above (palette, fonts, escapeHtml, the
+// bulletproof table-based button) but NOT that function -- its footer
+// ("please don't reply directly to this email") is wrong here. This one
+// names the studio as the actual sender and, when a reply-to address
+// exists, tells the client replies really do reach the studio.
+export interface ClientEmailContent {
+  studioName: string;
+  heading: string;
+  bodyParagraphs: string[];
+  buttonText: string;
+  buttonUrl: string;
+  footnote?: string;
+}
+
+export function renderClientEmailHtml(content: ClientEmailContent): string {
+  const studioName = escapeHtml(content.studioName);
+  const heading = escapeHtml(content.heading);
+  const paragraphs = content.bodyParagraphs
+    .map(
+      (paragraph) =>
+        `<p style="margin:0 0 16px 0; font-family:${SANS_STACK}; font-size:15px; line-height:1.6; color:${BODY_TEXT};">${escapeHtml(paragraph)}</p>`,
+    )
+    .join("\n");
+  const buttonText = escapeHtml(content.buttonText);
+  const buttonUrl = escapeHtml(content.buttonUrl);
+  const footnote = content.footnote
+    ? `<p style="margin:24px 0 0 0; font-family:${SANS_STACK}; font-size:13px; line-height:1.5; color:${MUTED_TEXT};">${escapeHtml(content.footnote)}</p>`
+    : "";
+  // Deliberately doesn't claim "reply and it reaches the studio" -- whether
+  // a reply-to is actually attached is resolved deep inside
+  // sendClientEmail/sendViaBirdOnBehalfOfStudio (lib/clientEmail.ts), not
+  // known here at render time. Neutral wording that's true either way.
+  const replyNote = `Sent on behalf of ${studioName} via Ink Manager.`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="light" />
+<meta name="supported-color-schemes" content="light" />
+<title>${heading}</title>
+</head>
+<body style="margin:0; padding:0; background-color:${PAGE_BG};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${PAGE_BG};">
+  <tr>
+    <td align="center" style="padding:40px 16px;">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:100%; background-color:${PANEL_BG};">
+        <tr>
+          <td align="center" style="padding:40px 40px 24px 40px;">
+            <p style="margin:0; font-family:${SANS_STACK}; font-size:13px; letter-spacing:0.05em; text-transform:uppercase; color:${MUTED_TEXT};">${studioName}</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0 40px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="border-top:2px solid ${GOLD}; font-size:0; line-height:0;">&nbsp;</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:32px 40px 8px 40px;">
+            <h1 style="margin:0; font-family:${SERIF_STACK}; font-size:22px; font-weight:normal; color:${INK}; text-align:center;">${heading}</h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 40px 8px 40px;">
+            ${paragraphs}
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:16px 40px 8px 40px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" bgcolor="${GOLD}" style="border-radius:4px;">
+                  <!--[if mso]>
+                  <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${buttonUrl}" style="height:48px;v-text-anchor:middle;width:260px;" arcsize="8%" fillcolor="${GOLD}" strokecolor="${GOLD}">
+                  <w:anchorlock/>
+                  <center style="color:${INK};font-family:${SANS_STACK};font-size:13px;font-weight:bold;letter-spacing:0.05em;">${buttonText.toUpperCase()}</center>
+                  </v:roundrect>
+                  <![endif]-->
+                  <!--[if !mso]><!-->
+                  <a href="${buttonUrl}" target="_blank" style="display:inline-block; padding:14px 32px; font-family:${SANS_STACK}; font-size:13px; font-weight:bold; letter-spacing:0.05em; text-transform:uppercase; color:${INK}; text-decoration:none; border-radius:4px;">${buttonText}</a>
+                  <!--<![endif]-->
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:0 40px 8px 40px;">
+            ${footnote}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px 40px 0 40px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="border-top:1px solid ${RULE}; font-size:0; line-height:0;">&nbsp;</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding:20px 40px 40px 40px;">
+            <p style="margin:0; font-family:${SANS_STACK}; font-size:12px; line-height:1.5; color:${MUTED_TEXT};">${replyNote}</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>`;
+}

@@ -6,6 +6,8 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { computeGiftCardExpiration, generateUniqueGiftCardCode, syncExpiredStatus } from "../lib/giftCards";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
+import { sendClientEmail } from "../lib/clientEmail";
+import { renderClientEmailHtml } from "../lib/emailTemplate";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { shortenUrl } from "../lib/shortLinks";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
@@ -28,7 +30,10 @@ const GIFT_CARD_DETAIL_INCLUDE = {
     },
   },
   issuedBy: { select: { id: true, name: true, email: true } },
-  client: { select: { id: true, firstName: true, lastName: true } },
+  // phone/email added for the detail page's own Send Receipt channel
+  // picker -- needs to know which channels are actually available for
+  // this card's holder.
+  client: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
   // Checkout overage (Part 3): when this card was issued from redeeming a
   // larger one down to its exact remaining difference, this surfaces
   // where it came from -- support/audit clarity, not needed for the
@@ -373,11 +378,21 @@ const TEXT_RECEIPT_ERROR_MESSAGES: Record<string, string> = {
   not_connected: "This studio's SMS integration isn't connected -- connect it in Settings to send text receipts.",
   no_phone: "This client has no phone number on file.",
   opted_out: "This client has opted out of text messages.",
-  send_failed: "The text failed to send -- try again in a moment.",
+  no_email: "This client has no email address on file.",
+  send_failed: "The receipt failed to send -- try again in a moment.",
 };
 
+// Route path stays "text-receipt" (external API stability -- no reason to
+// churn callers over a name), but "Text Receipt" is now "Send Receipt" on
+// the frontend and this accepts either channel. Audit action reflects
+// which one actually ran.
 router.post("/:id/text-receipt", async (req, res) => {
   const id = req.params.id as string;
+  const { channel } = req.body ?? {};
+
+  if (channel !== undefined && channel !== "SMS" && channel !== "EMAIL") {
+    return res.status(400).json({ error: "channel must be SMS or EMAIL" });
+  }
 
   const card = await prisma.giftCard.findUnique({
     where: { id },
@@ -395,7 +410,7 @@ router.post("/:id/text-receipt", async (req, res) => {
 
   const synced = await syncExpiredStatus(card);
   if (synced.status !== GiftCardStatus.ACTIVE) {
-    return res.status(400).json({ error: `Only an ACTIVE card can have a receipt texted (this one is ${synced.status})` });
+    return res.status(400).json({ error: `Only an ACTIVE card can have a receipt sent (this one is ${synced.status})` });
   }
 
   const publicUrl = await shortenUrl(`${PUBLIC_APP_URL}/gift-card/${card.code}`);
@@ -404,13 +419,32 @@ router.post("/:id/text-receipt", async (req, res) => {
 
   const { conversation } = await getOrCreateClientConversation(studioId, card.clientId, req.user!.userId);
 
-  const result = await sendClientSms({
-    studioId,
-    clientId: card.clientId,
-    conversationId: conversation.id,
-    body,
-    actorUserId: req.user!.userId,
-  });
+  const result =
+    channel === "EMAIL"
+      ? await sendClientEmail({
+          studioId,
+          clientId: card.clientId,
+          conversationId: conversation.id,
+          subject: `Your gift card -- ${card.studio.name}`,
+          bodyText: body,
+          bodyHtml: renderClientEmailHtml({
+            studioName: card.studio.name,
+            heading: "Thanks for your purchase!",
+            bodyParagraphs: [`Here's your $${amount} gift card (code ${card.code}).`],
+            buttonText: "View gift card",
+            buttonUrl: publicUrl,
+          }),
+          actorUserId: req.user!.userId,
+          logAttemptEvenOnFailure: true,
+        })
+      : await sendClientSms({
+          studioId,
+          clientId: card.clientId,
+          conversationId: conversation.id,
+          body,
+          actorUserId: req.user!.userId,
+          logAttemptEvenOnFailure: true,
+        });
 
   if (!result.sent) {
     return res.status(400).json({ error: TEXT_RECEIPT_ERROR_MESSAGES[result.reason] ?? "The receipt could not be sent." });
@@ -421,7 +455,7 @@ router.post("/:id/text-receipt", async (req, res) => {
     actorUserId: req.user!.userId,
     entityType: "GiftCard",
     entityId: id,
-    action: "text-receipt",
+    action: channel === "EMAIL" ? "email-receipt" : "text-receipt",
     changes: { conversationId: conversation.id, messageId: result.messageId },
   });
 

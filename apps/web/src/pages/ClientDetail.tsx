@@ -18,6 +18,7 @@ import Widget from '../components/Widget'
 import DropdownPortal from '../components/DropdownPortal'
 import ReorderableWidgetList from '../components/ReorderableWidgetList'
 import IntakeFormPicker from '../components/IntakeFormPicker'
+import SendChannelButton, { type SendChannel } from '../components/SendChannelButton'
 import { useIntakeForms, type IntakeFormOption } from '../lib/useIntakeForms'
 import {
   ArrowLeftIcon,
@@ -391,6 +392,7 @@ export default function ClientDetail() {
   const [prefillSendNotice, setPrefillSendNotice] = useState<string | null>(null)
   const { data: intakeForms } = useIntakeForms(canGeneratePrefillLink)
   const [showFormPicker, setShowFormPicker] = useState(false)
+  const [pendingPrefillChannel, setPendingPrefillChannel] = useState<SendChannel>('SMS')
   const [showCopyMenu, setShowCopyMenu] = useState(false)
   const [copyToast, setCopyToast] = useState<string | null>(null)
 
@@ -464,15 +466,16 @@ export default function ClientDetail() {
   // Only asks WHICH form when the studio actually has more than one --
   // the common single-form case skips the picker entirely, same "advisory,
   // doesn't disrupt simple usage" philosophy as preferredSchedule.
-  function handleCopyPrefillLink() {
+  function handleCopyPrefillLink(channel: SendChannel = 'SMS') {
     if ((intakeForms?.length ?? 0) > 1) {
       setShowFormPicker(true)
+      setPendingPrefillChannel(channel)
       return
     }
-    generateAndCopyPrefillLink()
+    generateAndCopyPrefillLink(undefined, channel)
   }
 
-  async function generateAndCopyPrefillLink(formSlug?: string) {
+  async function generateAndCopyPrefillLink(formSlug?: string, channel: SendChannel = 'SMS') {
     if (!id || !client) return
 
     setShowCopyMenu(false)
@@ -497,12 +500,13 @@ export default function ClientDetail() {
             },
             clientId: id,
             formSlug,
+            channel,
           }),
         },
       )
       await navigator.clipboard.writeText(draft.prefillUrl)
       showCopyToast('Prefilled link copied')
-      setPrefillSendNotice(describeSendResult('Prefilled intake link', draft.prefillSendResult))
+      setPrefillSendNotice(describeSendResult('Prefilled intake link', draft.prefillSendResult, channel))
     } catch (err) {
       setPrefillLinkError(err instanceof Error ? err.message : 'Failed to generate link')
     } finally {
@@ -1100,7 +1104,7 @@ export default function ClientDetail() {
     }
   }
 
-  async function handleSendDepositForm(inquiryId: string) {
+  async function handleSendDepositForm(inquiryId: string, channel: SendChannel = 'SMS') {
     setSendingDepositId(inquiryId)
     setDepositSendError(null)
     setDepositSendNotice(null)
@@ -1108,10 +1112,10 @@ export default function ClientDetail() {
     try {
       const result = await apiFetch<DepositFormSummary & { depositUrl: string; depositSendResult: ClientSendResult | null }>(
         `/inquiries/${inquiryId}/deposit-form`,
-        { method: 'POST' },
+        { method: 'POST', body: JSON.stringify({ channel }) },
       )
       setLatestDepositUrl(result.depositUrl)
-      setDepositSendNotice(describeSendResult('Deposit form', result.depositSendResult))
+      setDepositSendNotice(describeSendResult('Deposit form', result.depositSendResult, channel))
       setShowDepositPicker(false)
       // Package M: a send can now either update the existing unsigned
       // session in place or create a brand new one (next sessionNumber) --
@@ -1125,7 +1129,7 @@ export default function ClientDetail() {
     }
   }
 
-  async function handleSendWaiver(appointmentId: string) {
+  async function handleSendWaiver(appointmentId: string, channel: SendChannel = 'SMS') {
     setSendingWaiverId(appointmentId)
     setWaiverSendError(null)
     setWaiverSendNotice(null)
@@ -1133,10 +1137,10 @@ export default function ClientDetail() {
     try {
       const result = await apiFetch<WaiverSummary & { signingUrl: string; waiverSendResult: ClientSendResult | null }>(
         `/appointments/${appointmentId}/waiver`,
-        { method: 'POST' },
+        { method: 'POST', body: JSON.stringify({ channel }) },
       )
       setLatestWaiverUrl(result.signingUrl)
-      setWaiverSendNotice(describeSendResult('Waiver', result.waiverSendResult))
+      setWaiverSendNotice(describeSendResult('Waiver', result.waiverSendResult, channel))
       setShowWaiverPicker(false)
       setClient((prev) =>
         prev
@@ -1494,7 +1498,7 @@ export default function ClientDetail() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={handleCopyPrefillLink}
+                                  onClick={() => handleCopyPrefillLink()}
                                   disabled={copyingPrefillLink}
                                   className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
                                 >
@@ -1849,19 +1853,12 @@ export default function ClientDetail() {
                 actions={
                   canCreateInquiry && !isEnded ? (
                     <div className="flex flex-wrap shrink-0 items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleCopyPrefillLink}
-                        disabled={copyingPrefillLink}
-                        aria-label="Send Inquiry"
-                        title="Send Inquiry"
-                        className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface disabled:opacity-60"
-                      >
-                        <SendIcon className="h-4 w-4" />
-                        <span className="whitespace-nowrap text-sm font-semibold">
-                          {copyingPrefillLink ? 'Sending…' : 'Send Inquiry'}
-                        </span>
-                      </button>
+                      <SendChannelButton
+                        label="Send Inquiry"
+                        client={{ phone: client.phone, email: client.email }}
+                        sending={copyingPrefillLink}
+                        onSend={(channel) => handleCopyPrefillLink(channel)}
+                      />
                       <button
                         type="button"
                         onClick={() => setShowNewInquiry(true)}
@@ -2106,16 +2103,18 @@ export default function ClientDetail() {
                 title="Deposit Forms"
                 actions={
                   canEditInquiry && !isEnded ? (
+                    eligibleDepositInquiries.length === 1 ? (
+                      <SendChannelButton
+                        label="Send Deposit Form"
+                        client={{ phone: client.phone, email: client.email }}
+                        sending={sendingDepositId !== null}
+                        onSend={(channel) => handleSendDepositForm(eligibleDepositInquiries[0].id, channel)}
+                      />
+                    ) : (
                     <div className="relative">
                       <button
                         type="button"
-                        onClick={() => {
-                          if (eligibleDepositInquiries.length === 1) {
-                            handleSendDepositForm(eligibleDepositInquiries[0].id)
-                          } else {
-                            setShowDepositPicker((v) => !v)
-                          }
-                        }}
+                        onClick={() => setShowDepositPicker((v) => !v)}
                         disabled={eligibleDepositInquiries.length === 0 || sendingDepositId !== null}
                         aria-label="Send Deposit Form"
                         title={
@@ -2156,6 +2155,7 @@ export default function ClientDetail() {
                         </>
                       )}
                     </div>
+                    )
                   ) : null
                 }
               >
@@ -2317,16 +2317,18 @@ export default function ClientDetail() {
                 title="Waivers"
                 actions={
                   canGenerateWaiver && !isEnded ? (
+                    eligibleWaiverAppointments.length === 1 ? (
+                      <SendChannelButton
+                        label="Send Waiver"
+                        client={{ phone: client.phone, email: client.email }}
+                        sending={sendingWaiverId !== null}
+                        onSend={(channel) => handleSendWaiver(eligibleWaiverAppointments[0].id, channel)}
+                      />
+                    ) : (
                     <div className="relative">
                       <button
                         type="button"
-                        onClick={() => {
-                          if (eligibleWaiverAppointments.length === 1) {
-                            handleSendWaiver(eligibleWaiverAppointments[0].id)
-                          } else {
-                            setShowWaiverPicker((v) => !v)
-                          }
-                        }}
+                        onClick={() => setShowWaiverPicker((v) => !v)}
                         disabled={eligibleWaiverAppointments.length === 0 || sendingWaiverId !== null}
                         aria-label="Send Waiver"
                         title={
@@ -2377,6 +2379,7 @@ export default function ClientDetail() {
                         </>
                       )}
                     </div>
+                    )
                   ) : null
                 }
               >
@@ -2880,7 +2883,7 @@ export default function ClientDetail() {
         <IntakeFormPicker
           forms={intakeForms}
           onClose={() => setShowFormPicker(false)}
-          onSelect={(form: IntakeFormOption) => generateAndCopyPrefillLink(form.slug)}
+          onSelect={(form: IntakeFormOption) => generateAndCopyPrefillLink(form.slug, pendingPrefillChannel)}
         />
       )}
     </>

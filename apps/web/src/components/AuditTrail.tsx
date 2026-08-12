@@ -178,6 +178,7 @@ const ACTION_LABELS: Record<string, string> = {
   stripe_payment_confirmed: 'confirmed a Stripe payment',
   reorder: 'reordered',
   'text-receipt': 'texted a receipt',
+  'email-receipt': 'emailed a receipt',
   sms_sent: 'sent a text',
   sms_received: 'received a text',
   sms_opted_in: 'opted in to texts',

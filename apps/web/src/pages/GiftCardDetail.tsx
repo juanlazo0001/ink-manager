@@ -9,6 +9,7 @@ import QrCode from '../components/QrCode'
 import AuditTrail from '../components/AuditTrail'
 import StatusPill from '../components/StatusPill'
 import Modal from '../components/Modal'
+import SendChannelButton, { type SendChannel } from '../components/SendChannelButton'
 
 interface HolderSearchCandidate {
   id: string
@@ -31,7 +32,7 @@ interface GiftCard {
   status: string
   expiresAt: string | null
   createdAt: string
-  client: { id: string; firstName: string; lastName: string }
+  client: { id: string; firstName: string; lastName: string; phone: string | null; email: string | null }
   appointment: {
     id: string
     startTime: string
@@ -237,7 +238,7 @@ export default function GiftCardDetail() {
     }
   }
 
-  async function handleTextReceipt() {
+  async function handleSendReceipt(channel: SendChannel = 'SMS') {
     if (!id) return
 
     setSendingReceipt(true)
@@ -245,7 +246,7 @@ export default function GiftCardDetail() {
     setReceiptSent(false)
 
     try {
-      await apiFetch(`/gift-cards/${id}/text-receipt`, { method: 'POST' })
+      await apiFetch(`/gift-cards/${id}/text-receipt`, { method: 'POST', body: JSON.stringify({ channel }) })
       setReceiptSent(true)
       setTimeout(() => setReceiptSent(false), 4000)
     } catch (err) {
@@ -433,14 +434,15 @@ export default function GiftCardDetail() {
                   )}
 
                   {canTextReceipt && card.status === 'ACTIVE' && (
-                    <button
-                      type="button"
-                      onClick={handleTextReceipt}
-                      disabled={sendingReceipt}
-                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
-                    >
-                      {sendingReceipt ? 'Sending…' : receiptSent ? 'Receipt sent!' : 'Text receipt'}
-                    </button>
+                    <span className="flex items-center gap-2">
+                      <SendChannelButton
+                        label="Send Receipt"
+                        client={{ phone: card.client.phone, email: card.client.email }}
+                        sending={sendingReceipt}
+                        onSend={(channel) => handleSendReceipt(channel)}
+                      />
+                      {receiptSent && <span className="text-sm text-success">Sent!</span>}
+                    </span>
                   )}
 
                   {canEditExpiry && card.status !== 'VOID' && (

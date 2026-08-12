@@ -17,6 +17,8 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment, validateGiftCardsForAttachment } from "../lib/giftCards";
 import { getOrCreateClientConversation, getOrCreateStaffConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
+import { sendClientEmail } from "../lib/clientEmail";
+import { renderClientEmailHtml } from "../lib/emailTemplate";
 import { shortenUrl } from "../lib/shortLinks";
 import { isSupportedLocale } from "../lib/locale";
 import { normalizePhone } from "../lib/phone";
@@ -1585,7 +1587,12 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, 
 // (possibly updated) numbers.
 router.post("/:id/send-estimate", requireAuth, async (req, res) => {
   const id = req.params.id as string;
-  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions } = req.body ?? {};
+  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions, channel } =
+    req.body ?? {};
+
+  if (channel !== undefined && channel !== "SMS" && channel !== "EMAIL") {
+    return res.status(400).json({ error: "channel must be SMS or EMAIL" });
+  }
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
@@ -1605,6 +1612,7 @@ router.post("/:id/send-estimate", requireAuth, async (req, res) => {
     timeEstimateHoursMin,
     timeEstimateHoursMax,
     sessions,
+    channel,
   });
   if (!result.ok) {
     return res.status(result.status).json({ error: result.error });
@@ -1638,11 +1646,15 @@ const REVISION_TOKEN_TTL_DAYS = 7;
 // scoping to safely extend it through.
 router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), requirePermission("inquiries.enterEstimate"), async (req, res) => {
   const id = req.params.id as string;
-  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions, reason } =
+  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions, reason, channel } =
     req.body ?? {};
 
   if (typeof reason !== "string" || reason.trim().length === 0) {
     return res.status(400).json({ error: "A reason is required to revise a Project's estimate" });
+  }
+
+  if (channel !== undefined && channel !== "SMS" && channel !== "EMAIL") {
+    return res.status(400).json({ error: "channel must be SMS or EMAIL" });
   }
 
   const inquiry = await prisma.inquiry.findUnique({
@@ -2018,14 +2030,39 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
   // of whether the text goes out; staff still has the link on-screen to
   // share manually either way.
   const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
-  const revisionSendResult = await sendClientSms({
-    studioId: req.user!.studioId,
-    clientId: updated.clientId,
-    conversationId: (await getOrCreateClientConversation(req.user!.studioId, updated.clientId, req.user!.userId))
-      .conversation.id,
-    body: `Hi ${updated.client.firstName}, the estimate for your tattoo with ${studio?.name ?? "us"} has been updated to $${effective.priceEstimateLow}-$${effective.priceEstimateHigh} (${effective.timeEstimateHoursMin}-${effective.timeEstimateHoursMax} hrs). Reason: ${trimmedReason}. Please review: ${revisionUrl}`,
-    actorUserId: req.user!.userId,
-  });
+  const revisionConversationId = (
+    await getOrCreateClientConversation(req.user!.studioId, updated.clientId, req.user!.userId)
+  ).conversation.id;
+  const revisionMessage = `Hi ${updated.client.firstName}, the estimate for your tattoo with ${studio?.name ?? "us"} has been updated to $${effective.priceEstimateLow}-$${effective.priceEstimateHigh} (${effective.timeEstimateHoursMin}-${effective.timeEstimateHoursMax} hrs). Reason: ${trimmedReason}. Please review: ${revisionUrl}`;
+  const revisionSendResult =
+    channel === "EMAIL"
+      ? await sendClientEmail({
+          studioId: req.user!.studioId,
+          clientId: updated.clientId,
+          conversationId: revisionConversationId,
+          subject: `Your estimate was updated -- ${studio?.name ?? "our studio"}`,
+          bodyText: revisionMessage,
+          bodyHtml: renderClientEmailHtml({
+            studioName: studio?.name ?? "Your studio",
+            heading: "Your estimate was updated",
+            bodyParagraphs: [
+              `Hi ${updated.client.firstName}, the estimate for your tattoo has been updated to $${effective.priceEstimateLow}-$${effective.priceEstimateHigh} (${effective.timeEstimateHoursMin}-${effective.timeEstimateHoursMax} hrs).`,
+              `Reason: ${trimmedReason}`,
+            ],
+            buttonText: "Review estimate",
+            buttonUrl: revisionUrl,
+          }),
+          actorUserId: req.user!.userId,
+          logAttemptEvenOnFailure: true,
+        })
+      : await sendClientSms({
+          studioId: req.user!.studioId,
+          clientId: updated.clientId,
+          conversationId: revisionConversationId,
+          body: revisionMessage,
+          actorUserId: req.user!.userId,
+          logAttemptEvenOnFailure: true,
+        });
 
   emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
@@ -2752,13 +2789,16 @@ router.post("/:id/reopen-project", requireAuth, async (req, res) => {
 // "latest row missing" is true there too, so it still creates session 1.
 router.post("/:id/deposit-form", requireAuth, async (req, res) => {
   const id = req.params.id as string;
-  const { proposedStartAt, proposedEndAt, autoSend, plannedSessionId, amountMode } = req.body ?? {};
+  const { proposedStartAt, proposedEndAt, autoSend, plannedSessionId, amountMode, channel } = req.body ?? {};
 
   if (plannedSessionId !== undefined && typeof plannedSessionId !== "string") {
     return res.status(400).json({ error: "plannedSessionId must be a string" });
   }
   if (amountMode !== undefined && amountMode !== "DEPOSIT" && amountMode !== "FULL_PREPAY") {
     return res.status(400).json({ error: "amountMode must be DEPOSIT or FULL_PREPAY" });
+  }
+  if (channel !== undefined && channel !== "SMS" && channel !== "EMAIL") {
+    return res.status(400).json({ error: "channel must be SMS or EMAIL" });
   }
 
   // Artist mobility bug fix: verify the caller against the PROJECT's own
@@ -2786,6 +2826,7 @@ router.post("/:id/deposit-form", requireAuth, async (req, res) => {
     autoSend,
     plannedSessionId,
     amountMode,
+    channel,
   });
 
   if (!result.ok) {

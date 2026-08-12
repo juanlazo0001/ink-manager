@@ -27,6 +27,8 @@ import {
 import { emitInvalidation } from "../lib/realtime/registry";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
+import { sendClientEmail } from "../lib/clientEmail";
+import { renderClientEmailHtml } from "../lib/emailTemplate";
 import { resolveImageMeta } from "../lib/imageMeta";
 import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
@@ -398,7 +400,8 @@ const APPOINTMENT_DETAIL_INCLUDE = {
   // remind the client to share their own code right after the session --
   // reuses the code already generated at this client's own creation, not a
   // new code system (see referrals.ts).
-  client: { select: { id: true, firstName: true, lastName: true, referralCode: true } },
+  // phone/email added for the Send Waiver channel picker.
+  client: { select: { id: true, firstName: true, lastName: true, referralCode: true, phone: true, email: true } },
   // The project this session belongs to -- via inquiryId/inquiryProject, not
   // the older 1:1 `inquiry` back-relation (Inquiry.appointmentId), which is
   // a different, usually-null link left over from the original scheduling flow.
@@ -672,7 +675,11 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
 // against the client's physical ID (POST /waivers/:id/verify).
 router.post("/:id/waiver", async (req, res) => {
   const id = req.params.id as string;
-  const { autoSend } = req.body ?? {};
+  const { autoSend, channel } = req.body ?? {};
+
+  if (channel !== undefined && channel !== "SMS" && channel !== "EMAIL") {
+    return res.status(400).json({ error: "channel must be SMS or EMAIL" });
+  }
 
   const existing = await prisma.appointment.findUnique({
     where: { id },
@@ -711,17 +718,41 @@ router.post("/:id/waiver", async (req, res) => {
   // link with no trace in Conversations. autoSend: false is the
   // composer's own create-then-insert-link flow opting out, same as
   // deposit-form.
-  let waiverSendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
+  let waiverSendResult:
+    | Awaited<ReturnType<typeof sendClientSms>>
+    | Awaited<ReturnType<typeof sendClientEmail>>
+    | null = null;
   if (autoSend !== false) {
     const studio = await prisma.studio.findUnique({ where: { id: studioId }, select: { name: true } });
-    waiverSendResult = await sendClientSms({
-      studioId,
-      clientId: existing.clientId,
-      conversationId: (await getOrCreateClientConversation(studioId, existing.clientId, req.user!.userId)).conversation
-        .id,
-      body: `Hi ${existing.client.firstName}, please sign your liability waiver before your appointment with ${studio?.name ?? "our studio"}: ${result.signingUrl}`,
-      actorUserId: req.user!.userId,
-    });
+    const waiverConversationId = (await getOrCreateClientConversation(studioId, existing.clientId, req.user!.userId))
+      .conversation.id;
+    const waiverMessage = `Hi ${existing.client.firstName}, please sign your liability waiver before your appointment with ${studio?.name ?? "our studio"}: ${result.signingUrl}`;
+    waiverSendResult =
+      channel === "EMAIL"
+        ? await sendClientEmail({
+            studioId,
+            clientId: existing.clientId,
+            conversationId: waiverConversationId,
+            subject: `Please sign your waiver -- ${studio?.name ?? "our studio"}`,
+            bodyText: waiverMessage,
+            bodyHtml: renderClientEmailHtml({
+              studioName: studio?.name ?? "Your studio",
+              heading: "Please sign your liability waiver",
+              bodyParagraphs: [`Hi ${existing.client.firstName}, please sign your liability waiver before your appointment.`],
+              buttonText: "Sign waiver",
+              buttonUrl: result.signingUrl,
+            }),
+            actorUserId: req.user!.userId,
+            logAttemptEvenOnFailure: true,
+          })
+        : await sendClientSms({
+            studioId,
+            clientId: existing.clientId,
+            conversationId: waiverConversationId,
+            body: waiverMessage,
+            actorUserId: req.user!.userId,
+            logAttemptEvenOnFailure: true,
+          });
   }
 
   emitInvalidation({ type: "appointment.changed", studioId });
