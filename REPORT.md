@@ -18547,3 +18547,107 @@ listen` process (started this session) stopped; the pre-existing dev
 API server was restarted once (to pick up the corrected local-only
 `STRIPE_WEBHOOK_SECRET`, itself gitignored and never committed) and
 left running as found.
+
+# Message-frequency consent copy + Twilio opt-back-in proof package
+
+Single session on `main`. Twilio's onboarding specialist flagged the SMS
+consent checkbox copy as missing a message-frequency statement (had
+message type, rates, and STOP, but not frequency), and requested
+proof/documentation of the START/YES/UNSTOP opt-back-in flow.
+
+## Copy fix -- both mirrored copies updated identically
+
+The consent text is not hardcoded in `IntakeForm.tsx` itself -- it's
+rendered via i18n keys (`smsConsentDefault`, `smsOptInBody`) defined in
+`apps/web/src/i18n/strings/en.ts`. `apps/web/server.mjs`'s
+`renderInquirySsr()` separately hardcodes the same opt-in-body English
+text for its SSR snapshot (a deliberate mirror, per that file's own
+header comment). Updated both to the task's exact new copy (added
+"Message frequency varies." and, for the checkbox body, "estimate
+follow-ups" to the message-type list and "or HELP for help" to the
+opt-out instruction). Confirmed identical after deploy: raw SSR HTML
+(`curl`) and the live React DOM (Playwright) both show the byte-for-byte
+same new copy. Left `es.ts` (Spanish) untouched -- task specified English
+text only; flagged to the user as now-inconsistent, left as an explicit
+out-of-scope follow-up rather than silently expanding scope.
+
+## Deploy sequencing, verified not assumed
+
+No CI/CD config exists in this repo (no `.github/workflows/`, no
+`railway.json`) -- confirmed via a prior session's REPORT.md entry that
+this is a Railway app auto-deploying on push to `main`. Captured the
+live JS bundle filename before pushing (`index-DXUkA5uQ.js`), pushed
+commit `1b7ebaa`, then polled the live SSR HTML every 15s until the
+bundle hash changed (`index-C0eiNFQP.js`, ~60s later) and
+`grep`-confirmed "Message frequency varies" was present in the raw
+response -- rather than assuming the push alone meant it was live.
+Screenshots were captured only after this verification passed.
+
+## A premise that didn't hold: live SMS demo
+
+The task suggested checking whether "the existing Twilio number" might
+be send/receive-restricted pending campaign approval. Queried
+`apps/api/.env.production`'s database directly (read-only: `Studio`,
+`StudioSettings.reminderTemplates`, `StudioIntegration` for
+`channel: "SMS"`) rather than assuming. Finding: **zero studios in
+production have any SMS integration connected** -- not a
+campaign-approval restriction on a connected number, there is simply no
+Twilio number connected for Black Hive Ink (or anyone) yet. No live
+test was attempted; no phone number was requested from the user. This
+correction is documented plainly in the proof package's Section 5
+rather than glossed over.
+
+Also corrected in the package: the task described an opt-out
+confirmation message as if it existed in our own code ("...Reply START
+to resubscribe"). It doesn't -- `apps/api/src/routes/webhooks.ts`'s STOP
+handling only sets `Client.smsOptedOutAt` and logs an audit entry; it
+never calls `sendClientSms` for the opt-out event itself (unlike the
+opt-in path, which does). Any such confirmation a real user would see
+comes from Twilio's own platform-level Advanced Opt-Out feature, not
+this codebase. Quoted this distinction accurately in the package instead
+of fabricating application text that doesn't exist.
+
+## Proof package contents
+
+`C:\Users\User\Documents\Twilio-Proof-Package-BlackHiveInk\`:
+- `Black-Hive-Ink-SMS-Consent-Proof-Package.pdf` (rendered via Playwright
+  `page.pdf()` against a local static-served copy of `proof-package.html`
+  -- `file://` navigation is blocked by the Playwright MCP server, so a
+  temporary `npx serve` on localhost was used and stopped again
+  afterward)
+- `proof-package.html` (source)
+- `screenshots/1-intake-form-phone-consent.png` (full form, phone field +
+  helper text)
+- `screenshots/2-consent-checkbox-closeup.png` (checkbox + links, tight
+  crop)
+- `screenshots/3-ssr-raw-source-no-js.png` (`view-source:` of the live
+  page, line-wrapped, showing the consent copy present with no JS
+  executed)
+
+Black Hive Ink's real, current `optInConfirmation` template (queried
+from production, not memory): `"{{studioName}}: You are now opted-in to
+receive text messages. Msg frequency varies. Msg & data rates may apply.
+Reply HELP for help, STOP to opt out."`
+
+## Build verification
+
+`npm run build` (web, `apps/web`) and `npx tsc --noEmit` (api,
+`apps/api`) -- both clean, before commit.
+
+## CLAUDE.md hygiene
+
+No schema change, no migration. No database reset offered or accepted.
+Read-only production DB query only (`Studio`/`StudioSettings`/
+`StudioIntegration` selects, no writes) via a scratch `tsx` script
+placed temporarily in `apps/api/` and deleted immediately after use --
+never committed. `.playwright-mcp/` scratch output (console logs, page
+snapshots) and a stray root-level screenshot from an early Playwright
+call removed before finishing; `git status` confirmed clean except two
+untracked files (`marketing/package-lock.json`,
+`public/desktop/screenshots/ink-manager-portal-restyle-v3.html`) that
+predate this session and were left untouched. The two temporary local
+`npx serve` instances (ports 5959, 5960, used only to let Playwright
+navigate to the local proof-package HTML for PDF rendering and a visual
+QA screenshot, since `file://` navigation is blocked) were both stopped
+before ending the session -- confirmed no listener remains on either
+port.
