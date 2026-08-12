@@ -18380,3 +18380,170 @@ stopped. Production backfill deliberately NOT run by this session --
 staged for Juan, per instruction, since this session has no production
 credentials and the task was explicit that he reviews the dry-run
 output before any live run.
+
+# Embedded gift-card payments + mobile modal/dropdown hardening
+
+Two independent validation findings from Juan's own live testing. (1)
+Gift-card purchases were the one payment flow the embedded-payments
+migration never covered -- `webhooks.ts` said so explicitly in its own
+comment. (2) Selecting a time from the 30-minute dropdown while
+booking an appointment from Calendar cleared the screen, mobile-only.
+
+## Part 1 -- Embedded gift-card payments
+
+Mirrored `lib/deposits.ts`'s own split exactly, reusing
+`lib/stripe.ts`'s already-generic `createDirectChargeCheckoutSession` /
+`createOrRetrieveDirectChargePaymentIntent` unchanged.
+`GiftCard.stripePaymentIntentId` was already provisioned in the schema
+for exactly this, unused until now -- no migration needed.
+
+- **`lib/giftCards.ts`**: new `createGiftCardCheckoutSession` (hosted,
+  fresh session every call) and `createOrRetrieveGiftCardPaymentIntent`
+  (embedded, fetch-or-create, gated on `StudioSettings.
+  embeddedPaymentsEnabled`), both copied from `lib/deposits.ts`'s pair
+  almost verbatim.
+- **`routes/giftCards.ts`**: staff-only `POST /checkout-session` no
+  longer creates a Stripe session itself -- it only creates the
+  PENDING `GiftCard` row (keeping the upfront
+  `getChargeableConnectedAccountId` fail-fast check) and always
+  returns `checkoutUrl: ${PUBLIC_APP_URL}/gift-card/${code}`, this
+  app's own page, regardless of the flag -- same "the client-facing
+  page decides embedded vs. hosted, not whoever generated the link"
+  split deposits/flash already use. New public, unauthenticated routes
+  `POST /:code/checkout-session` and `POST /:code/payment-intent`.
+  `GET /view/:code` gained `embeddedPaymentsEnabled` and
+  `stripeConnected`.
+- **`webhooks.ts`**: new `GiftCard` branch in the existing
+  `payment_intent.succeeded` handler, mirroring the shape of the
+  pre-existing `checkout.session.completed` GiftCard branch (flip
+  PENDING -> ACTIVE, set `paidAt`, `emitInvalidation({ type:
+  "giftcard.changed", ... })`, `logAudit(..., action:
+  "stripe_payment_confirmed", changes: { ..., embedded: true })`) --
+  not a new issuance path, the same one, reached via the embedded
+  event instead of Checkout's. Updated the stale comment that used to
+  say gift cards were "deliberately NOT included."
+- **`GiftCardResponse.tsx`**: rebuilt on `DepositResponse.tsx`'s own
+  structure and `login-shell`/`login-panel-surface` styling (dropped
+  the old un-styled `bg-bg` wrapper and `applyThemePreset` call, same
+  "platform Editorial Gold page, never studio-themed" treatment the
+  other three public payment pages already use). Unpaid +
+  `stripeConnected` branches on `embeddedPaymentsEnabled`: `true`
+  mounts `PaymentFlowStages` with identity `{ artistName: null,
+  artistAvatarUrl: null, studioName }` (no artist/session framing) and
+  no `tip` prop at all (the entire mechanism `PaymentFlowStages`
+  already has for skipping that stage -- no code change needed there);
+  `false` shows the hosted "Pay $X" button. Paid state renders through
+  `PaymentConfirmationStage` for visual consistency with the other
+  three flows, feeding into the existing QR/code/status/expiry receipt
+  block.
+
+### Live verification (test-mode)
+
+Stripe CLI was installed but not running, and the dev server's
+`STRIPE_WEBHOOK_SECRET` didn't match what `stripe listen` actually
+signs with -- `stripe listen --print-secret` gave the real signing
+secret, `.env` updated to match, dev API server restarted to pick it
+up (`tsx watch` doesn't reload `.env` on its own), then `stripe listen
+--forward-to localhost:4000/webhooks/stripe` run for the duration of
+the test.
+
+Temporarily flipped `embeddedPaymentsEnabled` on for `dev-studio` (no
+self-serve UI for this flag -- `PATCH /studio-settings` silently drops
+it, confirmed via grep; toggled directly via Prisma, same pattern this
+repo already uses for other UI-less settings). Issued a Stripe-method
+gift card from a test client's profile: confirmed the returned link
+was this app's own `/gift-card/:code`, not a raw `checkout.stripe.com`
+URL. Paid it through the real embedded Payment Element (test card
+4242 4242 4242 4242) with the webhook listener live:
+- `payment_intent.succeeded` landed (200 from the local webhook route),
+  card flipped PENDING -> ACTIVE with `paidAt` set.
+- Audit log: `stripe_payment_confirmed` entry with `embedded: true`,
+  `status: { from: "PENDING", to: "ACTIVE" }`, correct `studioId` --
+  identical shape to the pre-existing hosted-flow entries.
+- Client-facing page correctly transitioned through "Confirming
+  payment..." into the "Gift Card Ready" receipt view (QR, code,
+  ACTIVE pill, expiry) -- screenshotted.
+- "Send Receipt via Email" against the now-ACTIVE card returned a 400
+  (`send_failed`) in this sandbox -- confirmed via `git diff` that the
+  `text-receipt` route's send logic is completely untouched by this
+  change, and the failure is Bird's real platform-email API rejecting
+  a synthetic `@example.test` recipient/environment, not a regression
+  (same shared `sendClientEmail` helper every other receipt-send flow
+  already uses).
+- Spot-checked the hosted fallback with the flag off: issuing a fresh
+  gift card and clicking "Pay" correctly redirected to a real
+  `checkout.stripe.com` session.
+
+Reverted `embeddedPaymentsEnabled` back to `false` afterward. Test
+client, gift cards, and audit entries deleted; `stripe listen` process
+stopped; dev API server left running (restarted mid-session to pick up
+the corrected webhook secret, otherwise untouched).
+
+## Part 2 -- Mobile modal/dropdown hardening
+
+Investigated the reported mobile bug live first, per instruction,
+before planning any fix. Could not force a clean reproduction in this
+environment: no real touch device, Playwright's `.tap()` requires
+`hasTouch` set at context launch (couldn't be retrofit onto the
+already-running browser context), and raw CDP touch/mouse injection
+doesn't reliably drive React's synthetic event pipeline the way real
+device input does. Ruled out the literal "prime suspect" (portal
+content misread as an outside click) via code reading: React's
+synthetic event system bubbles portaled content along the React tree,
+not the DOM tree, so `Modal.tsx`'s `stopPropagation`-based dismissal
+was never actually vulnerable to that specific mechanism. Reported
+findings to Juan; he chose to apply defensive hardening covering every
+plausible mechanism rather than wait on a device repro.
+
+- **`DropdownPortal.tsx`**: the portaled panel's `AnimatePresence` exit
+  phase (~220ms) left the panel fully interactive while visually
+  fading out. Added `pointerEvents: 'none'` to a local override of the
+  exit variant (shared `dropdownVariants` in `lib/motion.ts` untouched,
+  since other consumers -- ArtistSelect, ConversationsPanel filter/
+  sort -- don't need this).
+- **`Modal.tsx`**: the scrim's dismissal fired off wherever a
+  synthesized `click` event's target resolved, which can differ from
+  where a gesture actually started if the DOM mutated mid-gesture --
+  exactly the shape a tap-triggered dropdown-close invites. Switched to
+  tracking the gesture's own start (`onPointerDown` on the scrim
+  itself, not a descendant) and only dismissing on the matching
+  `onClick` if that same scrim was also where the gesture began.
+
+**Sweep**: grep confirmed `DropdownPortal.tsx` is the only component in
+the app using `createPortal` -- every other dropdown (`PillMenu`,
+`MultiSelectFilter`, `DateRangePresetFilter`) has its own independent
+outside-click listener over a normal DOM descendant, structurally
+immune to this class of bug. `DropdownPortal` consumers
+(`TimeSelect`, `DatePickerField`, `ArtistSelect`, `SendChannelButton`,
+`SpecialtiesInput`) combine with `Modal` in exactly one place in
+practice: `AppointmentForm.tsx` inside Calendar's booking modal -- the
+reported case. Fix is structurally complete without per-call-site
+changes.
+
+**Verification**: since the mechanism couldn't be force-reproduced,
+verified instead that the hardening doesn't regress the existing,
+working flows and that a full booking completes at a mobile viewport
+(390px) with real CDP touch-tap dispatch: opened Calendar's New
+Appointment modal, selected a client with a gift card, selected a
+Start Time via a real touch tap on a `TimeSelect` option (portaled),
+modal stayed open, time selected correctly, "Create Appointment"
+succeeded end to end. Test appointment deleted afterward (correctly
+detached its gift card back to ACTIVE). Flagged clearly to Juan that
+this does not prove the original mobile bug is fixed, only that the
+hardening is safe and closes every plausible mechanism.
+
+## Build verification
+
+`tsc -b && vite build` (web) and `tsc` (api) -- full production
+builds, both clean. `apps/api` test suite: 170/170 passing.
+
+## CLAUDE.md hygiene
+
+No schema change, no migration. No database reset offered or
+accepted. All test data (client, gift cards, conversation, audit
+entries, test appointment) deleted after verification. Scratch Prisma
+scripts and screenshots removed from the repo before commit. `stripe
+listen` process (started this session) stopped; the pre-existing dev
+API server was restarted once (to pick up the corrected local-only
+`STRIPE_WEBHOOK_SECRET`, itself gitignored and never committed) and
+left running as found.

@@ -576,13 +576,13 @@ router.post("/stripe", async (req, res) => {
   // Embedded payments migration: the Payment Element's own success/failure
   // signal, parallel to checkout.session.completed above but for
   // PaymentIntents created directly (never through Checkout). Same
-  // three-model-lookup shape as that branch (DepositForm, Appointment,
-  // Inquiry/flash), keyed on stripePaymentIntentId instead of
-  // stripeCheckoutSessionId -- the standalone gift-card purchase link
-  // (routes/giftCards.ts) is deliberately NOT included here, since the
-  // embedded-payments task never put that flow in scope (Parts 2/3 cover
-  // deposit, flash prepayment, and session checkout only); it stays
-  // Checkout-only regardless of the embeddedPaymentsEnabled flag.
+  // four-model-lookup shape as that branch (DepositForm, Appointment,
+  // Inquiry/flash, GiftCard), keyed on stripePaymentIntentId instead of
+  // stripeCheckoutSessionId. The standalone gift-card purchase link
+  // (routes/giftCards.ts) WAS deliberately excluded here (the original
+  // embedded-payments task never put that flow in scope) -- now included,
+  // same GiftCard branch shape as checkout.session.completed's own, just
+  // reached via the embedded event instead of the Checkout one.
   if (event.type === "payment_intent.succeeded") {
     const paymentIntent = event.data.object;
 
@@ -636,6 +636,34 @@ router.post("/stripe", async (req, res) => {
         changes: { stripePaymentIntentId: paymentIntent.id, embedded: true },
       });
       emitInvalidation({ type: "appointment.changed", studioId });
+    }
+
+    // Embedded payments migration: standalone gift-card purchase link
+    // (routes/giftCards.ts) -- same shape as checkout.session.completed's
+    // own GiftCard branch above (full comment there), just keyed on
+    // stripePaymentIntentId instead of stripeCheckoutSessionId. The card
+    // row already exists (PENDING, real code, created the moment staff
+    // generated the link); this flips it ACTIVE now that payment is
+    // actually confirmed. Idempotent the same way: a retry that finds
+    // this card already past PENDING (paidAt already set) is a no-op.
+    const giftCard = await prisma.giftCard.findFirst({
+      where: { stripePaymentIntentId: paymentIntent.id },
+    });
+
+    if (giftCard && giftCard.status === "PENDING" && !giftCard.paidAt) {
+      await prisma.giftCard.update({
+        where: { id: giftCard.id },
+        data: { status: "ACTIVE", paidAt: new Date() },
+      });
+      emitInvalidation({ type: "giftcard.changed", studioId, clientId: giftCard.clientId });
+      await logAudit({
+        studioId,
+        actorUserId: null,
+        entityType: "GiftCard",
+        entityId: giftCard.id,
+        action: "stripe_payment_confirmed",
+        changes: { stripePaymentIntentId: paymentIntent.id, status: { from: "PENDING", to: "ACTIVE" }, embedded: true },
+      });
     }
 
     // Flash gallery prepayment (Part 3) -- same shape as

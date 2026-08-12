@@ -158,7 +158,20 @@ export default function DropdownPortal({
           ref={panelRef}
           className={`z-50 overflow-y-auto ${DEFAULT_PANEL_CLASSES} ${className}`}
           style={style}
-          variants={dropdownVariants}
+          // Mobile hardening: the ~220ms exit fade (dropdownVariants,
+          // shared with every other dropdown in the app) otherwise leaves
+          // this panel fully interactive while it's visually shrinking
+          // away -- a stray second contact point landing on it during
+          // that window (a real touchscreen quirk, not just a mouse
+          // concern) could re-fire an option's onClick, or land just
+          // outside the now-smaller/offset bounds and hit whatever's
+          // behind it instead (e.g. a hosting Modal's scrim). Only the
+          // exit variant is overridden here -- lib/motion.ts's own
+          // dropdownVariants stays untouched for every other consumer
+          // (ArtistSelect, ConversationsPanel's filter/sort, etc.), none
+          // of which sit inside a dismiss-on-outside-click Modal the way
+          // this component's callers sometimes do.
+          variants={{ ...dropdownVariants, exit: { ...dropdownVariants.exit, pointerEvents: 'none' } }}
           initial="initial"
           animate="animate"
           exit="exit"
