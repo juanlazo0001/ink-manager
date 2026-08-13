@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDownIcon, CheckIcon } from './icons'
 import { useThemePreset } from '../lib/useThemePreset'
 import { dropdownVariants, uiSpringTransition } from '../lib/motion'
+import { toDateString } from './DateAndTimeRangeFields'
 
 export interface DateRange {
   start: string // YYYY-MM-DD
@@ -20,14 +21,14 @@ const PRESETS: Preset[] = [
   { label: 'Last 90 days', days: 90 },
 ]
 
-function toDateInputValue(date: Date): string {
-  return date.toISOString().slice(0, 10)
-}
-
+// The browser's own LOCAL calendar day, not `.toISOString().slice(0, 10)`'s
+// UTC day -- a negative-UTC-offset browser near midnight would otherwise
+// silently send "yesterday" as both preset endpoints (same bug class as
+// Tasks.tsx's date-save fix; see CLAUDE.md's timezone note).
 export function presetRange(days: number): DateRange {
   const end = new Date()
   const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000)
-  return { start: toDateInputValue(start), end: toDateInputValue(end) }
+  return { start: toDateString(start), end: toDateString(end) }
 }
 
 interface DateRangePresetFilterProps {

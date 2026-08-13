@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { formatDateTime } from '../lib/format'
+import { parseDateString } from '../components/DateAndTimeRangeFields'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import PhoneInput from '../components/PhoneInput'
 import { applyThemePreset } from '../lib/themePresets'
@@ -40,9 +41,13 @@ interface HealthAnswerState {
   explanation: string
 }
 
+// `dob` is a bare "YYYY-MM-DD" from a native <input type="date"> --
+// parsed via parseDateString (LOCAL Y/M/D components), never `new
+// Date(dob)` (UTC midnight), so this compares two local calendar dates
+// instead of mixing a UTC-parsed instant against a real local "now."
 function isAtLeast18(dob: string): boolean {
-  const date = new Date(dob)
-  if (Number.isNaN(date.getTime())) return false
+  const date = parseDateString(dob)
+  if (!date) return false
   const eighteenYearsAgo = new Date()
   eighteenYearsAgo.setFullYear(eighteenYearsAgo.getFullYear() - 18)
   return date <= eighteenYearsAgo

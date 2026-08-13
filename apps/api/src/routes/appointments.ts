@@ -395,7 +395,7 @@ const APPOINTMENT_DETAIL_INCLUDE = {
   // Embedded payments UX redesign: the payment takeover's identity line
   // ("Your session with {artist} at {studio}") needs the studio's own
   // name, which this include never fetched before now.
-  studio: { select: { name: true } },
+  studio: { select: { id: true, name: true } },
   // referralCode: surfaced in the checkout-complete panel so staff can
   // remind the client to share their own code right after the session --
   // reuses the code already generated at this client's own creation, not a
@@ -488,7 +488,7 @@ router.get("/:id", async (req, res) => {
     select: { referralProgramEnabled: true },
   });
 
-  const { inquiryProject, plannedSession, ...rest } = appointment;
+  const { inquiryProject, plannedSession, studio, ...rest } = appointment;
   const { plannedSessions: projectPlannedSessions, ...inquiryProjectRest } = inquiryProject ?? {};
   const inquiry = inquiryProject && {
     ...inquiryProjectRest,
@@ -498,6 +498,17 @@ router.get("/:id", async (req, res) => {
   res.json({
     ...rest,
     inquiry,
+    studio,
+    // Same fromGuestStudio convention as inquiries.ts's GET /assigned-to-me/:id
+    // -- lets the frontend gate staff-only UI (AppointmentDetail.tsx's
+    // canManage and its sibling OWNER-role checks) on whether this record
+    // is actually AT the caller's home studio, not just their raw global
+    // role. A solo owner-artist reaching a host studio's appointment only
+    // via an active GUEST membership has a real OWNER role but no staff
+    // standing there at all -- effectiveRoleAt already enforces this
+    // server-side on every action; this closes the matching UI-visibility
+    // gap (see CLAUDE.md's timezone/permission-context notes and REPORT.md).
+    fromGuestStudio: studio.id !== req.user!.studioId ? studio : null,
     referralProgramEnabled: studioSettings?.referralProgramEnabled ?? true,
     plannedSession: plannedSession
       ? {

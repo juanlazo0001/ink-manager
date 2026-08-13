@@ -11,7 +11,7 @@ import { useViewAs } from '../context/useViewAs'
 import { tasksQueryKey } from '../lib/queryKeys'
 import { PlusIcon, CloseIcon, CheckIcon, FilterIcon, SortIcon } from '../components/icons'
 import DatePickerField from '../components/DatePickerField'
-import { toDateString } from '../components/DateAndTimeRangeFields'
+import { toDateString, parseDateString } from '../components/DateAndTimeRangeFields'
 import { useThemePreset } from '../lib/useThemePreset'
 import Eyebrow from '../components/Eyebrow'
 import PillMenu from '../components/PillMenu'
@@ -272,7 +272,7 @@ export default function Tasks() {
         method: 'POST',
         body: JSON.stringify({
           title: payload.title,
-          dueAt: payload.dueAt ? new Date(payload.dueAt).toISOString() : undefined,
+          dueAt: payload.dueAt ? parseDateString(payload.dueAt)!.toISOString() : undefined,
           userId: payload.assigneeUserId || undefined,
         }),
       }),
@@ -320,7 +320,7 @@ export default function Tasks() {
   }
 
   function updateDueDate(id: string, value: string) {
-    updateMutation.mutate({ id, data: { dueAt: value ? new Date(value).toISOString() : null } })
+    updateMutation.mutate({ id, data: { dueAt: value ? parseDateString(value)!.toISOString() : null } })
   }
 
   function renderPersonalTaskItem(task: PersonalTask) {
@@ -380,20 +380,14 @@ export default function Tasks() {
               </label>
               <DatePickerField
                 id={`due-date-${task.id}`}
-                // Pre-existing bug, fixed here since the new compact
-                // "Today"/"Tomorrow" wording is far more exposed to it
-                // than the old full-date format was: task.dueAt.slice(0, 10)
-                // took the UTC calendar day directly from the stored ISO
-                // timestamp, but DatePickerField's parseDateString/
-                // toDateString pair always treats a Y-M-D string as LOCAL
-                // components -- near a timezone boundary (e.g. any evening
-                // hour in a negative-UTC-offset zone) those two calendar
-                // days genuinely differ, so the picker showed the wrong
-                // day entirely. toDateString(new Date(...)) matches the
-                // LOCAL convention parseDateString expects. The onChange/
-                // save path (updateDueDate) has its own separate, deeper
-                // UTC-vs-local mismatch -- out of this fix's scope, see
-                // REPORT.md.
+                // task.dueAt.slice(0, 10) would take the UTC calendar day
+                // directly from the stored ISO timestamp, but DatePickerField's
+                // parseDateString/toDateString pair always treats a Y-M-D
+                // string as LOCAL components -- near a timezone boundary those
+                // two calendar days can differ. toDateString(new Date(...))
+                // matches the LOCAL convention parseDateString expects, and
+                // updateDueDate/createMutation save through parseDateString
+                // for the same reason (see CLAUDE.md's timezone note).
                 value={task.dueAt ? toDateString(new Date(task.dueAt)) : ''}
                 onChange={(value) => updateDueDate(task.id, value)}
                 disabled={!!viewAsTarget}

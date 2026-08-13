@@ -1,5 +1,5 @@
 import { formatCents } from '../../lib/money'
-import { formatDateOnly } from '../../lib/format'
+import { formatCalendarDateOnly } from '../../lib/format'
 import QrCode from '../QrCode'
 import { useTranslations, useLocale } from '../../i18n'
 
@@ -60,7 +60,7 @@ export default function DepositGiftCardCard({
       <p className="mt-4 font-mono text-base tracking-widest text-fg">{code}</p>
       {expiresAt && (
         <p className="mt-1 text-xs text-fg-muted">
-          {t('deposit.giftCardCard.validUntil', { date: formatDateOnly(expiresAt, locale) })}
+          {t('deposit.giftCardCard.validUntil', { date: formatCalendarDateOnly(expiresAt, locale) })}
         </p>
       )}
     </div>

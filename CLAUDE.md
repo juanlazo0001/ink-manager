@@ -31,6 +31,52 @@ Concise operating rules, not a project history — see REPORT.md for history.
   `studioId`, and realtime `emitInvalidation` calls — all three have been wrong in exactly this way
   before.
 
+## Timezones
+
+- **This bug class has recurred at least four times independently** (scheduling-assistant hours
+  reading a server-local clock instead of the studio's, task date pills, a gift-card/waiver
+  calendar-date display sweep, and an API dashboard date-range parser) — treat any new
+  date/time-touching code as a candidate sighting, not a one-off.
+- Two different, non-interchangeable conventions are both legitimate in this codebase — know which
+  one a given field uses before touching it:
+  - **A pure calendar date with no real time** (gift card `expiresAt`, waiver `dateOfBirth`, guest
+    residency start/end) is stored as **UTC midnight**. Write with `parseDateString`
+    (`apps/web/src/components/DateAndTimeRangeFields.tsx`) → `.toISOString()`, or the API's own
+    direct `new Date("YYYY-MM-DD")` on a bare date-only string (equivalent for this one write
+    case). **Read it back with `timeZone: 'UTC'` forced** (`formatCalendarDateOnly` in
+    `apps/web/src/lib/format.ts`, or `.slice(0, 10)` on the raw ISO string) — never a bare
+    `toLocaleDateString()`/`toLocaleString()`, which re-interprets that UTC midnight in the
+    viewer's own zone and can show the wrong day.
+  - **A real instant that needs to be judged against a studio's business hours, "today," or wall
+    clock** (scheduling, reminders, dashboard date ranges) must resolve `StudioSettings.timezone`
+    explicitly and go through `apps/api/src/lib/studioTime.ts`'s `civilDateKey`/
+    `localMinutesSinceMidnight`/`zonedTimeToUtc` — never the API server process's own OS timezone
+    (`new Date().getFullYear()`-style local getters on the backend), and never a client browser's
+    guess when the question is "what day is it for this studio."
+- Never parse a bare `"YYYY-MM-DD"` string with `new Date(value)` (single-arg form — UTC) and then
+  read it back with local `Date` getters, or vice versa — picking either convention consistently is
+  fine; mixing the two within one round trip is the bug, every time.
+- Before calling a date/timezone fix or feature verified, prove it with a **two-timezone test**:
+  pin `now`, set the relevant studio's `timezone` to something deliberately different from the
+  machine running the check, and confirm the result tracks the studio's zone (or the intended
+  local zone), not the server/dev-box's own OS timezone.
+
+## Backfills
+
+- A data backfill and its schema migration are two separate steps — `migrate deploy` running
+  automatically on every Railway deploy only applies the schema change (e.g. a new column default);
+  it never touches existing rows. Running a backfill against dev does not make it "done" — it is
+  done only when it has also run against production, deliberately, as its own step.
+- Every backfill report in REPORT.md **must state explicitly which database(s) it ran against**
+  (dev, production, or both) — never leave this implied or ambiguous. A backfill count alone (e.g.
+  "39 studios backfilled") is meaningless without saying which database those 39 rows live in; dev
+  and production have different studio counts and this has already caused a real gap (a themePreset
+  backfill landed only on dev — 122 studios there vs. 10 in production — while 8 of the 10 real
+  production studios stayed on the stale default for a full day, silently, because the report never
+  named the database).
+- If a fix needs to reach production and this session doesn't run it there, say so explicitly as an
+  open, unfinished item — don't let "verified on dev" read as "done."
+
 ## Concurrent sessions
 
 - Each concurrent session works in its own isolated git worktree (`git worktree add`). Never share

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime } from '../lib/format'
+import { formatCalendarDateOnly } from '../lib/format'
 import QrCode from '../components/QrCode'
 import StatusPill from '../components/StatusPill'
 import PublicPageFooter from '../components/PublicPageFooter'
@@ -165,7 +165,7 @@ export default function GiftCardResponse() {
                 </div>
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Expires</p>
-                  <p className="mt-1 text-fg">{data.expiresAt ? formatDateTime(data.expiresAt) : 'Never'}</p>
+                  <p className="mt-1 text-fg">{data.expiresAt ? formatCalendarDateOnly(data.expiresAt) : 'Never'}</p>
                 </div>
               </div>
             </div>

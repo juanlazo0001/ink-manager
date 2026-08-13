@@ -1,4 +1,5 @@
 import { formatCents } from '../lib/money'
+import { formatCalendarDateOnly } from '../lib/format'
 
 export interface GiftCardOption {
   id: string
@@ -65,7 +66,7 @@ export default function GiftCardStackPicker({
             </span>
             {card.expiresAt && (
               <span className="shrink-0 text-xs text-fg-muted">
-                expires {new Date(card.expiresAt).toLocaleDateString()}
+                expires {formatCalendarDateOnly(card.expiresAt)}
               </span>
             )}
           </label>

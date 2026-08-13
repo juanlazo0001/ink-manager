@@ -19018,3 +19018,244 @@ own DELETE route. Downloaded test CSVs and screenshots removed from the
 repo before commit (never committed in the first place -- shown inline
 during the session instead, per this repo's existing convention for
 Playwright-driven verification artifacts).
+
+# Window closeout: production backfill gap, timezone audit sweep, three flagged-never-fixed items, branch hygiene
+
+Follow-up session to the "August Catch-Up" ground-truth digest (git + REPORT.md, no
+session memory). Five numbered items from that digest's own findings.
+
+## Item 1: theme-defaults migration never reached production
+
+The digest flagged the most recent entry ("Theme defaults + Conversations pass") as
+ambiguous about which database its 39-studio `themePreset` backfill ran against, given
+39 far exceeds the known production studio count. Investigated with a read-only census
+against both databases:
+
+- **Dev**: 122 `Studio` rows, 41 with a `StudioSettings` row (40 `editorial-gold`, 1
+  `onyx-lime`) -- matches that entry's own stated pre-backfill counts (39 backfilled + 1
+  already-gold = 40), confirming the backfill ran here.
+- **Production**: 10 studios, 8 still on `onyx-lime`. The **schema-level default** (the
+  Prisma migration flipping `@default("editorial-gold")`) *was* live in production --
+  confirmed via `prisma migrate status` against `.env.production` ("Database schema is
+  up to date") -- but the one-off `UPDATE` backfill for existing rows never ran there.
+  Exactly the gap the digest suspected: a migration deploying automatically is not the
+  same thing as a backfill running.
+
+Cross-referenced all 8 remaining studios against `AuditLog` for any `theme`/`settings`
+action -- zero hits, confirming (same safety check the original session used) none had
+deliberately chosen `onyx-lime`; all 8 were the untouched stale default. Two of the
+eight are Justin's and Katie's real studios (Justin Tattoo, Katie Jones Tattoo) --
+the same two real artists this repo's history already tracks by name.
+
+**Asked Juan directly before writing to production** (per this repo's own established
+pattern for every real prod action). Approved. Ran the identical backfill against
+production: immediately-before re-check (8 still `onyx-lime`, zero audit hits) ->
+`updateMany` -> post-check. Result: **all 10 production studios now `editorial-gold`,
+zero remaining on the stale default.**
+
+Railway deploy health for the two most recent commits the digest flagged as
+unconfirmed: `railway status`/`railway deployment list` shows the current live
+deployment (`f0150b48`, Online, 2026-08-13 08:04:54) matches commit `9dbf3ef`
+(`git log`, same timestamp), and `git merge-base --is-ancestor` confirms both `30c82c3`
+and `bb43147` are ancestors of that commit. `curl` against `api.inkmanager.app/health`
+and `web.inkmanager.app` both 200. Both commits confirmed deploy-healthy.
+
+**CLAUDE.md**: added a "Backfills" section -- every backfill report must state which
+database(s) it ran against; a schema migration auto-deploying is not the same as a data
+backfill reaching production; production is always its own explicit step.
+
+## Item 2: timezone audit (4th sighting of this bug class)
+
+Fixed the Tasks date-save bug the earlier "mobile row redesign" entry flagged but
+deliberately left open (`updateDueDate`/`createMutation` used `new Date(value)` --
+UTC-parsing a bare `"YYYY-MM-DD"` string -- instead of `parseDateString`, the shared
+local-date helper the read side already used). Both now go through `parseDateString`.
+
+Full sweep of `apps/web/src` and `apps/api/src` for the same UTC-vs-local pattern
+found and fixed **6 more real bugs**, all sharing one of two root causes:
+
+- **`apps/api/src/routes/reports.ts`'s `parseRange`**: the dashboard's date-range
+  parser UTC-parsed `req.query.start/end` then reconstructed day boundaries via the
+  **API server process's own OS-local** `Date` getters -- the exact "Package D"
+  scheduling-timezone anti-pattern (server clock, not `StudioSettings.timezone`),
+  unfixed in this one route. Rewrote to resolve the studio's real timezone and use
+  `studioTime.ts`'s `zonedTimeToUtc`, matching `schedulingAssistant.ts`'s already-fixed
+  pattern.
+- **`DateRangePresetFilter.tsx`'s `toDateInputValue`**: used `.toISOString().slice(0,
+  10)` (UTC day) instead of the browser's local day for the "Last 7/30/90 days"
+  presets -- compounds directly with the bug above on the same request. Now uses
+  `toDateString` (the shared local-date helper).
+- **Gift-card `expiresAt` display, 5 sites** (`GiftCardDetail.tsx`, `ClientDetail.tsx`,
+  the public `GiftCardResponse.tsx`, `GiftCardStackPicker.tsx`,
+  `DepositGiftCardCard.tsx`): `expiresAt` is stored as UTC-midnight-as-calendar-date (a
+  deliberate, correct convention), but every display site read it with a bare
+  `toLocaleDateString()`/`formatDateTime()` -- reinterpreting that UTC midnight in the
+  viewer's own zone, showing the wrong day in any negative-UTC-offset browser. Added
+  `formatCalendarDateOnly` (forces `timeZone: 'UTC'`, same fix `ArtistPublicPage.tsx`
+  already used for its own hero date) and swapped all 5 sites to it.
+- **Waiver `dateOfBirth`**: `isAtLeast18`'s age gate (`WaiverSign.tsx`) mixed a
+  UTC-parsed DOB instant against a genuine local "now minus 18 years" instant --
+  could misjudge the exact 18th-birthday boundary by up to a day. Now parses DOB via
+  `parseDateString` (local). `AppointmentDetail.tsx`'s staff-facing DOB display had the
+  same UTC-vs-local mismatch as the gift-card sites above; same `formatCalendarDateOnly`
+  fix.
+- **`getSuggestedTimes`'s narrow-window race** (item 3 below, same audit, listed here
+  for completeness): the exact bug the "Client self-scheduling" entry flagged in
+  `getSuggestedTimes` and fixed only in its own new sibling functions
+  (`getAvailableDates`/`getSlotsForDate`), explicitly deferred. Same one-line fix
+  (`searchStart` padded a day behind `now`) applied here too.
+
+**Deliberately left as-is, documented inline**: `AppointmentForm.tsx`'s suggested-slot
+labels (`formatSlotLabel`) render in the browser's local zone, not the studio's --
+correct data (round-trips the real chosen instant unedited), but a staff member working
+remotely from the studio's own timezone could see a mislabeled day/time. No
+studio-timezone context is currently plumbed into that component from its callers;
+fixing display-only labels there is a real but separate follow-up, left flagged rather
+than half-fixed under this pass.
+
+**CLAUDE.md**: added a "Timezones" section codifying both legitimate conventions in
+this codebase (UTC-midnight calendar-only dates vs. studio-timezone-aware instants),
+naming this as a 4th-sighting recurring bug class, and requiring a two-timezone test
+before calling any date/timezone fix verified.
+
+**Two-timezone proof** (the pattern CLAUDE.md now requires): temporarily exported
+`reports.ts`'s `parseRange`, called it directly against the real dev database with
+`dev-studio`'s timezone set first to `America/Los_Angeles` then to `Pacific/Kiritimati`
+(UTC-7 and UTC+14 -- as far apart as real IANA zones get) for the same requested day
+(`2026-08-01`). Both resolved exactly correctly (`2026-08-01T07:00:00.000Z` ->
+`2026-08-02T06:59:59.999Z` for LA; `2026-07-31T10:00:00.000Z` ->
+`2026-08-01T09:59:59.999Z` for Kiritimati -- hand-verified against each zone's real UTC
+offset). Reverted the timezone, the export, and the scratch script afterward. Re-ran
+`studioTime.test.ts` (9/9) and the full API suite (170/170) -- all green.
+
+## Item 3: getSuggestedTimes narrow-window race -- fixed
+
+Covered under item 2 above (same audit, same fix). `searchStart` now padded a day
+behind `now` (`new Date(now.getTime() - 86_400_000)`), matching the already-fixed
+sibling functions exactly. Full test suite re-confirmed green after the change
+(170/170).
+
+## Item 6 (solo-guest UI dead-click gap) -- fixed and live-verified
+
+The flagged gap: `AppointmentDetail.tsx`'s `canManage` and two more
+`user?.role === 'OWNER'` checks gated staff-only UI on the caller's **raw global
+role**, not per-record -- a solo owner-artist reaching a host studio's appointment only
+via an active GUEST membership would see the full manage-mode panel (including "Delete
+Permanently") render, then get a real, correctly-enforced 403 the moment they actually
+clicked something requiring real staff standing there. Backend already enforced this
+correctly (`effectiveRoleAt`, from the epic that originally found this); only the UI
+visibility signal was missing, per that entry's own diagnosis: needed "a per-record
+signal the API doesn't currently return... which `inquiries.ts` already has and
+`appointments.ts` doesn't."
+
+Added exactly that: `GET /appointments/:id` now returns `fromGuestStudio` (the guest
+studio's `{id, name}`, or `null` at the caller's home studio), the identical convention
+`inquiries.ts`'s `GET /assigned-to-me/:id` already established. `canManage` now also
+requires `!appointment?.fromGuestStudio`; the "Delete Permanently" menu item and the
+`(canReschedule || OWNER)` "..." trigger fallback both gained the same guard.
+
+**A self-found-and-fixed regression along the way**: the first pass of this edit
+accidentally *removed* the `inquiry,` key from `GET /appointments/:id`'s response
+object while adding `studio`/`fromGuestStudio` next to it -- a plain edit mistake, not
+a pre-existing bug. Caught it during live verification (the appointment detail page
+crashed with `Cannot read properties of undefined (reading 'id')` for a real
+solo-guest test walkthrough) rather than after merge. Root-caused via a
+step-by-step replay of the exact route logic in isolation (confirmed the Prisma
+relation itself was fine, confirmed the post-processing logic was fine, confirmed the
+actual live route's debug output showed `inquiryProject` correctly populated right up
+until the response was built) before spotting the missing key by inspection. Fixed
+before commit; would have shipped a real regression otherwise.
+
+**Live-verified** (real Chromium via Playwright, dev servers on `:4000`/`:5174`)
+against the exact fixture the original epic's own walkthrough used
+(`solo-owner-live-1786190501155@example.test`, real active GUEST membership at "Host
+Studio Demo live-...", ARTIST matrix there denying `appointments.reschedule`):
+password reset for login access, then the same appointment record from the original
+walkthrough opened cleanly (no crash, full page render), "..." menu opened -- **"Delete
+Permanently" absent**, only "Reschedule"/"Archive" shown. Clicked "Approve" anyway
+(bonus regression check, not required by this fix): same "Forbidden" 403 as the
+original walkthrough, status pill unchanged -- confirms the backend enforcement this
+fix's UI change sits on top of is still fully intact. Password left reset (disposable
+test fixture, no original value to restore to).
+
+Full API suite (170/170) and both apps' production builds clean after this change.
+
+## Item 7: FlashPaymentResponse.tsx translated rendering -- live re-verified, no bug found
+
+The flagged gap: the Payment-received Part 2 entry noted this page's own translated
+rendering was never independently re-verified (unlike the identical component
+elsewhere). Repurposed a real dev-DB flash-payment inquiry (set its client's
+`preferredLocale` to `es`, added a Spanish `FlashPieceTranslation` for its linked
+piece), loaded the real page in a browser. Every string rendered correctly in Spanish:
+heading, the interpolated intro line (client first name + the piece's own *translated*
+title + studio name, three-variable interpolation), the payment button
+("Pagar $150.00"), and the shared public-page footer ("Política de Privacidad" /
+"Términos y Condiciones"). No bug -- the gap is now closed as verified-safe, not
+just assumed. All test-fixture changes (token, translation row, client locale)
+reverted after the check; screenshots and scratch scripts not committed.
+
+## Item 4 (PDF deposit-terms/waiver translations): confirmed already covered
+
+One-line answer: **yes**, closed by "Multi-language public forms -- Part 5: signed-
+document locale capture" (`pdf.ts`'s `generateDepositFormPdf` now reads
+`DepositForm.termsSnapshot` -- "the exact, locale-correct wording shown at sign time,"
+per that entry's own code comment, which explicitly names itself as closing this exact
+gap: "This closes the gap once flagged here as accepted"). `LiabilityWaiver` PDFs
+already had this same snapshot guarantee before that part landed. The earlier Part 3
+entry's "deliberately left untranslated, deferred to Part 5" note was accurate and
+the deferral was honored -- nothing left open here.
+
+## Item 5: branch hygiene
+
+Re-confirmed all 12 branches from the digest at 0 commits ahead of the now-current
+`main` (unchanged by two more commits landing since the digest -- merging more into
+main only makes "0 ahead" more true, never less). Deleted the 7 that weren't checked
+out anywhere (local + `origin`): `embedded-payments-default`,
+`explore/embedded-payments`, `explore/public-journey-restyle`,
+`flash-governance-split`, `og-link-previews`, `session/i18n-investigation` (local
+only -- never had its own remote branch), `ui/visual-redesign`.
+
+**5 left deliberately untouched**: `explore/artist-page-v2`,
+`explore/flash-gallery-restyle`, `explore/multi-language-public-forms`,
+`session/customer-language-preference`, `session/prepay-onhold` are each checked out
+in their own local worktree (`ink-manager-w-*`) right now. Deleting a branch checked
+out elsewhere requires force-removing that worktree first -- refused here, since
+whether those worktrees are abandoned or belong to another still-active session
+can't be told from this session alone, and force-removing a worktree that turns out
+to be live would destroy someone else's uncommitted work. Flagged for Juan to
+confirm/clean up directly.
+
+## A real concurrent-session collision, found and worked around
+
+Partway through item 6's verification, `git status` surfaced uncommitted changes this
+session never made: `apps/api/package.json` (new `archiver` dependency),
+`apps/api/src/routes/clients.ts` (a new `POST /export-full` bulk-export helper),
+`apps/api/src/routes/waivers.ts` (an export added for that same feature),
+`apps/web/src/pages/Clients.tsx`, a new untracked `apps/api/src/lib/clientFullExport.ts`,
+and the root `package-lock.json` -- a different concurrent session actively building a
+client-data-export feature in this same shared primary checkout, exactly the collision
+CLAUDE.md's "Concurrent sessions" section warns worktree isolation exists to prevent.
+Left every one of those files completely untouched and staged only this session's own
+14 files for commit. Separately, mid-debugging this session killed and restarted the
+shared `:4000` API dev server (believed at the time to be stale/hot-reload-corrupted;
+the real cause turned out to be this session's own edit mistake, see item 6 above) --
+if that belonged to the other session's live work rather than a leftover process, this
+would have interrupted it. No way to confirm or undo that from here; flagged for Juan.
+
+## Build verification
+
+`tsc -b && vite build` (web) and `tsc` (api) -- full production builds, both clean, run
+repeatedly across every change in this session. `apps/api` test suite: 170/170 passing
+throughout, including after the timezone fixes and the appointments.ts change.
+
+## CLAUDE.md hygiene
+
+Two new sections added (Backfills, Timezones), both above. Every scratch verification
+script written directly into `apps/api/` (never the repo's own tracked test files) and
+removed before commit -- confirmed via `git status` showing zero stray scratch files
+staged. The one real production write (item 1's backfill) followed the exact
+re-verify-immediately-before-writing safety pattern this repo's own history already
+established, with explicit authorization requested and given first. Dev servers
+(`:4000` api, `:5174` web) left running rather than stopped, given the live concurrent
+session discovered above -- stopping them risks disrupting work this session can't see
+the full state of.

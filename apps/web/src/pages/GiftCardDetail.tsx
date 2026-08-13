@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime, formatPhoneInput } from '../lib/format'
+import { formatDateTime, formatCalendarDateOnly, formatPhoneInput } from '../lib/format'
 import { ArrowLeftIcon, AttachmentIcon, BanIcon, CalendarIcon, CopyIcon, ScanIcon, TransferIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
@@ -376,7 +376,7 @@ export default function GiftCardDetail() {
                       <div>
                         <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Expires</p>
                         <p className="mt-1 text-sm text-fg">
-                          {card.expiresAt ? formatDateTime(card.expiresAt) : 'Never'}
+                          {card.expiresAt ? formatCalendarDateOnly(card.expiresAt) : 'Never'}
                         </p>
                       </div>
                       <div>

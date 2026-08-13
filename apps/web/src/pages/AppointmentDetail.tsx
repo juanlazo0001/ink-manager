@@ -15,7 +15,7 @@ import DateAndTimeRangeFields, {
   type DateAndTimeRangeValue,
 } from '../components/DateAndTimeRangeFields'
 import { apiFetch, ApiError } from '../lib/api'
-import { describeAppointmentStatus, formatDateTime, formatPhoneInput, formatStatus, formatPriceEstimate } from '../lib/format'
+import { describeAppointmentStatus, formatDateTime, formatCalendarDateOnly, formatPhoneInput, formatStatus, formatPriceEstimate } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import SendChannelButton, { type SendChannel } from '../components/SendChannelButton'
 import { formatCents, dollarsToCents } from '../lib/money'
@@ -99,6 +99,14 @@ interface Appointment {
   // Embedded payments UX redesign: the payment takeover's identity line
   // ("Your session with {artist} at {studio}") needs the studio's own name.
   studio: { name: string }
+  // Solo-guest access fix, Part 3 follow-up: null when this appointment is
+  // at the caller's own home studio; the guest studio's own {id, name}
+  // when reached only via an active GUEST membership (same convention as
+  // inquiries.ts's GET /assigned-to-me/:id). Lets canManage below gate on
+  // real per-record staff standing, not just the caller's raw global role
+  // -- a solo owner-artist has a real OWNER role but no staff standing at
+  // a host studio they only reach as a guest artist.
+  fromGuestStudio: { id: string; name: string } | null
   inquiry: {
     id: string
     description: string
@@ -182,11 +190,10 @@ export default function AppointmentDetail() {
   const { profile } = useUserProfile()
   const queryClient = useQueryClient()
   const { openPanel } = useConversationPanel()
-  const canManage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const canViewAudit = profile?.permissions.includes('audit.view') ?? false
   // These are each their own configurable permission on the API (no
   // requireRole stacked alongside), so they're checked directly rather
-  // than folded into canManage above -- e.g. an ARTIST granted
+  // than folded into canManage below -- e.g. an ARTIST granted
   // appointments.checkout should see the checkout widget even though
   // canManage (OWNER/FRONT_DESK) would otherwise exclude them.
   // Solo artist architecture, Phase 3: see Calendar.tsx's own comment --
@@ -203,6 +210,18 @@ export default function AppointmentDetail() {
   const [appointment, setAppointment] = useState<Appointment | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshIndex, setRefreshIndex] = useState(0)
+
+  // Solo-guest access fix, dead-click gap closed: staff-only UI now also
+  // requires this record to actually be at the caller's home studio, not
+  // just a raw global OWNER/FRONT_DESK role. Before this, a solo owner-
+  // artist reaching a host appointment only via an active GUEST membership
+  // saw the full staff manage-mode panel render, then got a real 403 from
+  // the server the moment they clicked anything in it (effectiveRoleAt
+  // already enforced this correctly server-side -- see CLAUDE.md and
+  // REPORT.md's "Solo-guest access fix" entry). appointment == null (still
+  // loading) intentionally reads as false here, same as every other
+  // appointment-dependent flag below.
+  const canManage = (user?.role === 'OWNER' || user?.role === 'FRONT_DESK') && !appointment?.fromGuestStudio
 
   const [waiverDetail, setWaiverDetail] = useState<WaiverDetail | null>(null)
 
@@ -952,7 +971,7 @@ export default function AppointmentDetail() {
                     ) : (
                       <StatusPill status={describeAppointmentStatus(appointment)} />
                     )}
-                    {(canReschedule || user?.role === 'OWNER') && (
+                    {(canReschedule || (user?.role === 'OWNER' && !appointment.fromGuestStudio)) && (
                       <div className="relative flex self-stretch">
                         <button
                           ref={moreMenuButtonRef}
@@ -1001,7 +1020,7 @@ export default function AppointmentDetail() {
                               {appointment.archivedAt ? 'Unarchive' : 'Archive'}
                             </button>
                           )}
-                          {user?.role === 'OWNER' && (
+                          {user?.role === 'OWNER' && !appointment.fromGuestStudio && (
                             <button
                               type="button"
                               onClick={() => {
@@ -1224,7 +1243,7 @@ export default function AppointmentDetail() {
                               Date of birth
                             </p>
                             <p className="mt-1 text-fg">
-                              {waiverDetail.dateOfBirth ? new Date(waiverDetail.dateOfBirth).toLocaleDateString() : '—'}
+                              {waiverDetail.dateOfBirth ? formatCalendarDateOnly(waiverDetail.dateOfBirth) : '—'}
                             </p>
                           </div>
                           <div>

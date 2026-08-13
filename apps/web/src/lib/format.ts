@@ -18,6 +18,17 @@ export function formatDateOnly(iso: string, locale: Locale = DEFAULT_LOCALE) {
   return new Date(iso).toLocaleDateString(dateLocale(locale), { dateStyle: 'medium' })
 }
 
+// For a field that's stored as a pure calendar date at UTC-midnight (gift
+// card expiresAt, waiver dateOfBirth -- see artists.ts/studios.ts's
+// guestStartDate write-side comment for the same convention), not a real
+// instant. Forcing timeZone: 'UTC' is what makes the stored calendar day
+// survive display regardless of the viewer's own timezone -- without it,
+// any negative-UTC-offset browser shows the day before the one actually
+// stored. Same fix ArtistPublicPage.tsx's hero date already uses.
+export function formatCalendarDateOnly(iso: string, locale: Locale = DEFAULT_LOCALE) {
+  return new Date(iso).toLocaleDateString(dateLocale(locale), { dateStyle: 'medium', timeZone: 'UTC' })
+}
+
 // Service lines: a FLAT-pricing service (e.g. Powder Brows) is entered with
 // the SAME value in both priceEstimateLow and priceEstimateHigh (see
 // InquiryDetail.tsx's estimate form) -- reusing the entire existing

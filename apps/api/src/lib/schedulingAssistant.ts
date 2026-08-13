@@ -270,7 +270,14 @@ export async function getSuggestedTimes(
   const context = await resolveAvailabilityContext(artistId, studioId);
   if (!context) return [];
 
-  const searchStart = now;
+  // Padded a day behind `now`, not `now` itself -- an appointment whose
+  // endTime already passed by the moment `now` was read can still have a
+  // buffer window reaching forward past `now` (computeDaySlots checks that
+  // buffer, not raw endTime), so an unpadded `gt: now` here silently drops
+  // it from the fetch entirely and a slot inside its buffer gets offered
+  // as clean. Same pre-existing bug found and fixed in getAvailableDates/
+  // getSlotsForDate below; fixed here too (timezone audit, see CLAUDE.md).
+  const searchStart = new Date(now.getTime() - 86_400_000);
   const searchEnd = new Date(now.getTime() + searchDays * 86_400_000);
 
   // Same "no appointmentType filter" property as findBufferConflict's own

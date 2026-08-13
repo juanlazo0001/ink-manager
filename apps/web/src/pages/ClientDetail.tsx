@@ -9,7 +9,7 @@ import ClientComparisonView from '../components/ClientComparisonView'
 import StaffInquiryForm from '../components/StaffInquiryForm'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { apiFetch, ApiError, downloadFile } from '../lib/api'
-import { describeAppointmentStatus, formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
+import { describeAppointmentStatus, formatDateTime, formatCalendarDateOnly, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { AttachmentChip } from '../components/NotesSection'
@@ -2088,7 +2088,7 @@ export default function ClientDetail() {
                                 <StatusPill status={card.status} />
                               </td>
                               <td className="hidden py-3 text-fg-secondary sm:table-cell">
-                                {card.expiresAt ? formatDateTime(card.expiresAt) : 'No expiration'}
+                                {card.expiresAt ? formatCalendarDateOnly(card.expiresAt) : 'No expiration'}
                               </td>
                               <td className="hidden py-3 text-fg-secondary md:table-cell">
                                 {card.appointmentId

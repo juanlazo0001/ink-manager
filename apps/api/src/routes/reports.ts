@@ -4,6 +4,11 @@ import { AppointmentStatus, InquiryStatus, GiftCardStatus, Role } from "../../ge
 import { requireAuth } from "../middleware/auth";
 import { hasPermission, requirePermission } from "../lib/permissions";
 import { activeStudioIdsForCaller } from "../lib/artistAccess";
+import { zonedTimeToUtc } from "../lib/studioTime";
+
+// Matches StudioSettings.timezone's own schema-level default (see
+// schedulingAssistant.ts's own DEFAULT_TIMEZONE for the same convention).
+const DEFAULT_TIMEZONE = "America/New_York";
 
 const router = Router();
 router.use(requireAuth);
@@ -17,20 +22,31 @@ router.use(requireAuth);
 router.use(requirePermission("reports.viewDashboard"));
 
 const DEFAULT_RANGE_DAYS = 30;
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function parseRange(req: import("express").Request): { start: Date; end: Date } {
-  const startRaw = typeof req.query.start === "string" ? new Date(req.query.start) : undefined;
-  const endRaw = typeof req.query.end === "string" ? new Date(req.query.end) : undefined;
+// req.query.start/end are bare "YYYY-MM-DD" strings from
+// DateRangePresetFilter.tsx. The old implementation UTC-parsed them
+// (`new Date("YYYY-MM-DD")`) and reconstructed day boundaries via the API
+// SERVER PROCESS's own OS-local `getFullYear`/`getMonth`/`getDate` --
+// exactly the "Package D" scheduling-timezone bug class (see studioTime.ts's
+// own header comment), just unfixed here. Resolves against the studio's
+// actual configured timezone instead, so "start of day"/"end of day" match
+// what the studio (not the server host) considers that calendar day.
+async function parseRange(req: import("express").Request, studioId: string): Promise<{ start: Date; end: Date }> {
+  const studioSettings = await prisma.studioSettings.findUnique({
+    where: { studioId },
+    select: { timezone: true },
+  });
+  const timeZone = studioSettings?.timezone ?? DEFAULT_TIMEZONE;
 
-  const end =
-    endRaw && !Number.isNaN(endRaw.getTime())
-      ? new Date(endRaw.getFullYear(), endRaw.getMonth(), endRaw.getDate(), 23, 59, 59, 999)
-      : new Date();
+  const startKey = typeof req.query.start === "string" && DATE_KEY_RE.test(req.query.start) ? req.query.start : undefined;
+  const endKey = typeof req.query.end === "string" && DATE_KEY_RE.test(req.query.end) ? req.query.end : undefined;
 
-  const start =
-    startRaw && !Number.isNaN(startRaw.getTime())
-      ? new Date(startRaw.getFullYear(), startRaw.getMonth(), startRaw.getDate(), 0, 0, 0, 0)
-      : new Date(end.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+  const end = endKey ? new Date(zonedTimeToUtc(endKey, "23:59", timeZone).getTime() + 59_999) : new Date();
+
+  const start = startKey
+    ? zonedTimeToUtc(startKey, "00:00", timeZone)
+    : new Date(end.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
 
   return { start, end };
 }
@@ -59,7 +75,7 @@ function pct(numerator: number, denominator: number): number | null {
 // is a right-now snapshot by definition).
 router.get("/dashboard", async (req, res) => {
   const { studioId, userId, role } = req.user!;
-  const { start, end } = parseRange(req);
+  const { start, end } = await parseRange(req, studioId);
   const canViewFinancial = await hasPermission(studioId, role, "reports.viewFinancial");
 
   // An ARTIST's dashboard is their own performance, not the whole studio's --

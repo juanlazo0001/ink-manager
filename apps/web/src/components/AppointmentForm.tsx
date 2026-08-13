@@ -397,6 +397,16 @@ export default function AppointmentForm({
     }
   }
 
+  // Timezone audit (see CLAUDE.md): deliberately browser-local, not
+  // studio-local -- getSuggestedTimes already computes candidates in the
+  // studio's own timezone correctly, but this component has no studio-
+  // timezone context plumbed through from its callers (Calendar.tsx/
+  // InquiryDetail.tsx), so labeling in the studio's zone would need that
+  // threaded in first. No data corruption either way: isoToTimeRangeParts
+  // round-trips a chosen candidate's own real ISO instant back out
+  // unedited, it never reconstructs one from these display-only local
+  // parts. Only mislabels for staff working from a different timezone
+  // than the studio -- a real gap, left open rather than half-fixed here.
   function formatSlotLabel(candidate: SuggestedTimeCandidate): string {
     const start = new Date(candidate.startTime)
     const end = new Date(candidate.endTime)
