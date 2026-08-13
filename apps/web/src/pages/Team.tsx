@@ -809,15 +809,15 @@ export default function Team() {
             </div>
 
             {isOwner && activeTab === 'staff' && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={openAddStaff}
                   title="Create an account directly with a password, without sending an invite email"
                   className={
                     isEditorial
-                      ? 'editorial-btn-secondary flex items-center gap-2 rounded-full border px-4 py-2.5 transition'
-                      : 'flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
+                      ? 'editorial-btn-secondary flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-4 py-2.5 transition'
+                      : 'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
                   }
                 >
                   Add directly
@@ -827,8 +827,8 @@ export default function Team() {
                   onClick={openInvite}
                   className={
                     isEditorial
-                      ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-bg transition hover:bg-accent-hover'
-                      : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+                      ? 'editorial-btn-primary flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-accent px-4 py-2.5 text-bg transition hover:bg-accent-hover'
+                      : 'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
                   }
                 >
                   <PlusIcon className="h-4 w-4" />
@@ -838,15 +838,27 @@ export default function Team() {
             )}
 
             {isOwner && activeTab === 'artists' && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigate('/team/transfer')}
+                  title="Move a departing artist's client contacts and in-flight project work to their new home studio"
+                  className={
+                    isEditorial
+                      ? 'editorial-btn-secondary flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-4 py-2.5 transition'
+                      : 'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
+                  }
+                >
+                  Transfer clients
+                </button>
                 <button
                   type="button"
                   onClick={() => navigate('/artists/new')}
                   title="Create an artist account directly with a password, without sending an invite email"
                   className={
                     isEditorial
-                      ? 'editorial-btn-secondary flex items-center gap-2 rounded-full border px-4 py-2.5 transition'
-                      : 'flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
+                      ? 'editorial-btn-secondary flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-4 py-2.5 transition'
+                      : 'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
                   }
                 >
                   Add directly
@@ -856,24 +868,12 @@ export default function Team() {
                   onClick={openInviteArtist}
                   className={
                     isEditorial
-                      ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-bg transition hover:bg-accent-hover'
-                      : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+                      ? 'editorial-btn-primary flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-accent px-4 py-2.5 text-bg transition hover:bg-accent-hover'
+                      : 'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
                   }
                 >
                   <PlusIcon className="h-4 w-4" />
                   Invite Artist
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigate('/team/transfer')}
-                  title="Move a departing artist's client contacts and in-flight project work to their new home studio"
-                  className={
-                    isEditorial
-                      ? 'editorial-btn-secondary flex items-center gap-2 rounded-full border px-4 py-2.5 transition'
-                      : 'flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
-                  }
-                >
-                  Transfer clients
                 </button>
               </div>
             )}

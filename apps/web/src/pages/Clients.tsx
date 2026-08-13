@@ -416,7 +416,11 @@ export default function Clients() {
                       type="button"
                       onClick={exitSelectionMode}
                       disabled={exporting}
-                      className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                      className={
+                        isEditorial
+                          ? 'editorial-btn-secondary flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 transition disabled:opacity-60'
+                          : 'flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60'
+                      }
                     >
                       <span className="whitespace-nowrap">Cancel</span>
                     </button>
@@ -424,7 +428,11 @@ export default function Clients() {
                       type="button"
                       onClick={() => setShowExportFieldPicker(true)}
                       disabled={exporting}
-                      className="shrink-0 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      className={
+                        isEditorial
+                          ? 'editorial-btn-primary flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                          : 'flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      }
                     >
                       <span className="whitespace-nowrap">
                         {exporting

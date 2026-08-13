@@ -19455,3 +19455,38 @@ that theme), missing `flex items-center gap-2`, and `font-medium` where Import C
 uses `font-semibold`. Copied Import Clients' own `className` logic verbatim so the two
 buttons render identically in both the default and Editorial Gold themes. `tsc -b` and
 `vite build` both clean; no behavior change, styling only.
+
+# Team + Clients header buttons: order, mobile wrapping, style parity
+
+Three small UI fixes Juan reported, all styling/layout only -- no behavior change.
+
+- **Team page, artists tab button order** (`apps/web/src/pages/Team.tsx`): reordered to
+  Transfer clients -> Add directly -> Invite Artist (was Add directly -> Invite Artist
+  -> Transfer clients), so the primary/gold "Invite Artist" action sits last, matching
+  the staff tab's own secondary-then-primary ordering.
+- **Team page, buttons growing taller on mobile**: the header button rows were
+  `flex items-center gap-2` with no wrap and no `whitespace-nowrap`, so at narrow
+  widths flex shrank each button below its text's natural width and the labels wrapped
+  to a second line -- making the buttons *taller* rather than letting the row reflow.
+  Added `flex-wrap` on both rows (staff and artists) plus `shrink-0 whitespace-nowrap`
+  on every button in them, so the buttons keep a fixed single-line height and the row
+  wraps to a second line instead. Fixed on the staff tab too, not just the artists tab
+  Juan reported -- identical markup, identical latent bug.
+- **Clients page, selection-mode buttons** (`apps/web/src/pages/Clients.tsx`): the
+  "Cancel" and "Export All"/"Export N Selected" buttons that replace the Export trigger
+  once selection mode is active were still on the older bare-`className` styling (no
+  `isEditorial` branch, `font-medium`, no flex/gap) -- the same drift the previous entry
+  fixed on the Export trigger itself. Cancel now uses the shared secondary style (same
+  as Import Clients), Export All the shared primary style (same as Add Client), both
+  keeping their existing `disabled:opacity-60`.
+
+## Verification
+
+`tsc -b` and `vite build` clean. Live (isolated worktree again -- another concurrent
+session held the default dev ports): at a 390x844 mobile viewport, confirmed the Team
+artists tab renders Transfer Clients / Add Directly / Invite Artist in that order, all
+three on one line each at equal height, wrapping to a second row rather than growing
+taller; and the Clients page's Cancel / Export All render at the same height and in the
+same secondary/primary treatments as Import Clients / Add Client beside them. Re-checked
+both pages at 1280x800 to confirm the desktop single-row layout was unaffected. Worktree
+and its dev servers (plus the by-now-familiar lingering `tsx` watcher) cleaned up.
