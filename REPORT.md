@@ -19445,3 +19445,13 @@ passing. Worktree and its two dev servers (plus, again, one lingering `tsx` watc
 process that blocked the worktree directory's own deletion until killed -- same
 class of cleanup gotcha as the prior entry, evidently not a one-off) cleaned up
 before finishing.
+
+# Clients: Export button styling parity with Import Clients
+
+Small follow-up, same session: the new "Export" trigger button (`apps/web/src/pages/
+Clients.tsx`) had drifted from "Import Clients" right next to it -- missing the
+`isEditorial` branch entirely (so it never picked up `editorial-btn-secondary` under
+that theme), missing `flex items-center gap-2`, and `font-medium` where Import Clients
+uses `font-semibold`. Copied Import Clients' own `className` logic verbatim so the two
+buttons render identically in both the default and Editorial Gold themes. `tsc -b` and
+`vite build` both clean; no behavior change, styling only.

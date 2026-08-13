@@ -401,7 +401,11 @@ export default function Clients() {
                   <button
                     type="button"
                     onClick={() => setSelectionMode(true)}
-                    className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                    className={
+                      isEditorial
+                        ? 'editorial-btn-secondary flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 transition'
+                        : 'flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface'
+                    }
                   >
                     <span className="whitespace-nowrap">Export</span>
                   </button>
