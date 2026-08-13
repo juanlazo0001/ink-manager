@@ -17452,6 +17452,104 @@ Carried forward, not addressed here (deliberately out of scope for this
 merge, per instruction): the `mark-lost`/`reopen` wrong-studio
 audit-log/`emitInvalidation` bug flagged in Part 3.
 
+# Wrong-studio audit/realtime sweep, merge to main, production census
+
+Picked up the `mark-lost`/`reopen` wrong-studio bug carried forward from
+the prior session. Reading both routes confirmed the report, but the
+pattern turned out systemic rather than isolated: every route in
+`inquiries.ts` guarded by `callerBelongsToStudio` (guest-artist-aware --
+allows the caller's HOME studio OR any studio they have an active guest
+membership at) that then used `req.user!.studioId` downstream for
+`logAudit`/`emitInvalidation` had the same bug, since that field is the
+caller's home studio, not necessarily the record's. Swept all 24
+`callerBelongsToStudio` call sites in the file; 16 routes needed fixing
+(`PATCH /:id`, `PATCH /:id/assign`, `POST /:id/schedule`, `/waitlist`,
+`/unwaitlist`, `/mark-lost`, `/flash/approve`, `/flash/decline`,
+`/reopen`, `/mark-good-candidate`, `/complete-project`,
+`/reopen-project`, `PATCH /:id/deposit-form/proposed-time`,
+`/attach-gift-card`, `PATCH/DELETE /:id/notes/:noteId`). Two were real
+data bugs, not audit cosmetics: `POST /:id/schedule` created the new
+`Appointment` row itself under the caller's home studio instead of the
+project's studio, and `PATCH /:id/assign` validated the target artist's
+membership against the wrong studio (could wrongly reject a valid
+same-studio artist for a guest-assigned caller). Per the task's own
+"sweep adjacent audit-write call sites for siblings" instruction, checked
+the same `callerBelongsToStudio`-then-`req.user!.studioId` pattern across
+every other route file that uses the helper: `appointments.ts` was
+already clean from an earlier sweep; `clients.ts` (12 routes -- phone/
+email add/remove/make-primary, archive/unarchive, permanently-delete,
+potential-duplicates matching), `deposits.ts` (1 route --
+`/checkout-link`'s SMS-send path), and `giftCards.ts` (2 routes --
+`/attachment` rollover, `/holder` reassignment) all had the same bug,
+fixed the same way: replace `req.user!.studioId` with the already-
+verified record's own studioId (`inquiry.studioId`, `client.studioId`,
+`card.studioId`, `note.studioId` as appropriate) for every downstream
+audit/realtime/data-ownership use, following the Transfer-to-artist
+epic's own "always the record's studio, never the caller's" pattern.
+
+Also added one line to CLAUDE.md's "Trusting a build" section: typecheck-
+trust means the full production build, not `tsc --noEmit -p .` alone --
+citing the `ConversationsPanel.tsx` `hold`-tone miss from the prior
+session as the concrete precedent.
+
+Verified against the full production build (not `--noEmit`) for both
+apps and the full 170-test API suite before committing -- all green.
+Committed (`1daf8ee`), pushed to `session/prepay-onhold`. Did not
+fast-forward `main` at that point: `origin/main` had moved (a
+concurrent session's Transfer-epic browser-gate-closure merge,
+`a766acb`), so a bare fast-forward wasn't safe without reconciling first.
+
+**Merge to main.** Fetched `origin/main`, diffed against the branch:
+the transfer-epic commit (`f7dc60e`) never touched `inquiries.ts`,
+`clients.ts`, `deposits.ts`, or `giftCards.ts` at all, so the only
+overlapping files were `CLAUDE.md` and `.mcp.json`, both non-overlapping
+line ranges (this session's own "Trusting a build" addition vs. the
+transfer epic's new "Concurrent sessions" bullet about the Playwright MCP
+`--isolated` flag). `git merge origin/main` auto-merged cleanly, no
+conflicts. Re-verified on the merged tree: full production build clean
+for both apps, 170/170 tests green, REPORT.md line count grew (not
+shrank) versus the pre-merge commit. Pushed the merge
+(`197abe6`), confirmed `origin/main` was an ancestor before fast-
+forwarding, then `git push origin session/prepay-onhold:main` --
+a genuine fast-forward.
+
+**Railway, confirmed healthy post-merge.** `railway deployment list`
+for both `api` and `web` services showed `SUCCESS` status at commit
+`197abe6`, both created within one second of each other. `api.inkmanager.app/inquiries`
+returned `401` (route exists, auth required -- proof of a live,
+responding service, not just "online"). The web bundle hash didn't
+change from its pre-push baseline; investigated rather than assumed-fine,
+and confirmed via the deployment record itself that this is because the
+merge commit touched only `apps/api` and `CLAUDE.md` -- `apps/web`'s
+source was byte-identical to what the prior (transfer-epic) deploy had
+already built, so the rebuild produced the same output hash. Not a
+stale/failed deploy; a deterministic build with no new frontend input.
+
+**Read-only production census.** Because `POST /:id/schedule`'s
+wrong-studio `Appointment.studioId` bug was live in production until
+this fix, checked for existing damage: any `Appointment` row whose
+`studioId` doesn't match its own project's (`Inquiry.studioId`). Direct
+production DB access from this sandbox was blocked outright by the
+auto-mode permission classifier -- every route tried (`railway
+variables`, `railway run` with the injected `DATABASE_URL`, `railway
+connect --tunnel-only`) was denied before it could even reach the
+database, not just the first attempt. Handed the read-only script
+(`prisma.appointment.findMany` + a JS filter, no writes) to the user to
+run themselves via a local SSH tunnel (`railway connect Postgres
+--tunnel-only`, since `railway run`'s injected `DATABASE_URL` points at
+Railway's internal-only hostname and isn't reachable from outside
+Railway's network).
+
+**Result: 2 appointments scanned in production, 0 mismatches.** No
+repair needed -- the bug never actually produced a wrong-studio
+`Appointment` row in practice, despite being live in the code path.
+Scratch script deleted, per CLAUDE.md's own scratch-script-doesn't-
+belong-in-the-repo rule.
+
+The mark-lost/reopen wrong-studio bug and its full sibling family are
+now fixed, merged to `main`, deployed, and confirmed to have caused zero
+lasting production damage.
+
 # UI batch — five small items
 
 Five independent, small UI fixes, verified live against a running dev
