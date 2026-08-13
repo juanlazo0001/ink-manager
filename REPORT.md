@@ -18934,3 +18934,87 @@ real pre-existing broken thread the backfill corrected was left fixed.
 Temporary `FRONT_DESK` permission override reverted immediately after
 its one live check. Scratch Prisma scripts and screenshots removed from
 the repo before commit; `.playwright-mcp/` scratch output removed.
+
+# Client CSV export: column picker
+
+Staff can now choose which fields to include before exporting the
+client list, instead of always getting the same fixed 12 columns.
+
+## What changed
+
+- **`apps/api/src/routes/clients.ts`, `POST /clients/export`**: added
+  `EXPORT_FIELD_DEFS` -- the canonical, ordered list of every column this
+  route can ever emit (the exact 12 fields it already exported: name,
+  contact fields, referral code, created date). The route now accepts an
+  optional `fields: string[]` in the body -- validated against that
+  allowlist (400 on anything outside it, or an empty array), determining
+  both which columns are written and their order. Omitting `fields`
+  entirely still exports all of them, preserving the pre-picker
+  contract for any caller that doesn't send it. Streaming (batched
+  cursor pagination), the UTF-8 BOM, and `csv-stringify`'s own
+  comma/quote escaping are all untouched -- only *which* values get
+  written per row changed, not how.
+- **Hard rule preserved, not just re-asserted**: `EXPORT_FIELD_DEFS` has
+  no health or waiver keys, and never will incidentally gain one --
+  the route's Prisma `select` still has no path to that data at all
+  (unchanged from before), so `fields` can only ever pick a subset of
+  an already-safe column set. Nothing new to leak regardless of future
+  edits to the picker.
+- **`apps/web/src/pages/Clients.tsx`**: new `EXPORT_FIELD_GROUPS`
+  (Contact Info / Referral / Dates -- the only groupings the *existing*
+  export fields actually fall into; there's no status/pipeline data in
+  this export today to form a fourth group, worth flagging since the
+  task described one) mirrors the backend's field list exactly, same
+  duplicated-but-must-stay-in-sync convention `themePresets.ts` already
+  uses between web and api. Clicking "Export All"/"Export N Selected"
+  now opens a "Choose Export Columns" modal (grouped checkboxes, All/
+  None per group) instead of firing the download immediately; the
+  modal's own Export button does the actual `POST /clients/export`
+  call, now including `fields` in the body. CSV column order always
+  matches the picker's own display order (a fixed, canonical order, not
+  user-draggable) -- no separate reordering feature needed.
+- **Persistence**: `ink-manager:clients-export-fields`, plain
+  `localStorage`, same convention this exact file already uses for its
+  filter state (`ink-manager:clients-filters`) and `Inquiries.tsx`
+  uses for column visibility. Browser-local, not account-wide -- no
+  per-user DB-backed preference infrastructure exists in this app for a
+  feature this size to justify adding one, matching the task's own
+  explicit instruction not to build new infrastructure. Defaults to
+  every field checked (today's existing behavior) until a studio's own
+  browser has a saved selection.
+- Existing filter/selection-mode export paths are completely unchanged
+  structurally -- the picker is purely an added step before the
+  existing `handleExport` call, gated on nothing new.
+
+## Live verification
+
+Exported a 2-client selection with only 5 of 12 fields checked (via
+each group's own All/None toggle) -- resulting CSV had exactly those 5
+headers, in the picker's display order, exactly those 2 rows. Reloaded
+the page and reopened the picker without re-selecting anything --
+confirmed the same 5-field subset was still checked (persistence
+verified across a real navigation, not just in-memory state). Combined
+a search-box filter with no explicit selection ("export all matching")
+-- confirmed the filter was respected (only matching rows) alongside
+the persisted field selection. Created a client with an accented,
+comma-containing name (`"René, Jr." / "Müller-Øst"`) specifically to
+exercise Excel-safety -- confirmed via raw byte inspection: UTF-8 BOM
+present, accented characters correctly encoded (not mangled), and the
+comma-containing name correctly `"quoted"` by `csv-stringify` without
+any change on my part to that logic. Screenshots taken of the picker
+(all-checked default state, and the 5-field subset) and shown inline
+during the session.
+
+## Build verification
+
+`tsc -b && vite build` (web) and `tsc` (api) -- full production builds,
+both clean. `apps/api` test suite: 170/170 passing.
+
+## CLAUDE.md hygiene
+
+No schema change, no migration. Test client (with the accented/comma
+name used for the encoding check) deleted after verification via its
+own DELETE route. Downloaded test CSVs and screenshots removed from the
+repo before commit (never committed in the first place -- shown inline
+during the session instead, per this repo's existing convention for
+Playwright-driven verification artifacts).

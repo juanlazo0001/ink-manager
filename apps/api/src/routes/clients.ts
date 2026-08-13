@@ -145,6 +145,33 @@ router.get("/", requirePermission("clients.view"), async (req, res) => {
   res.json(clients);
 });
 
+// Column picker: the full set of columns this route can ever emit, in
+// canonical order -- the frontend's own field list (Clients.tsx) mirrors
+// this exactly (key + label), same duplicated-but-must-stay-in-sync
+// pattern themePresets.ts already uses between web and api. This list is
+// ALSO the hard security floor: health/waiver fields are never added
+// here, so there is no key a caller could ever request that would leak
+// them, regardless of what the frontend picker does or doesn't show.
+const EXPORT_FIELD_DEFS = [
+  { key: "firstName", label: "First Name" },
+  { key: "lastName", label: "Last Name" },
+  { key: "primaryPhone", label: "Primary Phone" },
+  { key: "otherPhones", label: "Other Phones" },
+  { key: "primaryEmail", label: "Primary Email" },
+  { key: "otherEmails", label: "Other Emails" },
+  { key: "instagram", label: "Instagram" },
+  { key: "facebook", label: "Facebook" },
+  { key: "otherContact", label: "Other Contact" },
+  { key: "address", label: "Address" },
+  { key: "referralCode", label: "Referral Code" },
+  { key: "createdDate", label: "Created Date" },
+] as const;
+type ExportFieldKey = (typeof EXPORT_FIELD_DEFS)[number]["key"];
+const EXPORT_FIELD_KEYS: readonly string[] = EXPORT_FIELD_DEFS.map((f) => f.key);
+const EXPORT_FIELD_LABELS: Record<ExportFieldKey, string> = Object.fromEntries(
+  EXPORT_FIELD_DEFS.map((f) => [f.key, f.label]),
+) as Record<ExportFieldKey, string>;
+
 // Staff quick win: CSV export. Gated behind bulkActions.use ("select
 // multiple records and act on them at once") rather than clients.view
 // alone -- bulk-extracting contact data out of the app as a portable
@@ -160,7 +187,8 @@ router.get("/", requirePermission("clients.view"), async (req, res) => {
 // Prisma `select` never reaches into Waiver/health-screening data --
 // there is no path from Client to that data in this query at all, so
 // there's nothing to accidentally leak here regardless of future edits
-// to the columns list below.
+// to the columns list below, and `fields` below can only ever select a
+// subset of EXPORT_FIELD_DEFS -- never an arbitrary column name.
 //
 // Body is exactly one of:
 //   { clientIds: string[] }                          -- an explicit, manually-checked set
@@ -168,8 +196,21 @@ router.get("/", requirePermission("clients.view"), async (req, res) => {
 //                                                         filter semantics as GET / above,
 //                                                         but never capped at that route's
 //                                                         own take: 100 list-view limit)
+// Plus optional `fields: string[]` -- which columns to emit and in what
+// order (the picker's own display order); omitted entirely means "all of
+// them," preserving pre-picker behavior for any caller that doesn't send it.
 router.post("/export", requirePermission("bulkActions.use"), async (req, res) => {
-  const { clientIds, filter } = req.body ?? {};
+  const { clientIds, filter, fields } = req.body ?? {};
+
+  if (
+    fields !== undefined &&
+    (!Array.isArray(fields) ||
+      fields.length === 0 ||
+      fields.some((f: unknown) => typeof f !== "string" || !EXPORT_FIELD_KEYS.includes(f)))
+  ) {
+    return res.status(400).json({ error: `fields must be a non-empty array from: ${EXPORT_FIELD_KEYS.join(", ")}` });
+  }
+  const selectedFields: ExportFieldKey[] = fields ?? (EXPORT_FIELD_KEYS as ExportFieldKey[]);
 
   if (clientIds !== undefined && (!Array.isArray(clientIds) || clientIds.some((v) => typeof v !== "string"))) {
     return res.status(400).json({ error: "clientIds must be an array of strings" });
@@ -237,20 +278,7 @@ router.post("/export", requirePermission("bulkActions.use"), async (req, res) =>
   const { stringify } = await import("csv-stringify");
   const stringifier = stringify({
     header: true,
-    columns: [
-      "First Name",
-      "Last Name",
-      "Primary Phone",
-      "Other Phones",
-      "Primary Email",
-      "Other Emails",
-      "Instagram",
-      "Facebook",
-      "Other Contact",
-      "Address",
-      "Referral Code",
-      "Created Date",
-    ],
+    columns: selectedFields.map((key) => EXPORT_FIELD_LABELS[key]),
   });
   stringifier.pipe(res);
 
@@ -291,20 +319,22 @@ router.post("/export", requirePermission("bulkActions.use"), async (req, res) =>
       const primaryEmail = c.emails.find((e) => e.isPrimary)?.email ?? c.emails[0]?.email ?? c.email ?? "";
       const otherEmails = c.emails.map((e) => e.email).filter((e) => e !== primaryEmail);
 
-      stringifier.write([
-        c.firstName,
-        c.lastName,
+      const valuesByField: Record<ExportFieldKey, string> = {
+        firstName: c.firstName,
+        lastName: c.lastName,
         primaryPhone,
-        otherPhones.join("; "),
+        otherPhones: otherPhones.join("; "),
         primaryEmail,
-        otherEmails.join("; "),
-        c.instagramHandle ?? "",
-        c.facebookProfileUrl ?? "",
-        c.otherContact ?? "",
-        c.address ?? "",
-        c.referralCode,
-        c.createdAt.toISOString().slice(0, 10),
-      ]);
+        otherEmails: otherEmails.join("; "),
+        instagram: c.instagramHandle ?? "",
+        facebook: c.facebookProfileUrl ?? "",
+        otherContact: c.otherContact ?? "",
+        address: c.address ?? "",
+        referralCode: c.referralCode,
+        createdDate: c.createdAt.toISOString().slice(0, 10),
+      };
+
+      stringifier.write(selectedFields.map((key) => valuesByField[key]));
     }
 
     cursor = batch[batch.length - 1]!.id;

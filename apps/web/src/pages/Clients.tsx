@@ -52,6 +52,63 @@ function loadClientFilterState(): ClientFilterState {
   }
 }
 
+// Export column picker: mirrors apps/api/src/routes/clients.ts's own
+// EXPORT_FIELD_DEFS exactly (key + label) -- same duplicated-but-must-
+// stay-in-sync pattern themePresets.ts already uses between web and api.
+// Grouping is presentation-only, for the picker's own layout; the CSV's
+// column order always follows this flat list's order (filtered down to
+// whatever's checked), which is also the picker's own display order, so
+// "column order matches the picker" falls out for free without needing
+// a separate drag-to-reorder feature. Health/waiver fields are never
+// listed here at all -- not even as a disabled option -- since the
+// backend's own field allowlist has no such keys to begin with.
+const EXPORT_FIELD_GROUPS: { group: string; fields: { key: string; label: string }[] }[] = [
+  {
+    group: 'Contact Info',
+    fields: [
+      { key: 'firstName', label: 'First Name' },
+      { key: 'lastName', label: 'Last Name' },
+      { key: 'primaryPhone', label: 'Primary Phone' },
+      { key: 'otherPhones', label: 'Other Phones' },
+      { key: 'primaryEmail', label: 'Primary Email' },
+      { key: 'otherEmails', label: 'Other Emails' },
+      { key: 'instagram', label: 'Instagram' },
+      { key: 'facebook', label: 'Facebook' },
+      { key: 'otherContact', label: 'Other Contact' },
+      { key: 'address', label: 'Address' },
+    ],
+  },
+  {
+    group: 'Referral',
+    fields: [{ key: 'referralCode', label: 'Referral Code' }],
+  },
+  {
+    group: 'Dates',
+    fields: [{ key: 'createdDate', label: 'Created Date' }],
+  },
+]
+const ALL_EXPORT_FIELD_KEYS = EXPORT_FIELD_GROUPS.flatMap((g) => g.fields.map((f) => f.key))
+
+// Browser-local, not account-wide -- same convention as CLIENT_FILTER_STORAGE_KEY
+// just above (Inquiries.tsx's own column-visibility memory uses the
+// identical pattern). No dedicated per-user preference infrastructure
+// exists in this app for a feature this small to justify building one;
+// this is the deliberate "lightweight mechanism already exists" answer.
+const EXPORT_FIELDS_STORAGE_KEY = 'ink-manager:clients-export-fields'
+
+function loadExportFields(): string[] {
+  try {
+    const raw = localStorage.getItem(EXPORT_FIELDS_STORAGE_KEY)
+    if (!raw) return ALL_EXPORT_FIELD_KEYS
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return ALL_EXPORT_FIELD_KEYS
+    const valid = parsed.filter((k) => ALL_EXPORT_FIELD_KEYS.includes(k))
+    return valid.length > 0 ? valid : ALL_EXPORT_FIELD_KEYS
+  } catch {
+    return ALL_EXPORT_FIELD_KEYS
+  }
+}
+
 export default function Clients() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -96,6 +153,21 @@ export default function Clients() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+  const [showExportFieldPicker, setShowExportFieldPicker] = useState(false)
+  const [exportFields, setExportFields] = useState<Set<string>>(() => new Set(loadExportFields()))
+
+  useEffect(() => {
+    localStorage.setItem(EXPORT_FIELDS_STORAGE_KEY, JSON.stringify([...exportFields]))
+  }, [exportFields])
+
+  function toggleExportField(key: string) {
+    setExportFields((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   function exitSelectionMode() {
     setSelectionMode(false)
@@ -196,16 +268,18 @@ export default function Clients() {
     setExporting(true)
     setExportError(null)
     try {
+      const fields = ALL_EXPORT_FIELD_KEYS.filter((k) => exportFields.has(k))
       const body =
         selectedIds.size > 0
-          ? { clientIds: [...selectedIds] }
-          : { filter: { q: search.trim() || undefined, includeArchived: showArchived, activity: activityFilter } }
+          ? { clientIds: [...selectedIds], fields }
+          : { filter: { q: search.trim() || undefined, includeArchived: showArchived, activity: activityFilter }, fields }
       await downloadFile(`/clients/export`, `clients-export-${new Date().toISOString().slice(0, 10)}.csv`, {
         method: 'POST',
         body: JSON.stringify(body),
       })
       setSelectionMode(false)
       setSelectedIds(new Set())
+      setShowExportFieldPicker(false)
     } catch (err) {
       setExportError(err instanceof Error ? err.message : 'Failed to export clients')
     } finally {
@@ -275,7 +349,7 @@ export default function Clients() {
                     </button>
                     <button
                       type="button"
-                      onClick={handleExport}
+                      onClick={() => setShowExportFieldPicker(true)}
                       disabled={exporting}
                       className="shrink-0 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                     >
@@ -306,7 +380,6 @@ export default function Clients() {
               </div>
             )}
           </div>
-          {exportError && <p className="mt-2 text-sm text-danger">{exportError}</p>}
 
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg sm:w-64">
@@ -431,6 +504,76 @@ export default function Clients() {
             )}
           </div>
         </div>
+
+      {showExportFieldPicker && (
+        <Modal title="Choose Export Columns" onClose={() => setShowExportFieldPicker(false)}>
+          <div className="space-y-5">
+            {EXPORT_FIELD_GROUPS.map((group) => {
+              const groupKeys = group.fields.map((f) => f.key)
+              const allChecked = groupKeys.every((k) => exportFields.has(k))
+              const noneChecked = groupKeys.every((k) => !exportFields.has(k))
+              return (
+                <div key={group.group}>
+                  <div className="mb-2 flex items-center justify-between">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-muted">{group.group}</h3>
+                    <div className="flex gap-3 text-xs font-medium text-accent">
+                      <button
+                        type="button"
+                        disabled={allChecked}
+                        onClick={() => setExportFields((prev) => new Set([...prev, ...groupKeys]))}
+                        className="hover:underline disabled:opacity-40 disabled:no-underline"
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        disabled={noneChecked}
+                        onClick={() =>
+                          setExportFields((prev) => {
+                            const next = new Set(prev)
+                            groupKeys.forEach((k) => next.delete(k))
+                            return next
+                          })
+                        }
+                        className="hover:underline disabled:opacity-40 disabled:no-underline"
+                      >
+                        None
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                    {group.fields.map((field) => (
+                      <label key={field.key} className="flex cursor-pointer items-center gap-2 text-sm text-fg">
+                        <input
+                          type="checkbox"
+                          checked={exportFields.has(field.key)}
+                          onChange={() => toggleExportField(field.key)}
+                          className="h-4 w-4 shrink-0 rounded border-border accent-accent"
+                        />
+                        <span>{field.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {exportFields.size === 0 && (
+            <p className="mt-4 text-sm text-danger">Select at least one column to export.</p>
+          )}
+          {exportError && <p className="mt-4 text-sm text-danger">{exportError}</p>}
+
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting || exportFields.size === 0}
+            className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+          >
+            {exporting ? 'Exporting…' : selectedIds.size > 0 ? `Export ${selectedIds.size} Selected` : 'Export All'}
+          </button>
+        </Modal>
+      )}
 
       {showAddModal && (
         <Modal title="Add Client" onClose={() => setShowAddModal(false)}>
