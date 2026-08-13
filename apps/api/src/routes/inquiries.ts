@@ -5,6 +5,7 @@ import {
   AppointmentStatus,
   Channel,
   FlashPieceStatus,
+  FlashReviewMode,
   InquiryStatus,
   MessageChannel,
   MessageDirection,
@@ -17,18 +18,26 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment, validateGiftCardsForAttachment } from "../lib/giftCards";
 import { getOrCreateClientConversation, getOrCreateStaffConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
+import { sendClientEmail } from "../lib/clientEmail";
+import { renderClientEmailHtml } from "../lib/emailTemplate";
 import { shortenUrl } from "../lib/shortLinks";
 import { isSupportedLocale } from "../lib/locale";
 import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { findBufferConflict, formatBufferWarning, resolveSchedulingBufferMs } from "../lib/schedulingConflict";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
-import { emitInvalidation } from "../lib/realtime/registry";
+import { emitInvalidation, emitUserInvalidation } from "../lib/realtime/registry";
+import { approveFlashRequest } from "../lib/flashApproval";
 import { resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
 import { generateAndSendDepositForm } from "../lib/deposits";
 import { generateAndSendEstimate, saveEstimateDraft } from "../lib/estimates";
 import { generateUniqueReferralCode } from "../lib/referrals";
-import { studioHasActiveMembership, callerBelongsToStudio, hasPermissionAt } from "../lib/artistAccess";
+import {
+  studioHasActiveMembership,
+  callerBelongsToStudio,
+  hasPermissionAt,
+  hasPermissionOrSoloArtistAt,
+} from "../lib/artistAccess";
 import {
   applyArtistFieldVisibility,
   getArtistFieldVisibility,
@@ -43,13 +52,6 @@ import { resolveServiceForIntakeForm } from "../lib/services";
 import { buildImageMeta, mergeImageMeta, resolveImageMeta } from "../lib/imageMeta";
 
 const router = Router();
-
-// Flash gallery, Part 3: longer than the deposit link's 48h -- a flash
-// booking's reservation (PENDING_APPROVAL, for a one-of-one piece) is
-// already staked out by the time this token goes out, so there's less
-// urgency pressure than an unsigned deposit form, and a bigger-ticket full
-// payment is more likely to need a client a few days to actually pay.
-const FLASH_PAYMENT_TOKEN_TTL_HOURS = 72;
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -566,7 +568,24 @@ const PROJECT_STATUSES: InquiryStatus[] = [InquiryStatus.SCHEDULING, InquiryStat
 const ESTIMATE_REVISION_ONLY_STATUSES: InquiryStatus[] = [InquiryStatus.DEPOSIT_PENDING, ...PROJECT_STATUSES];
 
 const INQUIRY_INCLUDE = {
-  client: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+  // phones/emails (minimal -- just presence) added for the send-channel
+  // picker's own availability check, which reads the real contact rows
+  // rather than the singular email/phone scalars above -- those can drift
+  // null even when a client genuinely has a phone/email on file (a real,
+  // live-reproduced bug: POST /clients/:id/phones and /emails used to
+  // never sync back to the scalar). Fixed at the write path too
+  // (routes/clients.ts), but the read side stays defensive regardless.
+  client: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      phone: true,
+      phones: { select: { id: true } },
+      emails: { select: { id: true } },
+    },
+  },
   transferredToStudio: { select: { id: true, name: true } },
   projectCompletedBy: { select: { id: true, name: true, email: true } },
   preferredArtist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
@@ -579,8 +598,21 @@ const INQUIRY_INCLUDE = {
       id: true,
       hourlyRateCents: true,
       flatRateCents: true,
+      // Flash requests + review mode expansion: InquiryDetail.tsx's own
+      // FlashApprovalPanel needs this to know whether ITS Approve/Decline
+      // buttons are actually actionable -- when this artist's own mode is
+      // ARTIST, front desk's click would 403 (see this file's own
+      // POST /:id/flash/approve comment).
+      flashReviewMode: true,
       user: { select: { id: true, name: true, email: true, avatarUrl: true } },
     },
+  },
+  // View parity + studio-review mode: InquiryDetail.tsx's flash-approval
+  // widget now renders the same FlashApprovalPanel MyFlashRequestDetail.tsx
+  // does (art/price/duration), which needs this -- previously the widget
+  // only had placement/placementImages off the Inquiry itself.
+  flashPiece: {
+    select: { title: true, imageUrl: true, priceCents: true, estimatedDurationMinutes: true, isOneOfOne: true },
   },
   appointment: { select: { id: true, startTime: true, endTime: true, status: true } },
   // UI-1 §3: every appointment/session under this project (1:many via
@@ -679,6 +711,16 @@ const INQUIRY_INCLUDE = {
       paidVia: true,
       proposedStartAt: true,
       proposedEndAt: true,
+      // Session-Plan/DepositForm linkage bug fix: the Session Plan widget's
+      // display now resolves each session's deposit status by sessionNumber
+      // against this same flat list (never PlannedSession.depositFormId
+      // alone -- see lib/deposits.ts's own send-guard comment for why that
+      // FK can't be trusted), same as the guard already does server-side.
+      // Two rows CAN legitimately share a sessionNumber (an un-planned form
+      // generated before a plan existed, followed by a plan-generated one)
+      // -- createdAt is what lets the frontend pick the latest, matching
+      // the guard's own `orderBy: { createdAt: "desc" }`.
+      createdAt: true,
       giftCard: { select: { id: true, code: true, amountCents: true, status: true } },
     },
     orderBy: { sessionNumber: "asc" },
@@ -1148,6 +1190,45 @@ router.get(
   },
 );
 
+// Flash requests + artist review toggle: a deliberately separate,
+// narrower detail route for MyFlashRequestDetail.tsx -- NOT a reuse of
+// GET /assigned-to-me/:id just above, because that route is gated by
+// hasPermissionAt(..., "inquiries.view"), a real matrix key some studios
+// have toggled off for ARTIST (seen in this repo's own dev fixtures).
+// This request is theirs alone to decide either way (same "inalienable,
+// no matrix gates it" shape as POST /:id/flash/approve and /decline
+// below), so the identity check itself -- assignedArtistId === their own
+// artist id -- IS the entire authorization, same as those two routes.
+// Registered before the generic "/:id" below for the same reason
+// "assigned-to-me" is.
+router.get("/my-flash-requests/:id", requireAuth, async (req, res) => {
+  const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
+  if (!artist) {
+    return res.status(404).json({ error: "Flash request not found" });
+  }
+
+  const inquiry = await prisma.inquiry.findFirst({
+    where: { id: req.params.id as string, assignedArtistId: artist.id, flashPieceId: { not: null } },
+    select: {
+      id: true,
+      status: true,
+      placement: true,
+      placementImages: true,
+      createdAt: true,
+      client: { select: { firstName: true, lastName: true } },
+      flashPiece: {
+        select: { title: true, imageUrl: true, priceCents: true, estimatedDurationMinutes: true, isOneOfOne: true },
+      },
+    },
+  });
+
+  if (!inquiry) {
+    return res.status(404).json({ error: "Flash request not found" });
+  }
+
+  res.json(inquiry);
+});
+
 // Same reasoning as GET / above -- stays OWNER/FRONT_DESK-only regardless
 // of the inquiries.view toggle; an artist's own inquiries are reached via
 // GET /assigned-to-me instead, which has its own assignedArtistId scoping.
@@ -1415,7 +1496,13 @@ const DECISIONS = ["APPROVE", "DECLINE"] as const;
 // artist's own estimate and hands it back to staff (AWAITING_CLIENT_RESPONSE).
 // DECLINE unassigns it and puts it back in the pool (NEW) with a note for
 // staff explaining why, so it can be reassigned.
-router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, res) => {
+// View parity: widened to also allow OWNER, same as GET /assigned-to-me/:id
+// just above -- a solo studio's owner is role OWNER with their own attached
+// Artist profile, and MyProjectDetail.tsx (which this endpoint backs,
+// including its own newly-added Decline button) is already reachable by
+// that role for a guest-studio assignment. The artist!.id scoping below
+// already narrows correctly regardless of which role got here.
+router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST, Role.OWNER), async (req, res) => {
   const id = req.params.id as string;
   const { decision, priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions, declineNote } =
     req.body ?? {};
@@ -1546,7 +1633,12 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, 
 // (possibly updated) numbers.
 router.post("/:id/send-estimate", requireAuth, async (req, res) => {
   const id = req.params.id as string;
-  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions } = req.body ?? {};
+  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions, channel } =
+    req.body ?? {};
+
+  if (channel !== undefined && channel !== "SMS" && channel !== "EMAIL") {
+    return res.status(400).json({ error: "channel must be SMS or EMAIL" });
+  }
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
@@ -1566,6 +1658,7 @@ router.post("/:id/send-estimate", requireAuth, async (req, res) => {
     timeEstimateHoursMin,
     timeEstimateHoursMax,
     sessions,
+    channel,
   });
   if (!result.ok) {
     return res.status(result.status).json({ error: result.error });
@@ -1599,11 +1692,15 @@ const REVISION_TOKEN_TTL_DAYS = 7;
 // scoping to safely extend it through.
 router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), requirePermission("inquiries.enterEstimate"), async (req, res) => {
   const id = req.params.id as string;
-  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions, reason } =
+  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions, reason, channel } =
     req.body ?? {};
 
   if (typeof reason !== "string" || reason.trim().length === 0) {
     return res.status(400).json({ error: "A reason is required to revise a Project's estimate" });
+  }
+
+  if (channel !== undefined && channel !== "SMS" && channel !== "EMAIL") {
+    return res.status(400).json({ error: "channel must be SMS or EMAIL" });
   }
 
   const inquiry = await prisma.inquiry.findUnique({
@@ -1979,14 +2076,39 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
   // of whether the text goes out; staff still has the link on-screen to
   // share manually either way.
   const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
-  const revisionSendResult = await sendClientSms({
-    studioId: req.user!.studioId,
-    clientId: updated.clientId,
-    conversationId: (await getOrCreateClientConversation(req.user!.studioId, updated.clientId, req.user!.userId))
-      .conversation.id,
-    body: `Hi ${updated.client.firstName}, the estimate for your tattoo with ${studio?.name ?? "us"} has been updated to $${effective.priceEstimateLow}-$${effective.priceEstimateHigh} (${effective.timeEstimateHoursMin}-${effective.timeEstimateHoursMax} hrs). Reason: ${trimmedReason}. Please review: ${revisionUrl}`,
-    actorUserId: req.user!.userId,
-  });
+  const revisionConversationId = (
+    await getOrCreateClientConversation(req.user!.studioId, updated.clientId, req.user!.userId)
+  ).conversation.id;
+  const revisionMessage = `Hi ${updated.client.firstName}, the estimate for your tattoo with ${studio?.name ?? "us"} has been updated to $${effective.priceEstimateLow}-$${effective.priceEstimateHigh} (${effective.timeEstimateHoursMin}-${effective.timeEstimateHoursMax} hrs). Reason: ${trimmedReason}. Please review: ${revisionUrl}`;
+  const revisionSendResult =
+    channel === "EMAIL"
+      ? await sendClientEmail({
+          studioId: req.user!.studioId,
+          clientId: updated.clientId,
+          conversationId: revisionConversationId,
+          subject: `Your estimate was updated -- ${studio?.name ?? "our studio"}`,
+          bodyText: revisionMessage,
+          bodyHtml: renderClientEmailHtml({
+            studioName: studio?.name ?? "Your studio",
+            heading: "Your estimate was updated",
+            bodyParagraphs: [
+              `Hi ${updated.client.firstName}, the estimate for your tattoo has been updated to $${effective.priceEstimateLow}-$${effective.priceEstimateHigh} (${effective.timeEstimateHoursMin}-${effective.timeEstimateHoursMax} hrs).`,
+              `Reason: ${trimmedReason}`,
+            ],
+            buttonText: "Review estimate",
+            buttonUrl: revisionUrl,
+          }),
+          actorUserId: req.user!.userId,
+          logAttemptEvenOnFailure: true,
+        })
+      : await sendClientSms({
+          studioId: req.user!.studioId,
+          clientId: updated.clientId,
+          conversationId: revisionConversationId,
+          body: revisionMessage,
+          actorUserId: req.user!.userId,
+          logAttemptEvenOnFailure: true,
+        });
 
   emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
@@ -2259,76 +2381,67 @@ router.post("/:id/mark-lost", requireAuth, async (req, res) => {
   res.json(updated);
 });
 
-// Flash gallery: front desk's review of a FLASH_PENDING_APPROVAL inquiry
-// (the placement photo/description + customer info submitted through
-// POST /flash-pieces/:id/request). Approve moves straight to
-// FLASH_PAYMENT_PENDING and generates the Part 3 payment link (same
-// crypto-token pattern as the deposit-form send flow above), auto-texting
-// it to the client the same best-effort way. Gated by inquiries.edit, the
-// same general "make a staff-side change to an inquiry" key FRONT_DESK
-// already has by default -- flash approval isn't meaningfully a different
-// capability from any other inquiry edit.
+// Flash gallery + review mode expansion: review of a FLASH_PENDING_APPROVAL
+// inquiry (the placement photo/description + customer info submitted
+// through POST /flash-pieces/:id/request). Approve moves straight to
+// FLASH_PAYMENT_PENDING and generates the payment link (see
+// lib/flashApproval.ts's approveFlashRequest, shared with the instant-
+// booking auto-approve path on the request route itself).
+//
+// Who may call this: if the flash piece's OWN artist has flashReviewMode
+// ARTIST, this is THEIRS alone -- an unconditional identity check, no
+// permission matrix involved at all, same "inalienable, no staff bypass"
+// shape as the transfer-to-artist epic's own accept/decline. Otherwise
+// (STUDIO) it's front desk's call, matrix-gated exactly like appointment
+// approvals -- hasPermissionOrSoloArtistAt + the same "only your own"
+// narrowing appointments.ts's own POST /:id/approve applies for a genuine
+// solo studio's owner-artist (there's no OWNER/FRONT_DESK gatekeeper left
+// to protect there). NONE never reaches FLASH_PENDING_APPROVAL at all
+// (auto-approved at creation).
 router.post("/:id/flash/approve", requireAuth, async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { id },
-    include: { client: true, flashPiece: true },
+    include: { flashPiece: { include: { artist: { select: { userId: true, flashReviewMode: true } } } } },
   });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
-  // Permission-context fix: evaluated at the inquiry's own studio.
-  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
-    return res.status(403).json({ error: "Forbidden" });
+  const pieceArtist = inquiry.flashPiece?.artist;
+  const isOwnArtist = pieceArtist?.userId === req.user!.userId;
+  const artistOwnsApproval = pieceArtist?.flashReviewMode === FlashReviewMode.ARTIST;
+
+  if (artistOwnsApproval) {
+    if (!isOwnArtist) {
+      return res.status(403).json({ error: "Only the assigned artist can approve this flash request" });
+    }
+  } else {
+    const { allowed, viaSoloArtistBypass } = await hasPermissionOrSoloArtistAt(req.user!, inquiry.studioId, "inquiries.edit");
+    if (!allowed) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (viaSoloArtistBypass && pieceArtist?.userId !== req.user!.userId) {
+      return res.status(403).json({ error: "As a solo artist, you can only manage your own flash pieces" });
+    }
   }
 
   if (inquiry.status !== InquiryStatus.FLASH_PENDING_APPROVAL) {
     return res.status(400).json({ error: "This inquiry isn't awaiting flash approval" });
   }
 
-  const flashPaymentToken = crypto.randomBytes(32).toString("hex");
-  const flashPaymentTokenExpiresAt = new Date(Date.now() + FLASH_PAYMENT_TOKEN_TTL_HOURS * 60 * 60 * 1000);
-
-  const updated = await prisma.inquiry.update({
-    where: { id },
-    data: { status: InquiryStatus.FLASH_PAYMENT_PENDING, flashPaymentToken, flashPaymentTokenExpiresAt },
-    include: INQUIRY_INCLUDE,
+  const { paymentUrl, flashPaymentSendResult } = await approveFlashRequest(id, req.user!.userId, {
+    autoSend: req.body?.autoSend !== false,
   });
 
-  await logAudit({
-    studioId: inquiry.studioId,
-    actorUserId: req.user!.userId,
-    entityType: "Inquiry",
-    entityId: id,
-    action: "flash_request_approved",
-    changes: diffObjects(inquiry, { status: InquiryStatus.FLASH_PAYMENT_PENDING }, ["status"]),
-  });
+  emitInvalidation({ type: "task.changed", studioId: inquiry.studioId });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
-
-  // Best-effort, same convention as the deposit-form/checkout-link sends
-  // above -- the token/link is already saved regardless of whether the
-  // text goes out, so staff still has paymentUrl to share manually if this
-  // skips or fails.
-  //
-  // Studio-scoping bug fix: everything below is scoped to the PROJECT's
-  // own studio, not req.user!.studioId -- wrong studio's name in the SMS,
-  // and a wrong-studio conversation/message, for a guest-assigned caller.
-  const paymentUrl = await shortenUrl(`${PUBLIC_APP_URL}/flash-payment/${flashPaymentToken}`);
-  let flashPaymentSendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
-  if (req.body?.autoSend !== false) {
-    const studio = await prisma.studio.findUnique({ where: { id: inquiry.studioId }, select: { name: true } });
-    const conversation = await getOrCreateClientConversation(inquiry.studioId, inquiry.clientId, req.user!.userId);
-    flashPaymentSendResult = await sendClientSms({
-      studioId: inquiry.studioId,
-      clientId: inquiry.clientId,
-      conversationId: conversation.conversation.id,
-      body: `Hi ${inquiry.client.firstName}, your flash request "${inquiry.flashPiece?.title ?? "your design"}" is approved! Complete payment here to lock in your booking: ${paymentUrl} (expires in ${FLASH_PAYMENT_TOKEN_TTL_HOURS / 24} days)`,
-      actorUserId: req.user!.userId,
-    });
+  if (pieceArtist) {
+    emitUserInvalidation(pieceArtist.userId, [["tasks", pieceArtist.userId]]);
   }
+
+  const updated = await prisma.inquiry.findUniqueOrThrow({ where: { id }, include: INQUIRY_INCLUDE });
 
   res.json({ ...updated, paymentUrl, flashPaymentSendResult });
 });
@@ -2349,6 +2462,17 @@ router.post("/:id/flash/approve", requireAuth, async (req, res) => {
 // made for its own token: see REPORT.md), so this is the manual escape
 // hatch staff needs for a one-of-one piece stuck reserved behind a booking
 // that's genuinely never going to complete.
+//
+// Review mode expansion: the artist-inalienable identity bypass (see
+// POST /:id/flash/approve's own comment) applies ONLY to declining at
+// FLASH_PENDING_APPROVAL -- the original "should I take this booking"
+// decision the task asked to be theirs. A stalled payment at
+// FLASH_PAYMENT_PENDING is a different concern (administrative cleanup of
+// an abandoned checkout the client already saw and didn't finish, not a
+// business decision about the artist's own work) and stays staff-only
+// regardless of the mode -- the route comment above already calls this
+// "the manual escape hatch STAFF needs," which the artist's own mode was
+// never meant to take away.
 router.post("/:id/flash/decline", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { reason } = req.body ?? {};
@@ -2357,14 +2481,31 @@ router.post("/:id/flash/decline", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "reason must be a string" });
   }
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { flashPiece: true } });
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { id },
+    include: { flashPiece: { include: { artist: { select: { userId: true, flashReviewMode: true } } } } },
+  });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
-  // Permission-context fix: evaluated at the inquiry's own studio.
-  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.markLost"))) {
-    return res.status(403).json({ error: "Forbidden" });
+  const pieceArtist = inquiry.flashPiece?.artist;
+  const isOwnArtist = pieceArtist?.userId === req.user!.userId;
+  const artistOwnsThisDecision =
+    inquiry.status === InquiryStatus.FLASH_PENDING_APPROVAL && pieceArtist?.flashReviewMode === FlashReviewMode.ARTIST;
+
+  if (artistOwnsThisDecision) {
+    if (!isOwnArtist) {
+      return res.status(403).json({ error: "Only the assigned artist can decline this flash request" });
+    }
+  } else {
+    const { allowed, viaSoloArtistBypass } = await hasPermissionOrSoloArtistAt(req.user!, inquiry.studioId, "inquiries.markLost");
+    if (!allowed) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (viaSoloArtistBypass && pieceArtist?.userId !== req.user!.userId) {
+      return res.status(403).json({ error: "As a solo artist, you can only manage your own flash pieces" });
+    }
   }
 
   if (inquiry.status !== InquiryStatus.FLASH_PENDING_APPROVAL && inquiry.status !== InquiryStatus.FLASH_PAYMENT_PENDING) {
@@ -2405,8 +2546,12 @@ router.post("/:id/flash/decline", requireAuth, async (req, res) => {
   });
 
   emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
+  emitInvalidation({ type: "task.changed", studioId: inquiry.studioId });
   if (inquiry.flashPiece?.isOneOfOne) {
     emitInvalidation({ type: "flash.changed", studioId: inquiry.studioId });
+  }
+  if (pieceArtist) {
+    emitUserInvalidation(pieceArtist.userId, [["tasks", pieceArtist.userId]]);
   }
 
   res.json(updated);
@@ -2705,13 +2850,16 @@ router.post("/:id/reopen-project", requireAuth, async (req, res) => {
 // "latest row missing" is true there too, so it still creates session 1.
 router.post("/:id/deposit-form", requireAuth, async (req, res) => {
   const id = req.params.id as string;
-  const { proposedStartAt, proposedEndAt, autoSend, plannedSessionId, amountMode } = req.body ?? {};
+  const { proposedStartAt, proposedEndAt, autoSend, plannedSessionId, amountMode, channel } = req.body ?? {};
 
   if (plannedSessionId !== undefined && typeof plannedSessionId !== "string") {
     return res.status(400).json({ error: "plannedSessionId must be a string" });
   }
   if (amountMode !== undefined && amountMode !== "DEPOSIT" && amountMode !== "FULL_PREPAY") {
     return res.status(400).json({ error: "amountMode must be DEPOSIT or FULL_PREPAY" });
+  }
+  if (channel !== undefined && channel !== "SMS" && channel !== "EMAIL") {
+    return res.status(400).json({ error: "channel must be SMS or EMAIL" });
   }
 
   // Artist mobility bug fix: verify the caller against the PROJECT's own
@@ -2739,6 +2887,7 @@ router.post("/:id/deposit-form", requireAuth, async (req, res) => {
     autoSend,
     plannedSessionId,
     amountMode,
+    channel,
   });
 
   if (!result.ok) {

@@ -3,14 +3,21 @@ import { prisma } from "../lib/prisma";
 import { GiftCardStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
-import { computeGiftCardExpiration, generateUniqueGiftCardCode, syncExpiredStatus } from "../lib/giftCards";
+import {
+  computeGiftCardExpiration,
+  createGiftCardCheckoutSession,
+  createOrRetrieveGiftCardPaymentIntent,
+  generateUniqueGiftCardCode,
+  syncExpiredStatus,
+} from "../lib/giftCards";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
+import { sendClientEmail } from "../lib/clientEmail";
+import { renderClientEmailHtml } from "../lib/emailTemplate";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { shortenUrl } from "../lib/shortLinks";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
-import { createDirectChargeCheckoutSession } from "../lib/stripe";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { callerBelongsToStudio, hasPermissionAt } from "../lib/artistAccess";
 
@@ -28,7 +35,22 @@ const GIFT_CARD_DETAIL_INCLUDE = {
     },
   },
   issuedBy: { select: { id: true, name: true, email: true } },
-  client: { select: { id: true, firstName: true, lastName: true } },
+  // phone/email (plus phones/emails, minimal -- just presence) for the
+  // detail page's own Send Receipt channel picker -- reads the real
+  // contact rows, not just the singular scalars, since those can drift
+  // null even when a client genuinely has a phone/email on file. See
+  // routes/inquiries.ts's own INQUIRY_INCLUDE comment for the full bug.
+  client: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      phone: true,
+      email: true,
+      phones: { select: { id: true } },
+      emails: { select: { id: true } },
+    },
+  },
   // Checkout overage (Part 3): when this card was issued from redeeming a
   // larger one down to its exact remaining difference, this surfaces
   // where it came from -- support/audit clarity, not needed for the
@@ -47,7 +69,11 @@ publicRouter.get("/view/:code", async (req, res) => {
 
   const card = await prisma.giftCard.findUnique({
     where: { code },
-    include: { studio: { select: { name: true, slug: true, settings: { select: { themePreset: true } } } } },
+    include: {
+      studio: {
+        select: { name: true, slug: true, settings: { select: { themePreset: true, embeddedPaymentsEnabled: true } } },
+      },
+    },
   });
 
   if (!card) {
@@ -55,6 +81,15 @@ publicRouter.get("/view/:code", async (req, res) => {
   }
 
   const synced = await syncExpiredStatus(card);
+
+  // Embedded payments migration: same two fields DepositResponse.tsx's own
+  // GET /deposits/verify/:token already carries for the identical
+  // embedded-vs-hosted branch -- independent of each other (a studio can
+  // be Stripe-connected with the flag still off, the default, in which
+  // case this page behaves exactly as it always has: a "Pay Now" button
+  // redirecting to hosted Checkout).
+  const stripeAccountId =
+    synced.status === GiftCardStatus.PENDING ? await getChargeableConnectedAccountId(card.studioId) : null;
 
   res.json({
     studioName: card.studio.name,
@@ -64,7 +99,53 @@ publicRouter.get("/view/:code", async (req, res) => {
     amountCents: synced.amountCents,
     status: synced.status,
     expiresAt: synced.expiresAt,
+    stripeConnected: stripeAccountId !== null,
+    embeddedPaymentsEnabled: card.studio.settings?.embeddedPaymentsEnabled ?? false,
   });
+});
+
+// Embedded payments migration: hosted-fallback sibling to
+// POST /:code/payment-intent below -- same call site (the client's own
+// /gift-card/:code page, once GET /view/:code reports stripeConnected but
+// embeddedPaymentsEnabled is off). A fresh Checkout Session every call,
+// never reused, same reasoning as every other checkout-session route in
+// this codebase.
+publicRouter.post("/:code/checkout-session", async (req, res) => {
+  const code = req.params.code as string;
+
+  const card = await prisma.giftCard.findUnique({ where: { code }, select: { id: true } });
+  if (!card) {
+    return res.status(404).json({ error: "This gift card code is invalid." });
+  }
+
+  const result = await createGiftCardCheckoutSession(card.id);
+  if (!result.ok) {
+    return res.status(result.status).json({ error: result.error });
+  }
+
+  res.json({ url: result.url });
+});
+
+// Embedded payments migration: the Payment Element sibling of
+// POST /:code/checkout-session above -- fetch-or-create, reached once
+// GET /view/:code reports embeddedPaymentsEnabled. That field is what the
+// frontend checks BEFORE ever calling this, but createOrRetrieveGiftCardPaymentIntent
+// enforces the same gate independently rather than trusting the frontend's
+// own branching.
+publicRouter.post("/:code/payment-intent", async (req, res) => {
+  const code = req.params.code as string;
+
+  const card = await prisma.giftCard.findUnique({ where: { code }, select: { id: true } });
+  if (!card) {
+    return res.status(404).json({ error: "This gift card code is invalid." });
+  }
+
+  const result = await createOrRetrieveGiftCardPaymentIntent(card.id);
+  if (!result.ok) {
+    return res.status(result.status).json({ error: result.error });
+  }
+
+  res.json({ clientSecret: result.clientSecret, connectedAccountId: result.connectedAccountId });
 });
 
 const router = Router();
@@ -239,29 +320,6 @@ router.post("/checkout-session", async (req, res) => {
     },
   });
 
-  let session;
-  try {
-    session = await createDirectChargeCheckoutSession({
-      connectedAccountId: stripeAccountId,
-      amountCents,
-      productName: "Gift Card",
-      successUrl: `${PUBLIC_APP_URL}/gift-card/${code}?paid=1`,
-      cancelUrl: `${PUBLIC_APP_URL}/gift-card/${code}?canceled=1`,
-      metadata: { giftCardId: card.id },
-    });
-  } catch (err) {
-    // Nothing was ever charged and this card can never become spendable
-    // without a session to pay through -- delete rather than leave an
-    // orphaned PENDING row with no way to ever complete.
-    await prisma.giftCard.delete({ where: { id: card.id } });
-    return res.status(502).json({ error: err instanceof Error ? err.message : "Failed to start Stripe checkout" });
-  }
-
-  const updated = await prisma.giftCard.update({
-    where: { id: card.id },
-    data: { stripeCheckoutSessionId: session.id },
-  });
-
   await logAudit({
     studioId,
     actorUserId: req.user!.userId,
@@ -273,7 +331,17 @@ router.post("/checkout-session", async (req, res) => {
 
   emitInvalidation({ type: "giftcard.changed", studioId, clientId });
 
-  res.status(201).json({ ...updated, checkoutUrl: session.url });
+  // Embedded payments migration: this endpoint no longer talks to Stripe
+  // at all -- it only creates the PENDING card (the upfront
+  // getChargeableConnectedAccountId check above still fails fast if this
+  // studio can't take payments, so staff never hands out a link that can
+  // never be paid). The actual Stripe session/PaymentIntent is created on
+  // demand by the CLIENT's own visit to this app's /gift-card/:code page
+  // (GiftCardResponse.tsx), which decides embedded vs. hosted from the
+  // studio's embeddedPaymentsEnabled flag -- same split deposit/flash
+  // already use, and the same reason staff never used to see a raw
+  // checkout.stripe.com URL for those two flows either.
+  res.status(201).json({ ...card, checkoutUrl: `${PUBLIC_APP_URL}/gift-card/${code}` });
 });
 
 // OWNER-only, permanently -- one of this expansion's fixed safety-floor
@@ -373,11 +441,21 @@ const TEXT_RECEIPT_ERROR_MESSAGES: Record<string, string> = {
   not_connected: "This studio's SMS integration isn't connected -- connect it in Settings to send text receipts.",
   no_phone: "This client has no phone number on file.",
   opted_out: "This client has opted out of text messages.",
-  send_failed: "The text failed to send -- try again in a moment.",
+  no_email: "This client has no email address on file.",
+  send_failed: "The receipt failed to send -- try again in a moment.",
 };
 
+// Route path stays "text-receipt" (external API stability -- no reason to
+// churn callers over a name), but "Text Receipt" is now "Send Receipt" on
+// the frontend and this accepts either channel. Audit action reflects
+// which one actually ran.
 router.post("/:id/text-receipt", async (req, res) => {
   const id = req.params.id as string;
+  const { channel } = req.body ?? {};
+
+  if (channel !== undefined && channel !== "SMS" && channel !== "EMAIL") {
+    return res.status(400).json({ error: "channel must be SMS or EMAIL" });
+  }
 
   const card = await prisma.giftCard.findUnique({
     where: { id },
@@ -395,7 +473,7 @@ router.post("/:id/text-receipt", async (req, res) => {
 
   const synced = await syncExpiredStatus(card);
   if (synced.status !== GiftCardStatus.ACTIVE) {
-    return res.status(400).json({ error: `Only an ACTIVE card can have a receipt texted (this one is ${synced.status})` });
+    return res.status(400).json({ error: `Only an ACTIVE card can have a receipt sent (this one is ${synced.status})` });
   }
 
   const publicUrl = await shortenUrl(`${PUBLIC_APP_URL}/gift-card/${card.code}`);
@@ -404,13 +482,32 @@ router.post("/:id/text-receipt", async (req, res) => {
 
   const { conversation } = await getOrCreateClientConversation(studioId, card.clientId, req.user!.userId);
 
-  const result = await sendClientSms({
-    studioId,
-    clientId: card.clientId,
-    conversationId: conversation.id,
-    body,
-    actorUserId: req.user!.userId,
-  });
+  const result =
+    channel === "EMAIL"
+      ? await sendClientEmail({
+          studioId,
+          clientId: card.clientId,
+          conversationId: conversation.id,
+          subject: `Your gift card -- ${card.studio.name}`,
+          bodyText: body,
+          bodyHtml: renderClientEmailHtml({
+            studioName: card.studio.name,
+            heading: "Thanks for your purchase!",
+            bodyParagraphs: [`Here's your $${amount} gift card (code ${card.code}).`],
+            buttonText: "View gift card",
+            buttonUrl: publicUrl,
+          }),
+          actorUserId: req.user!.userId,
+          logAttemptEvenOnFailure: true,
+        })
+      : await sendClientSms({
+          studioId,
+          clientId: card.clientId,
+          conversationId: conversation.id,
+          body,
+          actorUserId: req.user!.userId,
+          logAttemptEvenOnFailure: true,
+        });
 
   if (!result.sent) {
     return res.status(400).json({ error: TEXT_RECEIPT_ERROR_MESSAGES[result.reason] ?? "The receipt could not be sent." });
@@ -421,7 +518,7 @@ router.post("/:id/text-receipt", async (req, res) => {
     actorUserId: req.user!.userId,
     entityType: "GiftCard",
     entityId: id,
-    action: "text-receipt",
+    action: channel === "EMAIL" ? "email-receipt" : "text-receipt",
     changes: { conversationId: conversation.id, messageId: result.messageId },
   });
 

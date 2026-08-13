@@ -17,8 +17,9 @@ import DateAndTimeRangeFields, {
 import { apiFetch, ApiError } from '../lib/api'
 import { describeAppointmentStatus, formatDateTime, formatPhoneInput, formatStatus, formatPriceEstimate } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
+import SendChannelButton, { type SendChannel } from '../components/SendChannelButton'
 import { formatCents, dollarsToCents } from '../lib/money'
-import { ArrowLeftIcon, CheckIcon, ClientsIcon, CopyIcon, DocumentIcon, MessageIcon, MoreIcon } from '../components/icons'
+import { ArrowLeftIcon, CheckIcon, ClientsIcon, CopyIcon, MessageIcon, MoreIcon } from '../components/icons'
 import { ArtistAvatar, artistLabel } from '../components/ArtistAvatar'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
@@ -80,7 +81,16 @@ interface Appointment {
   checkedOutAt: string | null
   checkedOutBy: { id: string; name: string | null; email: string } | null
   paidVia: 'STRIPE' | 'MANUAL' | null
-  client: { id: string; firstName: string; lastName: string; referralCode: string }
+  client: {
+    id: string
+    firstName: string
+    lastName: string
+    referralCode: string
+    phone: string | null
+    email: string | null
+    phones: { id: string }[]
+    emails: { id: string }[]
+  }
   // Default true elsewhere -- matches every studio's always-on behavior
   // before this flag existed. Not defaulted here since `appointment` is
   // always a live fetch result, never a hand-built placeholder.
@@ -355,7 +365,7 @@ export default function AppointmentDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appointment?.liabilityWaiver?.id, canManage, refreshIndex])
 
-  async function handleCreateWaiver() {
+  async function handleCreateWaiver(channel: SendChannel = 'SMS') {
     if (!id) return
 
     setCreatingWaiver(true)
@@ -365,10 +375,10 @@ export default function AppointmentDetail() {
     try {
       const result = await apiFetch<{ signingUrl: string; waiverSendResult: ClientSendResult | null }>(
         `/appointments/${id}/waiver`,
-        { method: 'POST' },
+        { method: 'POST', body: JSON.stringify({ channel }) },
       )
       setLatestSigningUrl(result.signingUrl)
-      setWaiverSendNotice(describeSendResult('Waiver', result.waiverSendResult))
+      setWaiverSendNotice(describeSendResult('Waiver', result.waiverSendResult, channel))
       setRefreshIndex((i) => i + 1)
     } catch (err) {
       setWaiverError(err instanceof Error ? err.message : 'Failed to create waiver')
@@ -1119,19 +1129,16 @@ export default function AppointmentDetail() {
                 {!appointment.liabilityWaiver && canManage && canGenerateWaiver && (
                   <div className="mt-4">
                     <p className="text-sm text-fg-secondary">No waiver created for this appointment yet.</p>
-                    <button
-                      type="button"
-                      onClick={handleCreateWaiver}
-                      disabled={creatingWaiver}
-                      aria-label="Create Waiver"
-                      title="Create Waiver"
-                      className="mt-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
-                    >
-                      <DocumentIcon className="h-4 w-4" />
-                      <span className="hidden text-sm font-semibold md:inline">
-                        {creatingWaiver ? 'Creating…' : 'Create Waiver'}
-                      </span>
-                    </button>
+                    <div className="mt-3">
+                      <SendChannelButton
+                        label="Create & Send Waiver"
+                        hasPhone={appointment.client.phones.length > 0}
+                        hasEmail={appointment.client.emails.length > 0}
+                        sending={creatingWaiver}
+                        sendingLabel="Creating…"
+                        onSend={(channel) => handleCreateWaiver(channel)}
+                      />
+                    </div>
                     {waiverError && <p className="mt-2 text-sm text-danger">{waiverError}</p>}
                     {waiverSendNotice && <p className="mt-2 text-sm text-fg-secondary">{waiverSendNotice}</p>}
                   </div>

@@ -77,6 +77,11 @@ Concise operating rules, not a project history — see REPORT.md for history.
   sized/clipped to that ancestor's box, not the viewport. Portal full-viewport fixed layers
   (background photo/wash, etc.) to `document.body` when they might end up nested inside one.
 
+## Views
+
+- List and Kanban are VIEWS of the same entities — every capability available from one must be
+  available from the other; capabilities attach to the entity, never the navigation path.
+
 ## Public unauthenticated flows
 
 - Any new public, unauthenticated flow (client-facing links, estimate/deposit/waiver pages, etc.)

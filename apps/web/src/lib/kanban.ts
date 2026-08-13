@@ -7,6 +7,13 @@
 export interface KanbanInquiry {
   id: string
   status: string
+  // Flash requests in Inquiries: drives InquiryKanbanCard.tsx's own "Flash"
+  // tag -- a repeatable flash piece can be requested again after an
+  // earlier project from the same piece is already underway elsewhere in
+  // the pipeline, so this isn't implied by the FLASH_REQUEST column alone.
+  // Already a real field on every inquiry both pages fetch (a base scalar,
+  // always returned); just newly declared here.
+  channel: string
   description: string
   updatedAt: string
   priceEstimateLow: number | null

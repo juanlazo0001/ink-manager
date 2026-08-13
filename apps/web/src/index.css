@@ -1443,7 +1443,7 @@
 
 .artist-actions {
   width: min(790px, calc(100% - 72px));
-  margin: 0 auto;
+  margin: 16px auto 0;
   display: grid;
   gap: 18px;
 }

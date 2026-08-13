@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { Channel, FlashPieceStatus, InquiryStatus, Role } from "../../generated/prisma/enums";
+import { Channel, FlashPieceStatus, FlashReviewMode, InquiryStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth } from "../middleware/auth";
 import { hasPermission, requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
-import { emitInvalidation } from "../lib/realtime/registry";
+import { emitInvalidation, emitUserInvalidation } from "../lib/realtime/registry";
+import { approveFlashRequest } from "../lib/flashApproval";
 import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { generateUniqueReferralCode } from "../lib/referrals";
@@ -242,7 +243,10 @@ router.post("/:id/request", async (req, res) => {
     return res.status(400).json({ error: "Missing required field(s)" });
   }
 
-  const piece = await prisma.flashPiece.findUnique({ where: { id } });
+  const piece = await prisma.flashPiece.findUnique({
+    where: { id },
+    include: { artist: { select: { userId: true, flashReviewMode: true } } },
+  });
   if (!piece || piece.status !== FlashPieceStatus.AVAILABLE) {
     return res.status(409).json({ error: "This piece is no longer available -- please pick another." });
   }
@@ -335,6 +339,13 @@ router.post("/:id/request", async (req, res) => {
       // REPORT.md rather than silently assumed either way.
       hasBeenTattooedBefore: false,
       placementImages: [placementPhotoUrl],
+      // Flash requests in Inquiries: the piece's own art, not the client's
+      // placement photo -- this is what the payment-confirmation page's
+      // pre-existing referenceImages[0] background (DepositResponse.tsx/
+      // FlashPaymentResponse.tsx, deposits.ts/flashPayments.ts) reads. That
+      // feature already existed; it was always null for flash-origin
+      // inquiries purely because nothing set this field until now.
+      referenceImages: [piece.imageUrl],
       status: InquiryStatus.FLASH_PENDING_APPROVAL,
       priceEstimateLow: priceDollars,
       priceEstimateHigh: priceDollars,
@@ -358,7 +369,27 @@ router.post("/:id/request", async (req, res) => {
   emitInvalidation({ type: "inquiry.created", studioId });
   emitInvalidation({ type: "flash.changed", studioId });
 
-  res.status(201).json({ success: true });
+  // Review mode expansion: three-way now instead of the old boolean's
+  // if/else. ARTIST -- unchanged, push it to the assigned artist's own
+  // Tasks page live (emitUserInvalidation, personal target, same pattern
+  // the transfer-to-artist epic's own accept/decline routes use). STUDIO
+  // -- new: stays at FLASH_PENDING_APPROVAL same as ARTIST, but the
+  // decision belongs to front desk instead -- emitInvalidation's
+  // studio-wide "task.changed" (same event routes/tasks.ts's own mutation
+  // routes already emit) so it shows up live in their queue, not just on
+  // next poll. NONE -- unchanged, auto-approve right here reusing the
+  // exact mechanics a human clicking Approve would trigger (lib/flashApproval.ts).
+  if (piece.artist.flashReviewMode === FlashReviewMode.ARTIST) {
+    emitUserInvalidation(piece.artist.userId, [["tasks", piece.artist.userId]]);
+  } else if (piece.artist.flashReviewMode === FlashReviewMode.STUDIO) {
+    emitInvalidation({ type: "task.changed", studioId });
+  } else {
+    await approveFlashRequest(inquiry.id, null);
+  }
+
+  // Lets the confirmation screen say something honest: "we'll review this"
+  // is wrong when review is off and a payment link already went out.
+  res.status(201).json({ success: true, instantlyApproved: piece.artist.flashReviewMode === FlashReviewMode.NONE });
 });
 
 router.use(requireAuth);

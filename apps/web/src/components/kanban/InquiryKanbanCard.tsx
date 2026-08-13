@@ -95,13 +95,26 @@ const InquiryKanbanCard = forwardRef<HTMLDivElement, InquiryKanbanCardProps>(fun
         <p className="truncate text-sm font-semibold text-fg">
           {inquiry.client.firstName} {inquiry.client.lastName}
         </p>
-        {inquiry.fromGuestStudio && (
-          // Same accent-tinted pill as Team.tsx's own "Guest artist" badge
-          // and Inquiries.tsx's list-row equivalent -- one established
-          // color/shape for "guest," reused rather than reinvented.
-          <span className="mt-1 inline-block max-w-full truncate rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
-            {inquiry.fromGuestStudio.name}
-          </span>
+        {(inquiry.fromGuestStudio || inquiry.channel === 'FLASH_GALLERY') && (
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            {inquiry.fromGuestStudio && (
+              // Same accent-tinted pill as Team.tsx's own "Guest artist" badge
+              // and Inquiries.tsx's list-row equivalent -- one established
+              // color/shape for "guest," reused rather than reinvented.
+              <span className="inline-block max-w-full truncate rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
+                {inquiry.fromGuestStudio.name}
+              </span>
+            )}
+            {inquiry.channel === 'FLASH_GALLERY' && (
+              // Flash requests in Inquiries: visually tags any card sourced
+              // from the flash gallery, in every column -- not just the new
+              // Flash Request column -- since a repeatable piece can be
+              // requested again after an earlier booking's already moved on.
+              <span className="inline-block rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning">
+                Flash
+              </span>
+            )}
+          </div>
         )}
         <p className="mt-1 line-clamp-2 text-xs text-fg-secondary">{truncate(inquiry.description, 90)}</p>
 

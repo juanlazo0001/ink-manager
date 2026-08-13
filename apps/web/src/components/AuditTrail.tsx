@@ -178,6 +178,7 @@ const ACTION_LABELS: Record<string, string> = {
   stripe_payment_confirmed: 'confirmed a Stripe payment',
   reorder: 'reordered',
   'text-receipt': 'texted a receipt',
+  'email-receipt': 'emailed a receipt',
   sms_sent: 'sent a text',
   sms_received: 'received a text',
   sms_opted_in: 'opted in to texts',
@@ -206,6 +207,15 @@ const ACTION_LABELS: Record<string, string> = {
   // that view later.
   transferred: 'transferred this client to another studio',
   arrived_via_transfer: 'brought this client here via transfer',
+  // UI batch item 5: "Attach to Client" was renamed "Transfer to Client" --
+  // the underlying action string (PATCH /:id/holder) stays "reassign-holder"
+  // (an internal identifier, not user-facing), but the displayed verb now
+  // matches the new button wording. "rollover" (PATCH /:id/attachment) is
+  // the new "Attach to Session" feature's own action string, shared with
+  // detaching a card from an appointment -- one readable label covers both
+  // directions since `changes.toAppointmentId` already tells them apart.
+  'reassign-holder': 'transferred this card to another client',
+  rollover: 'moved this card to a different appointment',
 }
 
 // Fallback for anything not in the map above -- spaces out both

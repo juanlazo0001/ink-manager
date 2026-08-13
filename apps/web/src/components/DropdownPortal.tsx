@@ -24,6 +24,18 @@ interface DropdownPortalProps {
 
 const VIEWPORT_MARGIN = 8
 
+// Validation pass finding: the Send-channel picker's own menu shipped
+// completely invisible the first time -- floating unstyled text
+// overlapping whatever was underneath it -- because this component
+// supplied zero default panel chrome and that call site forgot to pass
+// its own. Every other existing call site already passed matching
+// classes by convention, which is exactly the kind of thing that's
+// easy to forget once and ship broken. A real default (still
+// override-able/extendable via the className prop below, which is
+// appended after this) means a caller that forgets can no longer ship
+// an invisible menu -- worst case it looks generic, never blank.
+const DEFAULT_PANEL_CLASSES = 'rounded-xl border border-border bg-surface-raised p-1 shadow-xl'
+
 // Every one of this app's `.card-surface` widget cards (Widget.tsx) has
 // `backdrop-filter: blur(...)` for the Editorial Gold frosted-glass look
 // -- and backdrop-filter, like transform or opacity<1, creates its own
@@ -102,6 +114,31 @@ export default function DropdownPortal({
     }
   }, [open, anchorRef, align, matchWidth, maxHeightCap])
 
+  // The vertical flip above only works because rect.top/rect.bottom are
+  // known before the panel ever renders. Horizontal overflow can't be
+  // solved the same way -- the panel's own width depends on its content
+  // (or a fixed className like SendChannelButton's `w-40`), which isn't
+  // known until AFTER it's actually in the DOM. Validation-pass finding,
+  // live-reproduced: a `align="end"` panel anchored to a narrow trigger
+  // sitting near the LEFT edge of the screen (e.g. a widget header whose
+  // title wrapped, pushing its icon-only mobile actions row flush left)
+  // computed a negative `left`, rendering the menu half off-screen.
+  // This second pass measures the real, already-rendered panel and
+  // nudges it back on-screen -- guarded to only fire once the overflow
+  // actually happens, so it's a no-op (no extra render) for every panel
+  // that already fit.
+  useLayoutEffect(() => {
+    if (!open || !style) return
+    const panel = panelRef.current
+    if (!panel) return
+    const rect = panel.getBoundingClientRect()
+    if (rect.left < VIEWPORT_MARGIN) {
+      setStyle((prev) => (prev ? { ...prev, left: VIEWPORT_MARGIN, right: undefined } : prev))
+    } else if (rect.right > window.innerWidth - VIEWPORT_MARGIN) {
+      setStyle((prev) => (prev ? { ...prev, right: VIEWPORT_MARGIN, left: undefined } : prev))
+    }
+  }, [open, style])
+
   useEffect(() => {
     if (!open) return
     function handleClickOutside(event: MouseEvent) {
@@ -119,9 +156,22 @@ export default function DropdownPortal({
       {open && style && (
         <motion.div
           ref={panelRef}
-          className={`z-50 overflow-y-auto ${className}`}
+          className={`z-50 overflow-y-auto ${DEFAULT_PANEL_CLASSES} ${className}`}
           style={style}
-          variants={dropdownVariants}
+          // Mobile hardening: the ~220ms exit fade (dropdownVariants,
+          // shared with every other dropdown in the app) otherwise leaves
+          // this panel fully interactive while it's visually shrinking
+          // away -- a stray second contact point landing on it during
+          // that window (a real touchscreen quirk, not just a mouse
+          // concern) could re-fire an option's onClick, or land just
+          // outside the now-smaller/offset bounds and hit whatever's
+          // behind it instead (e.g. a hosting Modal's scrim). Only the
+          // exit variant is overridden here -- lib/motion.ts's own
+          // dropdownVariants stays untouched for every other consumer
+          // (ArtistSelect, ConversationsPanel's filter/sort, etc.), none
+          // of which sit inside a dismiss-on-outside-click Modal the way
+          // this component's callers sometimes do.
+          variants={{ ...dropdownVariants, exit: { ...dropdownVariants.exit, pointerEvents: 'none' } }}
           initial="initial"
           animate="animate"
           exit="exit"

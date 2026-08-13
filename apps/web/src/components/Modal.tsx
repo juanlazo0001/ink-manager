@@ -61,6 +61,20 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
   const [dragging, setDragging] = useState(false)
   const dragStartRef = useRef({ x: 0, y: 0 })
 
+  // Mobile hardening: the scrim used to dismiss off wherever a click
+  // event's target happened to resolve, which normally can't be the scrim
+  // unless the click genuinely originated there (the dialog's own
+  // stopPropagation below blocks anything that started and ended inside
+  // it). But content that mutates mid-gesture -- a DropdownPortal option
+  // whose tap closes/removes it before the browser's own synthesized
+  // click fires -- can make that click resolve against a DIFFERENT
+  // element than where the finger actually went down, on a real
+  // touchscreen. Tracking the gesture's own START (mousedown/pointerdown
+  // landing directly on the scrim, not a descendant) and requiring THAT
+  // before ever dismissing closes that gap regardless of where the
+  // eventual click ends up.
+  const scrimGestureStartedHereRef = useRef(false)
+
   useEffect(() => {
     lockBodyScroll()
     return unlockBodyScroll
@@ -94,6 +108,15 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
 
   function requestClose() {
     setClosing(true)
+  }
+
+  function handleScrimPointerDown(event: ReactPointerEvent) {
+    scrimGestureStartedHereRef.current = event.target === event.currentTarget
+  }
+
+  function handleScrimClick() {
+    if (scrimGestureStartedHereRef.current) requestClose()
+    scrimGestureStartedHereRef.current = false
   }
 
   // Accessibility floor: Esc closes, focus starts inside and stays trapped
@@ -141,7 +164,8 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
       initial={{ opacity: 0 }}
       animate={{ opacity: closing ? 0 : 1 }}
       transition={uiSpringTransition}
-      onClick={requestClose}
+      onPointerDown={handleScrimPointerDown}
+      onClick={handleScrimClick}
     >
       <motion.div
         ref={dialogRef}

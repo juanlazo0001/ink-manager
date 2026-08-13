@@ -35,6 +35,8 @@ import EstimateFieldsEditor, {
 import { apiFetch, ApiError, downloadFile } from '../lib/api'
 import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describeInquiryStatus, formatPriceEstimate } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
+import SendChannelButton, { type SendChannel } from '../components/SendChannelButton'
+import FlashApprovalPanel from '../components/FlashApprovalPanel'
 import {
   AppointmentsIcon,
   ArrowLeftIcon,
@@ -134,16 +136,34 @@ interface Inquiry {
   transferredAt: string | null
   transferredToStudio: { id: string; name: string } | null
   clientId: string
-  client: { firstName: string; lastName: string; email: string | null; phone: string | null }
+  client: {
+    firstName: string
+    lastName: string
+    email: string | null
+    phone: string | null
+    phones: { id: string }[]
+    emails: { id: string }[]
+  }
   preferredArtist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } } | null
   assignedArtist:
     | {
         id: string
         hourlyRateCents: number | null
         flatRateCents: number | null
+        flashReviewMode: 'ARTIST' | 'STUDIO' | 'NONE'
         user: { name: string | null; email: string; avatarUrl: string | null }
       }
     | null
+  // View parity + studio-review mode: the shared FlashApprovalPanel needs
+  // the piece's own art/price/duration, which this page never fetched
+  // before (only placement/placementImages off the Inquiry itself).
+  flashPiece: {
+    title: string
+    imageUrl: string
+    priceCents: number
+    estimatedDurationMinutes: number
+    isOneOfOne: boolean
+  } | null
   appointment: { id: string; startTime: string; endTime: string; status: string } | null
   sessions: {
     id: string
@@ -165,6 +185,8 @@ interface Inquiry {
     }[]
   }[]
   // Package M: one per tattoo session, oldest first (Session 1, Session 2, ...).
+  // Two rows CAN share a sessionNumber (see the Session Plan widget's own
+  // resolution logic below) -- createdAt disambiguates which is latest.
   depositForms: {
     id: string
     token: string
@@ -178,6 +200,7 @@ interface Inquiry {
     signatureData: string | null
     paidManually: boolean
     paidAt: string | null
+    createdAt: string
     // Phase 7C: "STRIPE" | "MANUAL" once paid, null before that -- more
     // precise than paidManually alone (which stays the "is this paid"
     // flag every other consumer reads, true for both payment paths).
@@ -352,29 +375,6 @@ interface DeletePreview {
 
 const DELETE_CONFIRM_TEXT = 'DELETE'
 
-// Mirrors clientSms.ts's SendClientSmsResult -- send-estimate auto-sends
-// through that same real path now, so the same skip reasons apply. The
-// estimate itself is always generated regardless of this outcome (see the
-// route's own comment), so a skip/failure here is informational, not an
-// error the user needs to retry past -- the link is still on-screen to
-// share manually either way.
-function describeEstimateSendResult(
-  result:
-    | { sent: true }
-    | { sent: false; reason: 'not_connected' | 'no_phone' | 'opted_out' | 'send_failed'; error?: string },
-): string {
-  if (result.sent) return 'Estimate sent to the client via text — check Conversations.'
-  switch (result.reason) {
-    case 'not_connected':
-      return 'Estimate generated, but SMS isn\'t connected for this studio — share the link below manually.'
-    case 'no_phone':
-      return 'Estimate generated, but this client has no phone on file — share the link below manually.'
-    case 'opted_out':
-      return 'Estimate generated, but this client has opted out of texts — share the link below manually.'
-    default:
-      return 'Estimate generated, but the text failed to send — share the link below manually.'
-  }
-}
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
@@ -863,7 +863,6 @@ export default function InquiryDetail() {
   const [approvingFlash, setApprovingFlash] = useState(false)
   const [flashActionError, setFlashActionError] = useState<string | null>(null)
   const [decliningFlash, setDecliningFlash] = useState(false)
-  const [flashDeclineReason, setFlashDeclineReason] = useState('')
 
   const [showReopenModal, setShowReopenModal] = useState(false)
   const [reopenStatus, setReopenStatus] = useState('')
@@ -1073,7 +1072,15 @@ export default function InquiryDetail() {
   // sessions, or the whole plan on a project that never had one) stays
   // freely editable, same as the original pre-conversion flow.
   const reviseLockedSessions: LockedSession[] = (inquiry?.plannedSessions ?? [])
-    .filter((ps) => ps.depositForm?.paidAt != null || ps.appointment != null)
+    .filter((ps) => {
+      // Session-Plan/DepositForm linkage bug fix: same by-sessionNumber
+      // resolution as the Session Plan widget below -- ps.depositForm
+      // (PlannedSession.depositFormId) can be null even when this session's
+      // deposit is genuinely paid, which would have silently let a revision
+      // alter or drop a paid session's hours/price instead of locking it.
+      const isPaid = (inquiry?.depositForms ?? []).some((df) => df.sessionNumber === ps.sessionNumber && df.paidAt != null)
+      return isPaid || ps.appointment != null
+    })
     .map((ps) => ({
       sessionNumber: ps.sessionNumber,
       estimatedHoursMin: ps.estimatedHoursMin,
@@ -1130,7 +1137,7 @@ export default function InquiryDetail() {
     }
   }
 
-  async function handleSendEstimate() {
+  async function handleSendEstimate(channel: SendChannel = 'SMS') {
     if (!id) return
 
     if (estimateValidationError) {
@@ -1143,19 +1150,16 @@ export default function InquiryDetail() {
     setEstimateSendNotice(null)
 
     try {
-      const result = await apiFetch<{
-        estimateSendResult:
-          | { sent: true }
-          | { sent: false; reason: 'not_connected' | 'no_phone' | 'opted_out' | 'send_failed'; error?: string }
-      }>(`/inquiries/${id}/send-estimate`, {
+      const result = await apiFetch<{ estimateSendResult: ClientSendResult }>(`/inquiries/${id}/send-estimate`, {
         method: 'POST',
         body: JSON.stringify({
           ...estimateDraftToRequestFields(estimateDraft),
           sessions: estimateDraftToSessionsPayload(estimateDraft, (inquiry?.plannedSessions.length ?? 0) > 0),
+          channel,
         }),
       })
 
-      setEstimateSendNotice(describeEstimateSendResult(result.estimateSendResult))
+      setEstimateSendNotice(describeSendResult('Estimate', result.estimateSendResult, channel))
       setEditingEstimate(false)
       invalidateInquiry()
     } catch (err) {
@@ -1177,7 +1181,7 @@ export default function InquiryDetail() {
     setShowReviseEstimateModal(true)
   }
 
-  async function handleReviseEstimate() {
+  async function handleReviseEstimate(channel: SendChannel = 'SMS') {
     if (!id) return
 
     if (reviseEstimateValidationError) {
@@ -1189,11 +1193,7 @@ export default function InquiryDetail() {
     setReviseEstimateError(null)
 
     try {
-      const result = await apiFetch<{
-        revisionSendResult:
-          | { sent: true }
-          | { sent: false; reason: 'not_connected' | 'no_phone' | 'opted_out' | 'send_failed'; error?: string }
-      }>(`/inquiries/${id}/revise-estimate`, {
+      const result = await apiFetch<{ revisionSendResult: ClientSendResult }>(`/inquiries/${id}/revise-estimate`, {
         method: 'POST',
         body: JSON.stringify({
           ...estimateDraftToRequestFields(reviseEstimateDraft),
@@ -1203,10 +1203,11 @@ export default function InquiryDetail() {
             reviseLockedSessions,
           ),
           reason: reviseReasonInput.trim(),
+          channel,
         }),
       })
 
-      setRevisionSendNotice(describeEstimateSendResult(result.revisionSendResult))
+      setRevisionSendNotice(describeSendResult('Revised estimate', result.revisionSendResult, channel))
       setShowReviseEstimateModal(false)
       invalidateInquiry()
     } catch (err) {
@@ -1423,7 +1424,7 @@ export default function InquiryDetail() {
     }
   }
 
-  async function handleDeclineFlash() {
+  async function handleDeclineFlash(reason?: string) {
     if (!id) return
 
     setDecliningFlash(true)
@@ -1432,9 +1433,8 @@ export default function InquiryDetail() {
     try {
       await apiFetch(`/inquiries/${id}/flash/decline`, {
         method: 'POST',
-        body: JSON.stringify({ reason: flashDeclineReason.trim() || undefined }),
+        body: JSON.stringify({ reason }),
       })
-      setFlashDeclineReason('')
       invalidateInquiry()
     } catch (err) {
       setFlashActionError(err instanceof Error ? err.message : 'Failed to decline this request')
@@ -2345,61 +2345,25 @@ export default function InquiryDetail() {
 
               {inquiry.status === 'FLASH_PENDING_APPROVAL' && (
                 <Widget key="flash-approval" id="flash-approval" title="Flash Booking — Review">
-                  <p className="mt-1 text-sm text-fg-secondary">
-                    Submitted for {inquiry.description}. Review the placement below, then approve to move this
-                    customer to payment, or decline to reopen the piece.
-                  </p>
+                  <p className="mt-1 text-sm text-fg-secondary">Submitted for {inquiry.description}.</p>
 
-                  <p className="mt-3 text-sm font-medium text-fg-secondary">Placement</p>
-                  <p className="mt-1 text-sm text-fg">{inquiry.placement}</p>
-
-                  {inquiry.placementImages.length > 0 && (
-                    <div className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-4">
-                      {inquiry.placementImages.map((url) => (
-                        <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="block overflow-hidden rounded-lg border border-border">
-                          <img src={url} alt="Placement" className="aspect-square w-full object-cover" />
-                        </a>
-                      ))}
-                    </div>
-                  )}
-
-                  {(canEditInquiry || canMarkLost) && (
-                    <div className="mt-4 space-y-3">
-                      {canMarkLost && (
-                        <input
-                          type="text"
-                          value={flashDeclineReason}
-                          onChange={(e) => setFlashDeclineReason(e.target.value)}
-                          placeholder="Decline reason (optional)"
-                          className="w-full max-w-sm rounded-lg border border-border bg-surface-inset px-3 py-1.5 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        />
-                      )}
-                      <div className="flex flex-wrap gap-3">
-                        {canEditInquiry && (
-                          <button
-                            type="button"
-                            onClick={handleApproveFlash}
-                            disabled={approvingFlash || decliningFlash}
-                            className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                          >
-                            {approvingFlash ? 'Approving…' : 'Approve'}
-                          </button>
-                        )}
-                        {canMarkLost && (
-                          <button
-                            type="button"
-                            onClick={handleDeclineFlash}
-                            disabled={approvingFlash || decliningFlash}
-                            className="rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10 disabled:opacity-60"
-                          >
-                            {decliningFlash ? 'Declining…' : 'Decline'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {flashActionError && <p className="mt-3 text-sm text-danger">{flashActionError}</p>}
+                  <div className="mt-3">
+                    <FlashApprovalPanel
+                      mode="studio"
+                      flashPiece={inquiry.flashPiece}
+                      placement={inquiry.placement}
+                      placementImages={inquiry.placementImages}
+                      artistOwnsDecision={inquiry.assignedArtist?.flashReviewMode === 'ARTIST'}
+                      canApprove={canEditInquiry}
+                      canDecline={canMarkLost}
+                      approving={approvingFlash}
+                      declining={decliningFlash}
+                      error={flashActionError}
+                      onApprove={handleApproveFlash}
+                      onDecline={handleDeclineFlash}
+                      allowDeclineReason
+                    />
+                  </div>
                 </Widget>
               )}
 
@@ -2630,18 +2594,13 @@ export default function InquiryDetail() {
                       {sendEstimateError && <p className="mt-3 text-sm text-danger">{sendEstimateError}</p>}
 
                       <div className="mt-3 flex flex-wrap gap-3">
-                        <button
-                          type="button"
-                          onClick={handleSendEstimate}
-                          disabled={sendingEstimate}
-                          className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                        >
-                          {sendingEstimate
-                            ? 'Sending…'
-                            : inquiry.estimateSentAt
-                              ? 'Generate & Resend Estimate'
-                              : 'Generate & Send Estimate'}
-                        </button>
+                        <SendChannelButton
+                          label={inquiry.estimateSentAt ? 'Generate & Resend Estimate' : 'Generate & Send Estimate'}
+                          hasPhone={inquiry.client.phones.length > 0}
+                          hasEmail={inquiry.client.emails.length > 0}
+                          sending={sendingEstimate}
+                          onSend={(channel) => handleSendEstimate(channel)}
+                        />
                         {inquiry.estimateSentAt && (
                           <button
                             type="button"
@@ -3514,7 +3473,25 @@ export default function InquiryDetail() {
                 <Widget key="session-plan" id="session-plan" title="Session Plan">
                   <div className="mt-4 divide-y divide-border">
                     {inquiry.plannedSessions.map((ps) => {
-                      const depositStatus = !ps.depositForm ? 'not_generated' : ps.depositForm.paidAt ? 'paid' : 'pending'
+                      // Session-Plan/DepositForm linkage bug fix: resolve by
+                      // sessionNumber against the same flat inquiry.depositForms
+                      // list the Deposit Forms widget already uses, never
+                      // ps.depositForm (PlannedSession.depositFormId) alone --
+                      // that FK can be null even when a real, already-paid
+                      // DepositForm exists for this exact session (a plan
+                      // declared/revised after an un-planned deposit was
+                      // already collected; see lib/deposits.ts's send-guard
+                      // comment). Picks the latest by createdAt when more
+                      // than one row shares this sessionNumber, matching the
+                      // guard's own `orderBy: { createdAt: "desc" }` exactly
+                      // -- a stale link can no longer make a paid session
+                      // display as "not yet generated," in production
+                      // included, without needing the one-time backfill.
+                      const resolvedDepositForm =
+                        inquiry.depositForms
+                          .filter((df) => df.sessionNumber === ps.sessionNumber)
+                          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
+                      const depositStatus = !resolvedDepositForm ? 'not_generated' : resolvedDepositForm.paidAt ? 'paid' : 'pending'
                       const appointmentStatus = !ps.appointment
                         ? 'not_booked'
                         : ps.appointment.checkedOutAt
@@ -3530,13 +3507,13 @@ export default function InquiryDetail() {
                       const hasSchedulingConflict =
                         appointmentStatus === 'not_booked' &&
                         depositStatus === 'paid' &&
-                        !!ps.depositForm?.proposedStartAt &&
+                        !!resolvedDepositForm?.proposedStartAt &&
                         // Judgment call (see apps/api/src/lib/tasks/schedulingConflict.ts):
                         // excludes deposits paid before this feature shipped,
                         // which can only ever be an ordinary "not booked yet"
                         // project (nothing could have produced a real conflict
                         // before this code existed), not a genuine conflict.
-                        new Date(ps.depositForm!.paidAt!) >= AUTO_BOOK_SHIPPED_AT
+                        new Date(resolvedDepositForm!.paidAt!) >= AUTO_BOOK_SHIPPED_AT
                       const depositBadge =
                         depositStatus === 'paid'
                           ? { label: 'Deposit paid', className: 'border-success/30 bg-success/10 text-success' }
@@ -3579,7 +3556,7 @@ export default function InquiryDetail() {
 
                           {hasSchedulingConflict && (
                             <p className="mt-2 rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger">
-                              The tentative time ({formatDateTime(ps.depositForm!.proposedStartAt!)}) was no longer
+                              The tentative time ({formatDateTime(resolvedDepositForm!.proposedStartAt!)}) was no longer
                               available when this deposit was paid, so it wasn't booked automatically. Pick a new
                               time below.
                             </p>
@@ -4227,14 +4204,14 @@ export default function InquiryDetail() {
                     {reviseEstimateError && <p className="text-sm text-danger">{reviseEstimateError}</p>}
 
                     <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={handleReviseEstimate}
-                        disabled={revisingEstimate}
-                        className="flex-1 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {revisingEstimate ? 'Sending…' : 'Revise & Send for Approval'}
-                      </button>
+                      <SendChannelButton
+                        label="Revise & Send for Approval"
+                        hasPhone={inquiry.client.phones.length > 0}
+                        hasEmail={inquiry.client.emails.length > 0}
+                        sending={revisingEstimate}
+                        onSend={(channel) => handleReviseEstimate(channel)}
+                        className="flex flex-1 items-center justify-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+                      />
                       <button
                         type="button"
                         onClick={() => setShowReviseEstimateModal(false)}

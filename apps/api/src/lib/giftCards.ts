@@ -2,6 +2,9 @@ import crypto from "node:crypto";
 import { prisma } from "./prisma";
 import { GiftCardStatus } from "../../generated/prisma/enums";
 import type { GiftCard } from "../../generated/prisma/client";
+import { PUBLIC_APP_URL } from "./publicUrl";
+import { getChargeableConnectedAccountId } from "./stripeConnect";
+import { computeApplicationFeeCents, createDirectChargeCheckoutSession, createOrRetrieveDirectChargePaymentIntent } from "./stripe";
 
 // URL-safe, and this is what the future QR encodes -- collisions are
 // vanishingly unlikely at this length, but a unique constraint backstops it.
@@ -113,4 +116,112 @@ export async function syncExpiredStatus(card: GiftCard): Promise<GiftCard> {
     where: { id: card.id },
     data: { status: GiftCardStatus.EXPIRED },
   });
+}
+
+export type CreateGiftCardCheckoutSessionResult =
+  | { ok: true; url: string }
+  | { ok: false; status: number; error: string };
+
+// Embedded payments migration: the gift-card sibling of
+// lib/deposits.ts's createDepositCheckoutSession -- same shape, same "a
+// fresh session every call, never reused" reasoning (Checkout Sessions
+// expire on Stripe's own schedule). Called by the public, unauthenticated
+// hosted-fallback route (routes/giftCards.ts's publicRouter), reached
+// once staff has already created the PENDING card and handed the client
+// this app's own /gift-card/:code link -- that page decides embedded vs.
+// hosted, not staff at generation time (same split deposit/flash already
+// use).
+export async function createGiftCardCheckoutSession(giftCardId: string): Promise<CreateGiftCardCheckoutSessionResult> {
+  const card = await prisma.giftCard.findUnique({ where: { id: giftCardId } });
+
+  if (!card) {
+    return { ok: false, status: 404, error: "This gift card was not found." };
+  }
+
+  if (card.status !== GiftCardStatus.PENDING) {
+    return { ok: false, status: 400, error: "This gift card has already been paid for." };
+  }
+
+  const stripeAccountId = await getChargeableConnectedAccountId(card.studioId);
+  if (!stripeAccountId) {
+    return { ok: false, status: 400, error: "Online payment isn't available for this studio right now." };
+  }
+
+  let session;
+  try {
+    session = await createDirectChargeCheckoutSession({
+      connectedAccountId: stripeAccountId,
+      amountCents: card.amountCents,
+      productName: "Gift Card",
+      successUrl: `${PUBLIC_APP_URL}/gift-card/${card.code}?paid=1`,
+      cancelUrl: `${PUBLIC_APP_URL}/gift-card/${card.code}?canceled=1`,
+      metadata: { giftCardId: card.id },
+    });
+  } catch (err) {
+    return { ok: false, status: 502, error: err instanceof Error ? err.message : "Failed to start Stripe checkout" };
+  }
+
+  await prisma.giftCard.update({
+    where: { id: card.id },
+    data: { stripeCheckoutSessionId: session.id },
+  });
+
+  return { ok: true, url: session.url };
+}
+
+export type CreateGiftCardPaymentIntentResult =
+  | { ok: true; clientSecret: string; connectedAccountId: string }
+  | { ok: false; status: number; error: string };
+
+// Embedded-payments migration sibling to createGiftCardCheckoutSession
+// above -- same validation, gated additionally on the studio's own
+// StudioSettings.embeddedPaymentsEnabled flag, same fetch-or-create
+// semantics as createOrRetrieveDepositPaymentIntent (lib/deposits.ts): a
+// client reloading the page reuses the existing PaymentIntent instead of
+// piling up abandoned ones.
+export async function createOrRetrieveGiftCardPaymentIntent(giftCardId: string): Promise<CreateGiftCardPaymentIntentResult> {
+  const card = await prisma.giftCard.findUnique({ where: { id: giftCardId } });
+
+  if (!card) {
+    return { ok: false, status: 404, error: "This gift card was not found." };
+  }
+
+  if (card.status !== GiftCardStatus.PENDING) {
+    return { ok: false, status: 400, error: "This gift card has already been paid for." };
+  }
+
+  const studioSettings = await prisma.studioSettings.findUnique({
+    where: { studioId: card.studioId },
+    select: { embeddedPaymentsEnabled: true },
+  });
+  if (!studioSettings?.embeddedPaymentsEnabled) {
+    return { ok: false, status: 400, error: "Embedded payment isn't enabled for this studio." };
+  }
+
+  const stripeAccountId = await getChargeableConnectedAccountId(card.studioId);
+  if (!stripeAccountId) {
+    return { ok: false, status: 400, error: "Online payment isn't available for this studio right now." };
+  }
+
+  let intent;
+  try {
+    intent = await createOrRetrieveDirectChargePaymentIntent({
+      connectedAccountId: stripeAccountId,
+      existingPaymentIntentId: card.stripePaymentIntentId,
+      amountCents: card.amountCents,
+      applicationFeeCents: computeApplicationFeeCents(card.amountCents),
+      metadata: { giftCardId: card.id },
+    });
+  } catch (err) {
+    return { ok: false, status: 502, error: err instanceof Error ? err.message : "Failed to start payment" };
+  }
+
+  if (intent.id !== card.stripePaymentIntentId) {
+    await prisma.giftCard.update({
+      where: { id: card.id },
+      data: { stripePaymentIntentId: intent.id },
+    });
+  }
+
+  return { ok: true, clientSecret: intent.clientSecret, connectedAccountId: stripeAccountId };
 }

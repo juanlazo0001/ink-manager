@@ -256,6 +256,7 @@ completeness check).
 | unavailableDefault | This gallery is unavailable. | Esta galería no está disponible. |
 | requestSentHeading | Request sent! | ¡Solicitud enviada! |
 | requestSentBody | {{studioName}} will review your placement and get back to you shortly to confirm and collect payment -- this isn't booked yet. | {{studioName}} revisará tu ubicación y se pondrá en contacto contigo pronto para confirmar y cobrar el pago -- esto todavía no está reservado. |
+| requestSentBodyInstant | Your payment link is on its way -- pay to lock in your booking and pick a time. | Tu enlace de pago está en camino -- paga para confirmar tu reserva y elegir un horario. |
 | titleFirst | Flash | Galería |
 | titleSecond | Gallery | Flash |
 | currentlyAt | Currently at {{studioName}} | Actualmente en {{studioName}} |

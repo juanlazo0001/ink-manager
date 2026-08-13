@@ -17549,3 +17549,1203 @@ belong-in-the-repo rule.
 The mark-lost/reopen wrong-studio bug and its full sibling family are
 now fixed, merged to `main`, deployed, and confirmed to have caused zero
 lasting production damage.
+
+# UI batch — five small items
+
+Five independent, small UI fixes, verified live against a running dev
+build and screenshotted at 390px and desktop before being marked done
+(evidence: Artifact "UI Batch — Five Small Items, Verified").
+REPORT.md line count before this entry: 17453 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.
+
+1. **Artist public page: more air above BOOK.** `.artist-actions`
+   (`apps/web/src/index.css`) gained `margin-top: 16px` -- previously
+   `margin: 0 auto`, so the gap above BOOK/FLASH was only the last
+   studio card's own 18px bottom margin. Verified at both viewports.
+
+2. **Staff artist page: public page + flash gallery links.** New
+   "Public presence" widget in `ArtistDetail.tsx`, right after Social
+   Links (and in `ARTIST_WIDGET_ORDER`) -- full URL, copy-to-clipboard,
+   open-in-new-tab, for both links. Public page shows "not published"
+   plainly when `publishedAt` is null (publishing itself stays
+   artist-only, no staff bypass -- unchanged); flash gallery has no
+   publish gate so it always renders. Needed the artist's home studio
+   slug, which `artistInclude` (`apps/api/src/routes/artists.ts`)
+   didn't select before -- added `user.select.studio: { select: {
+   slug: true } }`.
+
+3. **Client page: action buttons never word-wrap.** All eight of
+   `ClientDetail.tsx`'s action buttons (Message, Copy, Edit, Send
+   Inquiry, New Inquiry, Issue Gift Card, Send Deposit Form, Send
+   Waiver) previously collapsed to icon-only below the `md` breakpoint
+   (label `hidden md:inline`) -- switched to always-visible,
+   `whitespace-nowrap` labels on a pill that grows to fit, with
+   `flex-wrap` on every button-group container so multiple buttons
+   flow to the next row as whole units instead of squeezing. Also
+   added `flex-wrap` to the shared `Widget.tsx` header row (title +
+   actions), since several of these buttons render through a Widget's
+   `actions` slot -- a pure robustness addition (wrap instead of
+   overflow) that also benefits every other page using `Widget`
+   (Inquiry, Appointment, Artist, Team), not just this one. Verified
+   at 390px specifically with the longest label ("Send Deposit Form")
+   and confirmed desktop is visually unchanged.
+
+4. **Client list: checkboxes only in selection mode.** `Clients.tsx`
+   gained a `selectionMode` flag (default off). Checkboxes (both the
+   header select-all and every row's own) now render only when it's
+   on. The "Export CSV" button, when off, just turns selection mode on
+   instead of exporting immediately; once on, it's replaced by Cancel
+   + an Export button (labelled "Export All" or "Export N Selected").
+   A successful export or Cancel both exit selection mode and clear
+   the selection. Verified live: clean rows by default, checkboxes
+   appear on Export, count updates on selection, Cancel restores clean
+   rows.
+
+5. **Gift cards: Transfer to Client + Attach to Session.** "Attach to
+   client" is renamed "Transfer to Client" everywhere it's user-facing
+   (button, modal title) in `GiftCardDetail.tsx`. The underlying
+   action string on `PATCH /:id/holder` stays `reassign-holder` (an
+   internal identifier, not shown to anyone) -- what actually changes
+   the *displayed* activity-log verb is a new `AuditTrail.tsx`
+   `ACTION_LABELS` entry ("transferred this card to another client"),
+   which is the part users actually read. New "Attach to Session"
+   button + modal lists the client's upcoming (`REQUESTED`/
+   `CONFIRMED`, not yet started) appointments and calls the *existing*
+   `PATCH /:id/attachment` route on selection -- the same route
+   checkout's own stackable-card redemption already reads, so no new
+   balance/redemption math was written anywhere. That route's own
+   `rollover` audit action also got an `ACTION_LABELS` entry ("moved
+   this card to a different appointment") since it previously had no
+   explicit label. Both actions are gated on the same tier
+   (`giftCards.issue`, matching `canReassignHolder`) the spec asked
+   for ("matrix-gated like transfer"). Verified live end-to-end on a
+   real seeded gift card: attached to a different session (confirmed
+   stacked "alongside 3 other cards"), activity log read in plain
+   English, then reverted the card to its original appointment
+   afterward so the shared dev DB was left as found.
+
+## Verification
+
+`tsc -b --noEmit` clean on both apps after every item. Every item
+clicked through live in a real browser (Playwright, `--isolated`
+profile) against the shared dev server -- screenshots in the linked
+Artifact are the actual rendered app. Temporary DB mutations made
+during verification (a test artist's `publicSlug`/`publishedAt`, one
+gift card's `appointmentId`) were both reverted afterward via small
+throwaway scripts, deleted immediately after use.
+
+## CLAUDE.md hygiene
+
+No schema touched. No database reset offered or accepted. No dev
+servers started, restarted, or killed by this session -- the shared
+one was already running. No stray screenshot files or scratch scripts
+left in the repo (all removed after building the evidence Artifact).
+
+# Flash requests in Inquiries + artist review toggle
+
+REPORT.md line count before this entry: 17544 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.
+
+## Part 1 -- investigation, before any code
+
+Flash-gallery bookings already create a real `Inquiry` row
+(`channel: FLASH_GALLERY`, `flashPieceId` set, `status:
+FLASH_PENDING_APPROVAL`) via `POST /flash-pieces/:id/request` -- there
+was no separate model to merge in. But that status, and its successor
+`FLASH_PAYMENT_PENDING`, were simply absent from both
+`INQUIRIES_TAB_STATUSES` and `PROJECTS_TAB_STATUSES`
+(`Inquiries.tsx`), so every flash request was invisible on the
+Inquiries list/Kanban and on My Inquiries (which reuses the same
+column constants) -- the only way to reach one was a Tasks-page deep
+link, studio-wide, for any front-desk staffer with `inquiries.edit`.
+That was also the *only* approval gate before a client could pay --
+no artist-side step existed anywhere in the code.
+
+Confirmed directly in code, before writing anything: `referenceImages`
+and `placementImages` are separate arrays, and
+`POST /flash-pieces/:id/request` only ever set `placementImages` (the
+client's own body photo). `FlashPaymentResponse.tsx` and
+`apps/api/src/routes/flashPayments.ts` **already** build a
+personalized payment-confirmation background from
+`inquiry.referenceImages[0]` -- their own comments said it's always
+null for flash "by construction, not a special case." Setting
+`referenceImages` to the piece's own art at creation time is the
+entire fix for the confirmation-background side effect; that feature
+itself needed zero new code.
+
+## Part 2 -- flash requests surface in Inquiries
+
+- `apps/web/src/pages/Inquiries.tsx`: both flash statuses added to
+  `INQUIRIES_TAB_STATUSES` (leads, same placement reasoning as
+  `DEPOSIT_PENDING`); new `FLASH_REQUEST_COLUMN` groups both statuses
+  into one Kanban column, prepended before Candidacy Review, excluded
+  from drag interactivity (same treatment as that column).
+- `apps/web/src/components/kanban/InquiryKanbanCard.tsx` +
+  `lib/kanban.ts`: a small "Flash" tag renders on any card whose
+  `channel === 'FLASH_GALLERY'`, in every column -- a repeatable piece
+  can be requested again after an earlier booking's already moved on
+  elsewhere in the pipeline.
+- `apps/api/src/routes/flashPieces.ts`'s `POST /:id/request` now sets
+  `referenceImages: [piece.imageUrl]` on inquiry creation.
+- Verified live: submitting a flash request made it appear immediately
+  in the Inquiries Kanban's new Flash Request column, tagged -- and, as
+  a bonus confirmation the fix is correct rather than narrow, an
+  **existing** flash inquiry from before this session (pre-dating the
+  column entirely) also surfaced correctly the first time the board
+  loaded, proving this wasn't a creation-time-only patch.
+
+## Part 3 -- artist review toggle
+
+**Judgment call: the front-desk gate is REPLACED, not additive, when
+artist review is ON.** "The artist's approve/decline is theirs
+(inalienable-family, no matrix gates it)" mirrors the
+transfer-to-artist epic's own "no staff bypass exists on the backend,
+full stop" phrasing for artist-owned decisions. "Default ON... no
+silent behavior change" only holds if there's still exactly *one*
+approval gate before payment, just moved from front desk to the
+artist -- coexisting would be a strictly new, stricter requirement
+(two approvals) nobody asked for. So: `POST /:id/flash/approve` and
+`/decline` stay the same routes, but when the piece's artist has
+review ON, only that artist may call them -- an unconditional identity
+check (`assignedArtist.userId === req.user.userId`), not a permission
+check. Front desk's `inquiries.edit`-gated path is left in the code
+(not deleted) as the correct fallback for the one case that still
+needs it: **declining a stalled payment** at `FLASH_PAYMENT_PENDING`
+stays staff-only regardless of the toggle, on the judgment that
+cleaning up an abandoned checkout is administrative work, not the
+artist's original "should I take this booking" decision the task
+asked to be theirs -- a real distinction this session drew that the
+plan itself hadn't separated out until implementing it made the
+route's own pre-existing "manual escape hatch staff needs" comment
+impossible to ignore.
+
+- `Artist.reviewsFlashRequestsBeforeBooking Boolean @default(true)`
+  (migration `20260812000000_flash_artist_review`) -- artist-owned,
+  full stop, same "no staff bypass exists" shape as `publishedAt`
+  (deliberately *not* `allowsClientSelfScheduling`'s studio-manageable
+  pattern -- this isn't a studio booking policy, it's the artist's own
+  call on their own art). Settable only by the artist themselves
+  through the general `PATCH /artists/:id` route, a new self-only
+  carve-out alongside the existing `profileSetupCompletedAt` one.
+- `apps/api/src/lib/flashApproval.ts` (new): the token-mint +
+  status-transition + audit + best-effort-SMS mechanics extracted from
+  the approve route, so both a human clicking Approve and the new
+  auto-approve path (toggle OFF) share one implementation instead of
+  two copies drifting apart. `actorUserId: null` for the automatic
+  path logs a distinct `flash_request_auto_approved` action.
+- `apps/api/src/routes/flashPieces.ts`'s request route: toggle OFF
+  calls `approveFlashRequest` in the same request, instantly --
+  "instant booking, no approval step" means the inquiry never sits at
+  `FLASH_PENDING_APPROVAL` at all for that artist's pieces.
+- New `apps/api/src/lib/tasks/flashRequestArtistPending.ts`, mirroring
+  `artistTransferPending.ts`'s exact shape (personal to the artist, not
+  in `TASK_SOURCE_REGISTRY`, wired directly into `routes/tasks.ts`'s
+  `GET /`). The existing studio-wide `flashRequestPending.ts` gained a
+  filter documenting the now-true invariant (only reachable for a
+  toggle-OFF artist, which by construction never happens) rather than
+  being deleted.
+- New `apps/web/src/pages/MyFlashRequestDetail.tsx` +
+  `/my-flash-requests/:id` route, modeled directly on
+  `MyTransferDetail.tsx` -- and a **new, separate** backend route
+  (`GET /inquiries/my-flash-requests/:id`) rather than reusing the
+  existing `GET /assigned-to-me/:id`, because that route is gated by
+  `hasPermissionAt(..., "inquiries.view")`, a real matrix key this
+  repo's own dev fixtures have toggled off for ARTIST before (flagged
+  in memory from an earlier session). This request is the artist's
+  alone to decide either way, so the identity check itself -- exactly
+  like `POST /:id/flash/approve` -- IS the entire authorization.
+- `apps/web/src/pages/ArtistDetail.tsx`: new checkbox, self-only (no
+  staff-visible branch at all, unlike the self-scheduling checkbox
+  beside it), saved through the general PATCH with the field omitted
+  entirely for anyone but the artist themselves.
+- `apps/web/src/pages/InquiryDetail.tsx`'s existing front-desk
+  flash-approval widget now hides its Approve/Decline buttons (and
+  says so plainly) when the assigned artist owns the decision --
+  otherwise a staff click there would 403 with no explanation.
+- `apps/web/src/pages/MyInquiries.tsx`: a flash card's own onOpenCard
+  now routes to `/my-flash-requests/:id` instead of
+  `/my-inquiries/:id` -- the latter (MyProjectDetail.tsx) assumes a
+  converted project and hits the same matrix-gated backend route this
+  session deliberately avoided building on.
+
+## A real gap found only by testing live, not by code review
+
+`apps/web/src/pages/Tasks.tsx` unconditionally hides its entire
+"Studio Queue" system-task section for `role === 'ARTIST'`
+(`{user?.role !== 'ARTIST' && (...)}`) -- the new
+`FLASH_REQUEST_ARTIST_PENDING` task type landed in that same generic
+bucket and would have been computed correctly by the backend
+(confirmed via direct API check) yet never rendered anywhere for the
+one audience it exists for. No amount of backend testing would have
+caught this; it only showed up logging in as the artist and looking at
+the actual page. Fixed the same way `ARTIST_TRANSFER_PENDING` already
+solves this exact problem: split into its own always-visible "Flash
+bookings" section, outside the ARTIST-hidden gate.
+
+Also fixed along the way, found the same live-testing way: the public
+gallery's post-submission copy ("{{studio}} will review your placement
+and get back to you shortly") is flatly wrong when review is OFF --
+nobody reviews anything, a payment link goes out immediately.
+`POST /flash-pieces/:id/request` now returns `instantlyApproved` in
+its response; the frontend picks between two copy variants (both
+languages -- `requestSentBodyInstant` added to `en.ts`/`es.ts`/the
+regenerated ES review doc) instead of always claiming a review that
+may not happen.
+
+## Verification
+
+`tsc -b --noEmit` clean on both apps throughout. Live-verified end to
+end, twice (once per fixture round, screenshots kept from the second):
+submit with review ON -> confirmed `referenceImages` set,
+`FLASH_PENDING_APPROVAL`, visible tagged in the Inquiries Kanban, task
+appears for the artist (not front desk) via a fresh Tasks-page load,
+identity-only Approve succeeds with the ARTIST role holding zero
+`inquiries.*` permissions, transitions to `FLASH_PAYMENT_PENDING` with
+a real payment token, confirmed `referenceBackgroundUrl` now resolves
+(previously always null) via the verify endpoint's own response.
+Toggle OFF (flipped live through the artist's own self-service
+checkbox, confirmed via API read after save) -> a second request
+landed directly at `FLASH_PAYMENT_PENDING` with no
+`FLASH_PENDING_APPROVAL` stop and no task for anyone, corrected
+confirmation copy shown. Payment page copy confirmed in both English
+and Spanish via the client's own `preferredLocale`.
+
+Honest gap, flagged rather than hidden: dev-studio has no Stripe
+Connect configured, so the actual post-payment confirmation screen
+(where the reference-art background image renders full-bleed, via
+`PaymentConfirmationStage.tsx`'s existing, unchanged `createPortal`
+code) couldn't be reached or screenshotted live in this environment --
+confirmed instead at the data layer (the URL the frontend would
+receive is now correctly non-null) and by reading that already-shipped
+rendering code directly.
+
+All fixtures (2 flash pieces, 4 inquiries, their clients, one
+temporarily-flipped artist toggle) created across two rounds of live
+testing were deleted/reverted afterward -- confirmed via a final query
+showing zero remaining test rows and the artist's toggle back at its
+default `true`. Evidence Artifact: "Flash Requests in Inquiries --
+Verified."
+
+## CLAUDE.md hygiene
+
+Schema changed once, correctly: `migrate diff` (against
+`--from-config-datasource`, the Prisma 7 flag rename from the
+`--from-schema-datasource` this repo's own earlier notes reference) +
+a hand-written migration file + `migrate deploy` -- never `migrate
+dev`. No database reset offered or accepted. No dev servers started,
+restarted, or killed -- the shared one was already running throughout.
+All throwaway verification/cleanup scripts lived briefly in
+`apps/api/` and were deleted immediately after use; no stray
+screenshot files left in the repo.
+
+# Send-channel picker + email as a client channel
+
+REPORT.md line count before this entry: 17741 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.
+
+## Part 1 -- investigation, before any code
+
+Confirmed against actual code (memory's own standing lesson: verify a
+task's premise before building on it) rather than assumed. Two
+findings, both surfaced before writing anything:
+
+**Email to clients wasn't entirely new.** The Conversations composer
+already has a full, working per-studio Gmail integration
+(`lib/gmail.ts`, `routes/conversations.ts`) -- OAuth-connected, real
+two-way threading. "SMS is the only channel" was true for the other
+~10 one-way document-send actions (deposit form, estimate, waiver,
+gift card receipt, prefilled intake link, ...), which all call
+`sendClientSms` directly with no email branch anywhere, but false for
+the composer itself.
+
+**A platform-level Bird sender already exists** (`lib/platformEmail.ts`,
+its own comment: "CONFIRMED WORKING... real send, HTTP 202") but is
+scoped to account notifications from a fixed address, and its own
+comment explicitly says not to extend it toward client-facing use. A
+new sibling `lib/clientEmail.ts` was needed, not an extension of that
+file.
+
+Two decisions confirmed with the user before building: no reply-to
+header when a studio has no primary `Location.email` on file (the only
+field in this schema that already serves this role -- confirmed via
+`webhooks.ts`'s own HELP auto-reply, which already fills a `studioEmail`
+template variable from exactly that field); build the full picker
+across all representative send sites in one pass, not a partial one.
+
+One more resolved during investigation, not by asking: the
+Conversations composer keeps its existing Gmail-first behavior
+unchanged -- routing it through the new one-way Bird sender instead
+would silently break reply-threading for any studio that already has
+Gmail connected. `clientEmail.ts` embodies this directly: try this
+studio's own connected Gmail first (real threading, zero cost to the
+caller); fall back to the platform Bird sender otherwise. Every
+one-way document-send site gets this automatically just by calling
+`sendClientEmail` -- none of them know or care which mechanism ran.
+
+## What was built
+
+- **`apps/api/src/lib/clientEmail.ts`** (new) -- `sendClientEmail`,
+  mirroring `clientSms.ts`'s exact three-layer shape
+  (`createOutboundEmailMessage` -> the Gmail-or-Bird resolution ->
+  the public function). Refuses a client with no email before
+  attempting anything. A new low-level `sendViaBirdOnBehalfOfStudio`
+  lives here, NOT in `platformEmail.ts` (per that file's own "do not
+  extend" comment) -- studio-branded `from` display name, reply-to
+  resolved from the studio's primary `Location.email`.
+- **`apps/api/src/lib/emailTemplate.ts`** gained a second exported
+  function, `renderClientEmailHtml`, reusing
+  `renderPlatformEmailHtml`'s visual system (palette, fonts,
+  `escapeHtml`, the bulletproof table-based button for cross-client
+  compatibility) but not that function itself -- its footer ("please
+  don't reply directly to this email") is wrong for a client-facing
+  send with a real reply-to.
+- **`~10 one-way send routes`** (`lib/deposits.ts`, `lib/estimates.ts`,
+  `routes/inquiries.ts` x2, `routes/appointments.ts`,
+  `routes/giftCards.ts`, `routes/prefillDrafts.ts`) each gained the
+  same mechanical change: accept `channel: 'SMS' | 'EMAIL'` from the
+  request body (default `'SMS'`, so every existing caller that never
+  passes it is unaffected), branch between the existing `sendClientSms`
+  call and a new `sendClientEmail` call with a subject + HTML body.
+  `logAttemptEvenOnFailure: true` added to all of them (Package J
+  rule: log every attempt, not just successes) -- extending the
+  previously opt-in-only SMS behavior, since every one of these is a
+  one-shot user-initiated action, not the reminder-ticker's own
+  retry-loop case that motivated keeping it opt-in there.
+  Deliberately left as SMS-only, not given the picker: the self-
+  schedule-link reissue on a declined appointment and the referral-
+  reward notice (both automatic side effects, not a manual "Send"
+  button a staff member clicks) and the flash-payment-approval link
+  (an Approve action, not literally a send button) -- scoped out to
+  keep this pass to genuinely manual send sites, flagged here rather
+  than silently expanded past what was asked.
+- **`routes/giftCards.ts`**: `POST /:id/text-receipt` (route path kept
+  for API stability) now accepts `channel`; the audit action reflects
+  which one ran (`"text-receipt"` vs new `"email-receipt"`, both given
+  readable `AuditTrail.tsx` labels).
+- **New `apps/web/src/components/SendChannelButton.tsx`** -- the one
+  shared control every send site swaps its plain button for. SMS
+  needs `client.phone` AND this studio's own SMS connected (reads the
+  same `['sms-integration-status']` cache `ConversationsPanel.tsx`
+  already keeps warm); email only needs `client.email` -- it never
+  gates on the studio's own email integration, since the platform
+  fallback always works regardless, matching the task's own "Email
+  only if they have an email address" wording exactly. Zero available
+  -> disabled with a tooltip; exactly one -> a single-click button
+  named for that channel ("no pointless menu"); both -> "Send…" opens
+  a two-item menu, SMS listed first (default preselection).
+- **`apps/web/src/lib/sendResult.ts`**: `ClientSendResult`'s `reason`
+  union gained `'no_email'`; `describeSendResult` takes a `channel`
+  param so its copy says "via text"/"via email" correctly.
+  `InquiryDetail.tsx` had its own hand-rolled duplicate of this exact
+  function (`describeEstimateSendResult`, pre-dating the shared
+  helper) -- deleted, both call sites now use the real one.
+- Every representative send site now uses `SendChannelButton`:
+  `ClientDetail.tsx` (Send Inquiry, Send Deposit Form, Send Waiver),
+  `InquiryDetail.tsx` (Generate & Send/Resend Estimate, Revise & Send
+  for Approval), `AppointmentDetail.tsx` (Create & Send Waiver, which
+  needed `phone`/`email` added to its own `Appointment.client`
+  fetch -- never selected before), `GiftCardDetail.tsx` ("Text
+  Receipt" is now "Send Receipt," which needed the same `phone`/`email`
+  addition to `GIFT_CARD_DETAIL_INCLUDE`).
+
+## Found only by clicking through, not by reading the code
+
+**`DropdownPortal` supplies no default panel chrome.** The first live
+screenshot of the two-channel "Send…" menu showed floating unstyled
+text overlapping the button underneath it -- every other call site in
+this codebase passes its own `className` for background/border/shadow
+(confirmed against `ClientDetail.tsx`'s own "More actions" menu), which
+`SendChannelButton`'s first draft omitted. Fixed and re-verified live
+before moving on -- exactly the kind of bug no amount of `tsc`/API
+testing would ever catch.
+
+**Two empirical Bird API findings**, confirmed by real sends against a
+real `BIRD_API_KEY`, not guessed at:
+- `reply_to` must be a JSON array of strings, not a bare string --
+  the first real send attempt was rejected outright
+  (`E01001: got string, want array`). Fixed in
+  `sendViaBirdOnBehalfOfStudio`.
+- The `from` display-name-plus-angle-bracket format ("Studio via Ink
+  Manager <address>") was accepted without complaint on the very
+  first try -- no fallback needed, contrary to the plan's own
+  contingency for this.
+
+## Verification
+
+`tsc -b --noEmit` clean on both apps throughout. Live-verified against
+the real dev Bird key: a send to a fake `@example.com` test address
+was correctly rejected by Bird's own anti-spam domain check
+(`E04011`, not a bug -- a legitimate safeguard); a second send to a
+realistic Gmail-domain address succeeded outright
+(`deliveryStatus: "sent"`), confirmed logged into Conversations
+correctly threaded alongside prior SMS messages, and readable in the
+gift card's own activity log ("Dev Owner emailed a receipt"). All
+four `SendChannelButton` states confirmed live: both channels (menu,
+SMS first), SMS-only, email-only, and disabled-with-tooltip for a
+client with neither. No Spanish-language verification needed for any
+of these sends -- none of the ~10 document-send SMS bodies were ever
+localized before this change (all hardcoded English strings, unlike
+the separate client-token public pages, e.g. flash payment, which are
+bilingual), and the new email bodies stay consistent with that
+existing convention rather than introducing a one-off exception.
+
+All test artifacts from live Bird sends (the resulting `Message` rows
+and their `email-receipt` audit rows, on two pre-existing dev-seed
+clients) deleted afterward via a direct query, confirmed against the
+real request the send actually made. Evidence Artifact: "Send-Channel
+Picker + Email -- Verified."
+
+## CLAUDE.md hygiene
+
+No schema touched (`Location.email`/`MessageChannel.EMAIL` both
+already existed). No database reset offered or accepted. No dev
+servers started, restarted, or killed -- the shared one was already
+running throughout, and its `BIRD_API_KEY` is what made the real send
+tests above possible without any additional setup. All throwaway
+verification/cleanup scripts lived briefly in `apps/api/` and were
+deleted immediately after use; no stray screenshot files left in the
+repo.
+
+# Send-channel picker: Juan's live validation pass
+
+Juan (product owner) tested the send-channel picker epic himself and sent five
+findings from live use. All five investigated and/or fixed in this session.
+
+## 1. Toolbar buttons wrapping to two lines
+
+`Clients.tsx`'s Import Clients / Export CSV / Add Client (and the Cancel /
+Export Selected pair that replaces them in selection mode) had no
+`shrink-0`/`whitespace-nowrap` protection -- a squeezed flex row let their
+text wrap mid-label, turning them into tall two-line pills instead of failing
+by wrapping to a new row. Fixed by wrapping each label in its own
+`whitespace-nowrap` span, adding `shrink-0` to every button/link (matching
+the exact pattern already established for `ClientDetail.tsx`'s action row in
+an earlier session), and adding `flex-wrap` to the button-group container
+itself so the group wraps as whole pills onto a second row on narrow
+viewports rather than compressing individual buttons. Verified live at 1440px
+(all three buttons fit on one row) and 390px (Import Clients + Export CSV on
+one row, Add Client wraps cleanly to its own row below -- no button ever
+wraps its own label).
+
+## 2. Send buttons: restore icon-only-mobile
+
+Direct reversal of this session's own earlier UI-batch decision, per Juan's
+live judgment after seeing both states: per-item "Send X" actions
+(`SendChannelButton`) go back to icon-only at mobile widths / full-labeled at
+desktop, while toolbar-level buttons (item 1 above) stay always-full-label.
+`SendChannelButton`'s default class changed to
+`h-11 w-11 ... md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2` with the label
+in a `hidden ... md:inline` span; every disabled/single-channel/menu render
+branch keeps `aria-label`/`title` for accessibility on the icon-only state.
+Two sibling buttons in `ClientDetail.tsx` that aren't `SendChannelButton`
+instances -- the "which inquiry/appointment?" picker trigger for Send Deposit
+Form / Send Waiver when 0 or 2+ eligible items exist -- got the identical
+treatment for consistency; without it, the same logical button would flip
+between icon-only and full-label purely based on how many eligible records
+happened to exist, which would read as a bug. Verified live: both widgets
+render icon-only at 390px (accessible name preserved, confirmed via
+accessibility snapshot) and full-labeled at 1440px.
+
+## 3. INVESTIGATED -- "Send Inquiry via Email" for a client with both
+
+Hypothesis (b) confirmed: the legacy-singular family bug, not gating-as-
+designed. Root cause, reproduced live end-to-end in this session (not
+assumed): `POST /clients/:id/phones` and `/emails` never synced their write
+back to `Client.phone`/`Client.email` (the scalar "primary mirror" fields),
+violating `clientContacts.ts`'s own stated invariant that every write path to
+those scalars must go through `syncPrimaryPhone`/`syncPrimaryEmail`. A client
+whose phone/email were added via the "+Add phone"/"+Add email" UI buttons
+(rather than set at client-creation time, which does populate the scalars
+directly) ended up with real, non-primary `ClientPhone`/`ClientEmail` rows
+while the scalars sat `null` -- and `SendChannelButton`'s original prop API
+took a `client: { phone, email }` object, reading exactly those `null`
+scalars, so the button silently offered only whichever channel happened to
+already have its scalar populated.
+
+Fixed at both ends:
+- **Write path** (`routes/clients.ts`): `POST /:id/phones` and `/:id/emails`
+  now detect a client's *first* phone/email and promote it to
+  `isPrimary: true` plus sync the scalar in the same transaction --
+  restoring the invariant `clientContacts.ts` already claimed to hold.
+- **Read path, defensively** (`lib/clientSms.ts`, `lib/clientEmail.ts`):
+  `sendClientSms`/`sendClientEmail` now resolve the destination via
+  `client.phone ?? client.phones[0]?.phone` (same pattern for email) instead
+  of trusting the scalar alone, so even un-backfilled existing rows can't
+  silently fail a send.
+- **`SendChannelButton`'s prop API**: changed from `client: { phone, email }`
+  to plain `hasPhone`/`hasEmail` booleans, forcing every caller to derive
+  availability from the real contact arrays (`client.phones.length > 0`) and
+  making it structurally impossible to reintroduce this bug at a new call
+  site by reaching for the scalar out of convenience. Swept and fixed all
+  four call sites: `ClientDetail.tsx` (Send Inquiry, Send Deposit Form, Send
+  Waiver), `InquiryDetail.tsx` (Generate/Resend Estimate, Revise & Send for
+  Approval), `AppointmentDetail.tsx` (Create & Send Waiver), `GiftCardDetail.tsx`
+  (Send Receipt) -- each needed its backend `select`/`include` widened to
+  return `phones`/`emails` id arrays alongside the existing scalar fields
+  (`routes/inquiries.ts`, `routes/appointments.ts`, `routes/giftCards.ts`).
+
+**Live-reproduced, exact data shape.** Created a client with no phone/email
+at creation time, then added one phone and one email via the separate
+"+Add phone"/"+Add email" buttons (the exact path that used to break):
+resulting record was `{ phone: "5557778899", email: "channelpicker.verify@...",
+phones: [{ phone: "5557778899", isPrimary: true }], emails: [{ email:
+"channelpicker.verify@...", isPrimary: true }] }` -- scalar and relational now
+in sync because of the write-path fix. The "Send Inquiry" button correctly
+rendered as `aria-label="Send Inquiry -- choose SMS or Email"` opening a
+two-item "via SMS"/"via Email" menu, not an Email-only single button.
+(Note: Juan's real "Juan Lazo" client wasn't reachable from this session's
+dev database -- searched by name/email, zero results -- so this reproduces
+the identical bug *mechanism* against a fresh test client rather than his
+literal record; whether production has existing divergent scalar/relational
+data for pre-fix clients is outside this session's DB access and unverified.)
+
+## 4. DropdownPortal default panel chrome
+
+Already landed in an earlier session on this branch (`DEFAULT_PANEL_CLASSES`
+merged into every render). Confirmed still present and correct: the "via
+SMS"/"via Email" menu renders with proper background/border/shadow at both
+widths.
+
+**Found only by live-clicking at mobile width, not asked for by name:** the
+same menu opened *off-screen* at 390px -- its trigger (`SendChannelButton`
+inside a widget header whose title had wrapped, pushing the icon-only mobile
+actions row flush against the widget's left edge) sits near `x=93`, but
+`DropdownPortal`'s `align="end"` unconditionally opens the panel *leftward*
+from the trigger's right edge with no horizontal collision detection,
+computing a negative `left` and rendering roughly half the menu past the
+screen's edge (`rect: { left: -67, right: 93 }` at 390px width). A
+`.z-50.overflow-y-auto` selector trap here too: an unrelated element (the
+mobile hamburger sidebar) coincidentally has both classes in its list, so a
+naive `document.querySelector('.z-50.overflow-y-auto')` grabs the wrong
+element -- had to enumerate all matches to find the real menu panel.
+
+Fixed with a second, guarded `useLayoutEffect` in `DropdownPortal.tsx`: after
+the panel actually renders (so its real, content-determined width is known,
+which isn't true synchronously the way the anchor's rect is), measure it and
+nudge `left`/`right` back inside an 8px viewport margin if it overflows
+either edge. No-op (no extra render) for any panel that already fit --
+spot-checked the unrelated Copy-options menu at 390px afterward to confirm
+zero regression. Re-verified live: the Send Inquiry menu now opens fully
+on-screen (clamped to `left: 8px`, flipped to open upward given the limited
+vertical room too) at 390px, and desktop behavior is pixel-identical to
+before the fix.
+
+## 5. 30-minute time dropdowns
+
+Already fully built (`components/TimeSelect.tsx`, from an earlier session/
+epic per REPORT.md's own "1. Time selection" section) and still wired into
+`DateAndTimeRangeFields.tsx` across all 5 scheduling surfaces --
+`for (let m = min; m <= max; m += 30)` confirmed present and unchanged. No
+work needed; the Export CSV button Juan's message flagged as circumstantial
+evidence is unrelated to this feature (it's the client-list bulk-export
+button, no connection to time selection).
+
+## Verification
+
+`tsc -b --noEmit` clean on both apps after every change. Live-verified at
+1440px and 390px via Playwright MCP: toolbar buttons (item 1), icon-only/
+full-label Send buttons in both the deposit-form/waiver 0-eligible state and
+the SendChannelButton menu state (item 2), the two-channel picker end-to-end
+against a live-reproduced legacy-singular-bug client (item 3), the picker's
+on-screen positioning at both widths post-fix (item 4), and TimeSelect's
+continued presence in code (item 5). Test client (`ChannelPicker
+VerifyTest`) deleted via the API afterward; no other data left behind.
+
+## CLAUDE.md hygiene
+
+No schema changes. No database reset offered or accepted. No dev servers
+started/stopped -- the session's already-running API (port 4000) and web
+(port 5173) dev servers were reused throughout. No scratch scripts committed.
+
+# Icon-only-mobile pattern extended to all widget-header action buttons
+
+Follow-up to the validation pass above: Juan asked for the same icon-only-
+mobile / full-label-desktop treatment applied to the Send buttons to also
+cover every other icon+label action button in a widget or card header, citing
+"Issue Gift Card, New Inquiry" as examples.
+
+Scope was ambiguous enough to ask rather than guess, since two sibling button
+classes had *just* been given the opposite treatment earlier in this same
+session on explicit instruction: `Clients.tsx`'s page-level toolbar (Import
+Clients / Export CSV / Add Client -- fixed minutes earlier to stay wide and
+never shrink) and `ClientDetail.tsx`'s profile-card row (Message / Copy /
+Edit -- fixed in an even earlier session to nowrap+grow-wider). Confirmed
+with Juan: profile-card row and widget-header actions -- yes; page-level
+toolbar -- no, leave it wide.
+
+Used the Explore agent to inventory every icon+label pill button across the
+staff-facing app matching the un-migrated `flex items-center gap-2
+rounded-full ... px-4 py-2` shape (excluding anything already on the
+responsive pattern, excluding modals/wizards/public client-token pages,
+excluding toolbars). Verified the report by spot-checking a sample of the
+"0 in-scope" pages directly (`InquiryDetail.tsx`, `AppointmentDetail.tsx`,
+`GiftCardDetail.tsx`) -- confirmed their remaining `rounded-full border
+border-border px-4 py-2` buttons are genuinely text-only (no icon), correctly
+excluded, and every icon+label button already uses the responsive pattern
+from the send-channel-picker epic. Real in-scope set was small:
+`ClientDetail.tsx`'s Message, Copy, Edit (profile card), New Inquiry (Inquiries
+widget), and Issue Gift Card (Gift Cards widget) -- all converted to the same
+`h-11 w-11 shrink-0 ... md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2` +
+`hidden ... md:inline` label pattern as `SendChannelButton`.
+
+Deliberately left `ConversationsPanel.tsx`'s "New Chat" button untouched --
+it's the lone primary action in a global side-panel header shared across
+every page (not one of several small actions competing for space in a
+per-item widget row), closer in kind to a toolbar button than to the crowded
+per-item action rows this pattern targets.
+
+`tsc -b --noEmit` clean. Verified live at 1440px (unchanged, full labels)
+and 390px (Message/Copy/Edit/New Inquiry/Issue Gift Card all render as
+icon-only circles, consistent with the already-fixed Send buttons sitting in
+the same rows) via Playwright MCP.
+
+# Flash review: view parity + studio-review mode
+
+## Context
+
+Juan's spec: a house rule ("List and Kanban are VIEWS of the same
+entities -- every capability available from one must be available from
+the other; capabilities attach to the entity, never the navigation
+path"), a parity investigation/fix, and expanding the per-artist flash
+review toggle into a three-mode setting (ARTIST / STUDIO / NONE). Sized
+this as a plan-mode task given the schema migration and permission-model
+work; plan approved before implementation.
+
+Added the house rule verbatim to `CLAUDE.md` under a new `## Views`
+section.
+
+## Part 1 -- parity investigation and fix
+
+**What the investigation actually found, vs. the stated hypothesis.**
+Juan's hypothesis was "a Kanban-only request panel vs standard
+InquiryDetail." Reading the code first (not assumed) found something
+more precise: **staff side has no bug at all** -- `Inquiries.tsx`'s List
+and Kanban already share one `openInquiry(id)` function, both landing on
+`/inquiries/:id`. That page already had a "Flash Booking -- Review"
+widget for `FLASH_PENDING_APPROVAL`, already correctly gated
+(`canEditInquiry`/`canMarkLost` when front desk owns it; a read-only
+message when the artist does) -- the real, working front-desk review UI,
+just missing the flash piece's own art/price/duration display (only had
+placement + images).
+
+**The real bug was on the artist's own board** (`MyInquiries.tsx`,
+which has its own List/Kanban toggle). Kanban's `onOpenCard` already
+special-cased a `FLASH_PENDING_APPROVAL`/`FLASH_PAYMENT_PENDING` +
+`FLASH_GALLERY` card, redirecting to `/my-flash-requests/:id`
+(`MyFlashRequestDetail.tsx`, a deliberately separate, identity-only-gated
+route -- necessary because the normal `assigned-to-me/:id` route is
+matrix-gated on `inquiries.view`, which some studios have off for
+ARTIST, and flash approve/decline is meant to be inalienable). **List's
+"View details" link had no such special case** -- always pointed to
+`/my-inquiries/:id` (`MyProjectDetail.tsx`), whose own comment says it
+"assumes post-conversion fields." Same artist, same request: Kanban
+worked, List didn't. Fixed by applying Kanban's exact redirect condition
+to List's link target too.
+
+**Second gap, found doing the "diff everything else" pass Part 1 step 3
+asked for**: `ARTIST_ASSIGNED` Decline was *also* List-only -- Kanban has
+no drag gesture for declining (not a forward step, by design) and the
+shared click-through page (`MyProjectDetail.tsx`) had zero decline UI at
+all, so a Kanban-only artist had no way to decline an assignment,
+period. Fixed by adding a self-contained Decline button + reason modal
+directly to `MyProjectDetail.tsx` (mirroring `MyInquiries.tsx`'s
+existing modal exactly), and widened its backing route
+(`PATCH /inquiries/:id/respond`) from `requireRole(Role.ARTIST)` to
+`requireRole(Role.ARTIST, Role.OWNER)`, matching the sibling
+`GET /assigned-to-me/:id` route's own existing precedent for a solo
+studio's owner-artist.
+
+**Converged the approval UI into one shared component**, not per-view
+copies: new `apps/web/src/components/FlashApprovalPanel.tsx` (art/price/
+duration/one-of-one badge, placement + images, Approve/Decline,
+mode-aware copy). Mounted in the two places that had near-duplicate
+inline versions of this UI -- `MyFlashRequestDetail.tsx` (artist,
+`mode="artist"`) and `InquiryDetail.tsx`'s existing widget (staff,
+`mode="studio"`) -- replacing that inline JSX in both. Deliberately
+*not* a single shared route: artist and staff reach this entity through
+two legitimately different, pre-existing permission surfaces
+(identity-only vs. matrix-gated OWNER/FRONT_DESK), which is real
+architecture, not the bug. `INQUIRY_INCLUDE` gained `flashPiece` (never
+selected before), so staff now sees the piece's own art/price/duration
+too -- a genuine capability upgrade from the convergence, not just a
+refactor.
+
+## Part 2 -- review mode expansion
+
+**Load-bearing finding that reshaped the estimate**: the "studio
+reviews" path was already mostly built. `flashRequestPendingSource`
+(front-desk task queue) and the front-desk-actionable branch of
+`POST /:id/flash/approve`/`/decline` already existed -- both explicitly
+documented in their own comments as permanently dead code, because
+today's boolean's OFF state meant *instant auto-approval*, never
+front-desk review. Part 2 was substantially about giving that dead code
+a real path in, not building a new subsystem.
+
+- **Schema**: `Artist.reviewsFlashRequestsBeforeBooking Boolean` ->
+  `Artist.flashReviewMode FlashReviewMode` (new enum: `ARTIST | STUDIO |
+  NONE`). Migration (`prisma/migrations/20260812150000_flash_review_mode`)
+  generated via `prisma migrate diff` per CLAUDE.md, hand-edited to add
+  the column nullable first, backfill (`true -> ARTIST`, `false ->
+  NONE`) via a `CASE WHEN` `UPDATE`, then set `NOT NULL` + default and
+  drop the old column -- applied via `prisma migrate deploy`. Verified
+  the backfill directly against the dev DB afterward: all 74 existing
+  artists landed on `ARTIST` (none had the boolean off).
+- **Backend**: `POST /flash-pieces/:id/request`'s two-way if/else became
+  a three-way switch (STUDIO's new branch stays at
+  `FLASH_PENDING_APPROVAL` and emits `task.changed` for a live front-desk
+  update, matching the convention `routes/tasks.ts`'s own mutation
+  routes already use). `POST /:id/flash/approve` and `/decline`: the
+  front-desk branch swapped `hasPermissionAt` for
+  `hasPermissionOrSoloArtistAt` -- the exact primitive
+  `appointments.ts`'s own `POST /:id/approve` uses for "matrix-gated, but
+  a genuine solo studio's owner-artist still can," reused rather than
+  hand-rolled, since this is what makes the solo-studio verification
+  below trustworthy rather than coincidental. Both handlers now also
+  emit `task.changed` so an approved/declined front-desk task disappears
+  live for every staff member, not just whoever acted.
+  `flashRequestPending.ts`/`flashRequestArtistPending.ts`: swapped
+  filters for the enum equivalent -- `flashRequestArtistPending.ts`
+  actually needed a NEW filter it never had before (previously
+  unconditional on `assignedArtistId` alone, safe only because
+  `FLASH_PENDING_APPROVAL` could never exist for a non-ARTIST-mode
+  artist under the old binary model; now it genuinely can, via STUDIO,
+  so without the added `flashReviewMode: ARTIST` filter an artist would
+  have started seeing STUDIO-owned requests duplicated into their own
+  personal queue).
+- **`ArtistDetail.tsx`**: checkbox replaced with a 3-option radio-card
+  picker, self-only editable (unchanged gate), "yours alone" copy scoped
+  to the ARTIST option only.
+- **i18n**: per explicit confirmation, staff surfaces stay English-only
+  (matching every other staff page in this codebase -- no
+  `t()`/`useTranslations` precedent broken). Verified
+  `FlashPublicGallery.tsx`'s existing bilingual confirmation copy
+  (`"{{studioName}} will review your placement..."`) already reads
+  correctly for both ARTIST and STUDIO without any new keys, since the
+  client never needs to know *who* reviews it.
+
+## Part 3 -- verification (live, via Playwright MCP + direct API calls)
+
+All three modes tested end-to-end against the real dev DB, with cleanup
+after each (test clients/inquiries deleted, flash pieces reset to
+AVAILABLE, both test artists' modes restored to ARTIST, and the
+dev-studio `inquiries.view`/Artist permission -- off by default in this
+fixture, temporarily enabled to unblock artist-role List/Kanban testing
+-- restored to its original off state).
+
+- **List vs. Kanban parity**: same pending flash request opened from
+  the artist's List and Kanban both landed on the identical
+  `/my-flash-requests/:id` page (screenshotted both paths, pixel-
+  identical). Staff List click-through confirmed working end-to-end.
+- **Mode ARTIST**: artist saw the task on their own Tasks page with
+  working Approve/Decline (via `FlashApprovalPanel`, "yours alone to
+  decide" copy); staff opening the same inquiry from their own List saw
+  it read-only ("This artist reviews their own flash requests...", zero
+  action buttons).
+- **Mode STUDIO**: submitting a request created a live front-desk task
+  (no reload needed, confirmed via the `task.changed` realtime
+  invalidation); staff approved it from the List-opened
+  `/inquiries/:id` detail, booking moved to `FLASH_PAYMENT_PENDING`; a
+  raw authenticated `POST /:id/flash/approve` from the ARTIST-role
+  owner of that same piece (no `inquiries.edit` grant) returned a real
+  HTTP 403, not just a UI-hidden button.
+- **Mode NONE**: request returned `instantlyApproved: true` and the
+  inquiry's status was `FLASH_PAYMENT_PENDING` immediately -- it never
+  passed through `FLASH_PENDING_APPROVAL`, so no task was ever created
+  anywhere to find.
+- **Solo studio-of-one**: found a genuine pre-existing solo studio
+  fixture (`isSoloStudio: true`, OWNER with an attached Artist) missing
+  basic setup (no Service/IntakeForm) unrelated to this task -- rather
+  than building that out through the UI, constructed the
+  `FLASH_PENDING_APPROVAL` inquiry directly via Prisma to isolate
+  exactly the permission logic under test. Confirmed via raw
+  authenticated HTTP that the owner-artist could approve successfully
+  in **both** ARTIST mode (via the identity-only bypass) and STUDIO mode
+  (via the new `hasPermissionOrSoloArtistAt` bypass) -- both returned
+  200 and the same `FLASH_PAYMENT_PENDING` transition, no weirdness.
+
+`tsc -b && vite build` (web) and `tsc` (api) both clean -- the full
+production builds CLAUDE.md's "Trusting a build" section calls for, not
+just `--noEmit`.
+
+## CLAUDE.md hygiene
+
+Migration generated via `prisma migrate diff` + hand-edited backfill,
+applied via `prisma migrate deploy` -- `prisma migrate dev` never
+invoked. No database reset offered or accepted. All scratch verification
+scripts (solo-studio fixture setup, cleanup, backfill spot-check) lived
+briefly in `apps/api/` and were deleted immediately after use. Every
+piece of test data this session created (5 dev-studio test clients/
+inquiries, 1 solo-studio test client/inquiry/flash piece/service/intake
+form) was deleted afterward, confirmed via a follow-up query showing
+zero stragglers. The dev-studio permission toggle temporarily flipped
+for testing was restored to its original state, confirmed via a fresh
+page reload afterward, not just assumed. No dev servers started/
+stopped -- the session's already-running API and web dev servers were
+reused throughout.
+
+# Session-Plan display fix: self-heals the production desync
+
+Follow-up to the pre-merge Session-Plan/DepositForm linkage fix already
+live on `main`: a real production record (paid Session 1) still showed
+"Deposit not yet generated," since the guard/reconciliation fix only
+stops *new* desyncs -- the backfill for existing ones was never run
+against production. Investigated before touching anything, per
+instruction.
+
+## Findings (reported, then implemented on go-ahead)
+
+**The Session Plan widget's display derivation still trusted the
+stored link, not session number** -- confirmed by reading the code:
+`InquiryDetail.tsx`'s `depositStatus = !ps.depositForm ? 'not_generated'
+: ...` reads `plannedSessions[].depositForm`
+(`PlannedSession.depositFormId`), the exact FK the linkage bug desyncs.
+The hardened send guard (`lib/deposits.ts`) never trusted that FK --
+it does its own `findFirst({ where: { inquiryId, sessionNumber } })`
+lookup. The data needed to fix the display the same way was already in
+the same API response (`inquiry.depositForms`, the flat list the
+separate Deposit Forms widget already uses) -- a frontend-only fix,
+self-healing on load, no migration needed.
+
+The backfill script (`scripts/backfill-planned-session-deposit-linkage.ts`)
+already had everything asked for -- `--dry-run`, exact per-row
+before/after reporting, ambiguous-vs-unambiguous split, idempotent.
+Staged the production invocation for Juan to run himself
+(`DATABASE_URL="$DATABASE_PUBLIC_URL" npx tsx -r dotenv/config
+scripts/backfill-planned-session-deposit-linkage.ts --dry-run`, from
+`apps/api`) -- matching this repo's own established `DATABASE_PUBLIC_URL`
+pattern for external production access, no script changes needed.
+
+Confirmed the guard already blocks Send Deposit Form on the affected
+record today, independent of the badge -- both call sites
+(`handleSendDepositForm`, all 4 button locations) hit
+`POST /inquiries/:id/deposit-form` -> `generateAndSendDepositForm`,
+whose own by-sessionNumber lookup never reads anything the (buggy)
+display derives. The bug is cosmetic, not a double-charge risk.
+
+## Fix
+
+- **`InquiryDetail.tsx`'s Session Plan widget**: every `ps.depositForm`
+  read (status badge, scheduling-conflict `proposedStartAt`/`paidAt`
+  checks, the conflict banner's tentative-time display) replaced with a
+  `resolvedDepositForm` -- `inquiry.depositForms` filtered by
+  `sessionNumber`, sorted to the latest by `createdAt` (mirrors the
+  guard's own `orderBy: { createdAt: "desc" }`; two rows CAN
+  legitimately share a sessionNumber, exactly the shape the linkage bug
+  produces).
+- **A second call site with the identical bug, found by grepping every
+  `ps.depositForm` reference before considering this done, not just the
+  one named in the report**: `reviseLockedSessions` -- the guard that
+  stops a revision from silently altering or dropping an already-paid
+  session's hours/price -- also read `ps.depositForm?.paidAt` directly.
+  On a desynced record this would have let staff revise a genuinely
+  paid session as if it were untouched. Fixed with the same
+  by-sessionNumber `.some()` check against `inquiry.depositForms`.
+- **A third, read-only instance**: `ClientDetail.tsx`'s own per-project
+  session badges (`sessionDepositBadge(ps.depositForm)`, the client
+  profile's Projects widget) had the exact same bug. Fixed identically.
+- **Backend**: `INQUIRY_INCLUDE.depositForms` (`routes/inquiries.ts`)
+  and the equivalent select in `routes/clients.ts` both gained
+  `createdAt` -- needed for the latest-by-sessionNumber resolution,
+  wasn't selected before.
+
+## Live verification
+
+Reproduced the exact desync mechanism directly (not simulated): created
+a fresh inquiry with a real signed-and-paid `DepositForm{sessionNumber:
+1}`, then a `PlannedSession{sessionNumber: 1, depositFormId: null}` --
+the precise post-fix-but-never-backfilled shape a pre-fix production
+record is in. Screenshotted three surfaces, all self-healed with zero
+backfill run:
+- `InquiryDetail.tsx`'s Session Plan widget: Session 1 correctly shows
+  "Deposit paid" and offers "Book Appointment" (not "Send Deposit
+  Form"); Session 2 (genuinely untouched, no deposit form) correctly
+  still shows "Deposit not yet generated" -- confirms the fix doesn't
+  over-trigger.
+- The Revise Estimate modal: Session 1 renders as locked ("2-3 hrs ·
+  $400-$500 -- locked (deposit paid)", no editable fields), Session 2
+  stays fully editable.
+- `ClientDetail.tsx`'s Projects widget: same "Deposit paid"/"Deposit
+  not yet generated" split, matching the staff detail page exactly.
+
+`tsc -b && vite build` (web) and `tsc` (api) both clean.
+
+## CLAUDE.md hygiene
+
+No schema change, no migration. No database reset offered or accepted.
+Test data (1 client, 1 inquiry, 1 deposit form, 2 planned sessions)
+deleted immediately after verification. No dev servers started/
+stopped. Production backfill deliberately NOT run by this session --
+staged for Juan, per instruction, since this session has no production
+credentials and the task was explicit that he reviews the dry-run
+output before any live run.
+
+# Embedded gift-card payments + mobile modal/dropdown hardening
+
+Two independent validation findings from Juan's own live testing. (1)
+Gift-card purchases were the one payment flow the embedded-payments
+migration never covered -- `webhooks.ts` said so explicitly in its own
+comment. (2) Selecting a time from the 30-minute dropdown while
+booking an appointment from Calendar cleared the screen, mobile-only.
+
+## Part 1 -- Embedded gift-card payments
+
+Mirrored `lib/deposits.ts`'s own split exactly, reusing
+`lib/stripe.ts`'s already-generic `createDirectChargeCheckoutSession` /
+`createOrRetrieveDirectChargePaymentIntent` unchanged.
+`GiftCard.stripePaymentIntentId` was already provisioned in the schema
+for exactly this, unused until now -- no migration needed.
+
+- **`lib/giftCards.ts`**: new `createGiftCardCheckoutSession` (hosted,
+  fresh session every call) and `createOrRetrieveGiftCardPaymentIntent`
+  (embedded, fetch-or-create, gated on `StudioSettings.
+  embeddedPaymentsEnabled`), both copied from `lib/deposits.ts`'s pair
+  almost verbatim.
+- **`routes/giftCards.ts`**: staff-only `POST /checkout-session` no
+  longer creates a Stripe session itself -- it only creates the
+  PENDING `GiftCard` row (keeping the upfront
+  `getChargeableConnectedAccountId` fail-fast check) and always
+  returns `checkoutUrl: ${PUBLIC_APP_URL}/gift-card/${code}`, this
+  app's own page, regardless of the flag -- same "the client-facing
+  page decides embedded vs. hosted, not whoever generated the link"
+  split deposits/flash already use. New public, unauthenticated routes
+  `POST /:code/checkout-session` and `POST /:code/payment-intent`.
+  `GET /view/:code` gained `embeddedPaymentsEnabled` and
+  `stripeConnected`.
+- **`webhooks.ts`**: new `GiftCard` branch in the existing
+  `payment_intent.succeeded` handler, mirroring the shape of the
+  pre-existing `checkout.session.completed` GiftCard branch (flip
+  PENDING -> ACTIVE, set `paidAt`, `emitInvalidation({ type:
+  "giftcard.changed", ... })`, `logAudit(..., action:
+  "stripe_payment_confirmed", changes: { ..., embedded: true })`) --
+  not a new issuance path, the same one, reached via the embedded
+  event instead of Checkout's. Updated the stale comment that used to
+  say gift cards were "deliberately NOT included."
+- **`GiftCardResponse.tsx`**: rebuilt on `DepositResponse.tsx`'s own
+  structure and `login-shell`/`login-panel-surface` styling (dropped
+  the old un-styled `bg-bg` wrapper and `applyThemePreset` call, same
+  "platform Editorial Gold page, never studio-themed" treatment the
+  other three public payment pages already use). Unpaid +
+  `stripeConnected` branches on `embeddedPaymentsEnabled`: `true`
+  mounts `PaymentFlowStages` with identity `{ artistName: null,
+  artistAvatarUrl: null, studioName }` (no artist/session framing) and
+  no `tip` prop at all (the entire mechanism `PaymentFlowStages`
+  already has for skipping that stage -- no code change needed there);
+  `false` shows the hosted "Pay $X" button. Paid state renders through
+  `PaymentConfirmationStage` for visual consistency with the other
+  three flows, feeding into the existing QR/code/status/expiry receipt
+  block.
+
+### Live verification (test-mode)
+
+Stripe CLI was installed but not running, and the dev server's
+`STRIPE_WEBHOOK_SECRET` didn't match what `stripe listen` actually
+signs with -- `stripe listen --print-secret` gave the real signing
+secret, `.env` updated to match, dev API server restarted to pick it
+up (`tsx watch` doesn't reload `.env` on its own), then `stripe listen
+--forward-to localhost:4000/webhooks/stripe` run for the duration of
+the test.
+
+Temporarily flipped `embeddedPaymentsEnabled` on for `dev-studio` (no
+self-serve UI for this flag -- `PATCH /studio-settings` silently drops
+it, confirmed via grep; toggled directly via Prisma, same pattern this
+repo already uses for other UI-less settings). Issued a Stripe-method
+gift card from a test client's profile: confirmed the returned link
+was this app's own `/gift-card/:code`, not a raw `checkout.stripe.com`
+URL. Paid it through the real embedded Payment Element (test card
+4242 4242 4242 4242) with the webhook listener live:
+- `payment_intent.succeeded` landed (200 from the local webhook route),
+  card flipped PENDING -> ACTIVE with `paidAt` set.
+- Audit log: `stripe_payment_confirmed` entry with `embedded: true`,
+  `status: { from: "PENDING", to: "ACTIVE" }`, correct `studioId` --
+  identical shape to the pre-existing hosted-flow entries.
+- Client-facing page correctly transitioned through "Confirming
+  payment..." into the "Gift Card Ready" receipt view (QR, code,
+  ACTIVE pill, expiry) -- screenshotted.
+- "Send Receipt via Email" against the now-ACTIVE card returned a 400
+  (`send_failed`) in this sandbox -- confirmed via `git diff` that the
+  `text-receipt` route's send logic is completely untouched by this
+  change, and the failure is Bird's real platform-email API rejecting
+  a synthetic `@example.test` recipient/environment, not a regression
+  (same shared `sendClientEmail` helper every other receipt-send flow
+  already uses).
+- Spot-checked the hosted fallback with the flag off: issuing a fresh
+  gift card and clicking "Pay" correctly redirected to a real
+  `checkout.stripe.com` session.
+
+Reverted `embeddedPaymentsEnabled` back to `false` afterward. Test
+client, gift cards, and audit entries deleted; `stripe listen` process
+stopped; dev API server left running (restarted mid-session to pick up
+the corrected webhook secret, otherwise untouched).
+
+## Part 2 -- Mobile modal/dropdown hardening
+
+Investigated the reported mobile bug live first, per instruction,
+before planning any fix. Could not force a clean reproduction in this
+environment: no real touch device, Playwright's `.tap()` requires
+`hasTouch` set at context launch (couldn't be retrofit onto the
+already-running browser context), and raw CDP touch/mouse injection
+doesn't reliably drive React's synthetic event pipeline the way real
+device input does. Ruled out the literal "prime suspect" (portal
+content misread as an outside click) via code reading: React's
+synthetic event system bubbles portaled content along the React tree,
+not the DOM tree, so `Modal.tsx`'s `stopPropagation`-based dismissal
+was never actually vulnerable to that specific mechanism. Reported
+findings to Juan; he chose to apply defensive hardening covering every
+plausible mechanism rather than wait on a device repro.
+
+- **`DropdownPortal.tsx`**: the portaled panel's `AnimatePresence` exit
+  phase (~220ms) left the panel fully interactive while visually
+  fading out. Added `pointerEvents: 'none'` to a local override of the
+  exit variant (shared `dropdownVariants` in `lib/motion.ts` untouched,
+  since other consumers -- ArtistSelect, ConversationsPanel filter/
+  sort -- don't need this).
+- **`Modal.tsx`**: the scrim's dismissal fired off wherever a
+  synthesized `click` event's target resolved, which can differ from
+  where a gesture actually started if the DOM mutated mid-gesture --
+  exactly the shape a tap-triggered dropdown-close invites. Switched to
+  tracking the gesture's own start (`onPointerDown` on the scrim
+  itself, not a descendant) and only dismissing on the matching
+  `onClick` if that same scrim was also where the gesture began.
+
+**Sweep**: grep confirmed `DropdownPortal.tsx` is the only component in
+the app using `createPortal` -- every other dropdown (`PillMenu`,
+`MultiSelectFilter`, `DateRangePresetFilter`) has its own independent
+outside-click listener over a normal DOM descendant, structurally
+immune to this class of bug. `DropdownPortal` consumers
+(`TimeSelect`, `DatePickerField`, `ArtistSelect`, `SendChannelButton`,
+`SpecialtiesInput`) combine with `Modal` in exactly one place in
+practice: `AppointmentForm.tsx` inside Calendar's booking modal -- the
+reported case. Fix is structurally complete without per-call-site
+changes.
+
+**Verification**: since the mechanism couldn't be force-reproduced,
+verified instead that the hardening doesn't regress the existing,
+working flows and that a full booking completes at a mobile viewport
+(390px) with real CDP touch-tap dispatch: opened Calendar's New
+Appointment modal, selected a client with a gift card, selected a
+Start Time via a real touch tap on a `TimeSelect` option (portaled),
+modal stayed open, time selected correctly, "Create Appointment"
+succeeded end to end. Test appointment deleted afterward (correctly
+detached its gift card back to ACTIVE). Flagged clearly to Juan that
+this does not prove the original mobile bug is fixed, only that the
+hardening is safe and closes every plausible mechanism.
+
+## Build verification
+
+`tsc -b && vite build` (web) and `tsc` (api) -- full production
+builds, both clean. `apps/api` test suite: 170/170 passing.
+
+## CLAUDE.md hygiene
+
+No schema change, no migration. No database reset offered or
+accepted. All test data (client, gift cards, conversation, audit
+entries, test appointment) deleted after verification. Scratch Prisma
+scripts and screenshots removed from the repo before commit. `stripe
+listen` process (started this session) stopped; the pre-existing dev
+API server was restarted once (to pick up the corrected local-only
+`STRIPE_WEBHOOK_SECRET`, itself gitignored and never committed) and
+left running as found.
+
+# Message-frequency consent copy + Twilio opt-back-in proof package
+
+Single session on `main`. Twilio's onboarding specialist flagged the SMS
+consent checkbox copy as missing a message-frequency statement (had
+message type, rates, and STOP, but not frequency), and requested
+proof/documentation of the START/YES/UNSTOP opt-back-in flow.
+
+## Copy fix -- both mirrored copies updated identically
+
+The consent text is not hardcoded in `IntakeForm.tsx` itself -- it's
+rendered via i18n keys (`smsConsentDefault`, `smsOptInBody`) defined in
+`apps/web/src/i18n/strings/en.ts`. `apps/web/server.mjs`'s
+`renderInquirySsr()` separately hardcodes the same opt-in-body English
+text for its SSR snapshot (a deliberate mirror, per that file's own
+header comment). Updated both to the task's exact new copy (added
+"Message frequency varies." and, for the checkbox body, "estimate
+follow-ups" to the message-type list and "or HELP for help" to the
+opt-out instruction). Confirmed identical after deploy: raw SSR HTML
+(`curl`) and the live React DOM (Playwright) both show the byte-for-byte
+same new copy. Left `es.ts` (Spanish) untouched -- task specified English
+text only; flagged to the user as now-inconsistent, left as an explicit
+out-of-scope follow-up rather than silently expanding scope.
+
+## Deploy sequencing, verified not assumed
+
+No CI/CD config exists in this repo (no `.github/workflows/`, no
+`railway.json`) -- confirmed via a prior session's REPORT.md entry that
+this is a Railway app auto-deploying on push to `main`. Captured the
+live JS bundle filename before pushing (`index-DXUkA5uQ.js`), pushed
+commit `1b7ebaa`, then polled the live SSR HTML every 15s until the
+bundle hash changed (`index-C0eiNFQP.js`, ~60s later) and
+`grep`-confirmed "Message frequency varies" was present in the raw
+response -- rather than assuming the push alone meant it was live.
+Screenshots were captured only after this verification passed.
+
+## A premise that didn't hold: live SMS demo
+
+The task suggested checking whether "the existing Twilio number" might
+be send/receive-restricted pending campaign approval. Queried
+`apps/api/.env.production`'s database directly (read-only: `Studio`,
+`StudioSettings.reminderTemplates`, `StudioIntegration` for
+`channel: "SMS"`) rather than assuming. Finding: **zero studios in
+production have any SMS integration connected** -- not a
+campaign-approval restriction on a connected number, there is simply no
+Twilio number connected for Black Hive Ink (or anyone) yet. No live
+test was attempted; no phone number was requested from the user. This
+correction is documented plainly in the proof package's Section 5
+rather than glossed over.
+
+Also corrected in the package: the task described an opt-out
+confirmation message as if it existed in our own code ("...Reply START
+to resubscribe"). It doesn't -- `apps/api/src/routes/webhooks.ts`'s STOP
+handling only sets `Client.smsOptedOutAt` and logs an audit entry; it
+never calls `sendClientSms` for the opt-out event itself (unlike the
+opt-in path, which does). Any such confirmation a real user would see
+comes from Twilio's own platform-level Advanced Opt-Out feature, not
+this codebase. Quoted this distinction accurately in the package instead
+of fabricating application text that doesn't exist.
+
+## Proof package contents
+
+`C:\Users\User\Documents\Twilio-Proof-Package-BlackHiveInk\`:
+- `Black-Hive-Ink-SMS-Consent-Proof-Package.pdf` (rendered via Playwright
+  `page.pdf()` against a local static-served copy of `proof-package.html`
+  -- `file://` navigation is blocked by the Playwright MCP server, so a
+  temporary `npx serve` on localhost was used and stopped again
+  afterward)
+- `proof-package.html` (source)
+- `screenshots/1-intake-form-phone-consent.png` (full form, phone field +
+  helper text)
+- `screenshots/2-consent-checkbox-closeup.png` (checkbox + links, tight
+  crop)
+- `screenshots/3-ssr-raw-source-no-js.png` (`view-source:` of the live
+  page, line-wrapped, showing the consent copy present with no JS
+  executed)
+
+Black Hive Ink's real, current `optInConfirmation` template (queried
+from production, not memory): `"{{studioName}}: You are now opted-in to
+receive text messages. Msg frequency varies. Msg & data rates may apply.
+Reply HELP for help, STOP to opt out."`
+
+## Build verification
+
+`npm run build` (web, `apps/web`) and `npx tsc --noEmit` (api,
+`apps/api`) -- both clean, before commit.
+
+## CLAUDE.md hygiene
+
+No schema change, no migration. No database reset offered or accepted.
+Read-only production DB query only (`Studio`/`StudioSettings`/
+`StudioIntegration` selects, no writes) via a scratch `tsx` script
+placed temporarily in `apps/api/` and deleted immediately after use --
+never committed. `.playwright-mcp/` scratch output (console logs, page
+snapshots) and a stray root-level screenshot from an early Playwright
+call removed before finishing; `git status` confirmed clean except two
+untracked files (`marketing/package-lock.json`,
+`public/desktop/screenshots/ink-manager-portal-restyle-v3.html`) that
+predate this session and were left untouched. The two temporary local
+`npx serve` instances (ports 5959, 5960, used only to let Playwright
+navigate to the local proof-package HTML for PDF rendering and a visual
+QA screenshot, since `file://` navigation is blocked) were both stopped
+before ending the session -- confirmed no listener remains on either
+port.

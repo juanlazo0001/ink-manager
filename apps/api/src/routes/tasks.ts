@@ -6,6 +6,7 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { TASK_SOURCE_REGISTRY } from "../lib/tasks/registry";
 import { artistInvitePendingSource } from "../lib/tasks/artistInvitePending";
 import { artistTransferPendingSource } from "../lib/tasks/artistTransferPending";
+import { flashRequestArtistPendingSource } from "../lib/tasks/flashRequestArtistPending";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { hasPermission, requirePermission } from "../lib/permissions";
 
@@ -20,6 +21,7 @@ const VALID_TASK_TYPES = new Set([
   ...TASK_SOURCE_REGISTRY.map((s) => s.type),
   artistInvitePendingSource.type,
   artistTransferPendingSource.type,
+  flashRequestArtistPendingSource.type,
 ]);
 
 // System tasks are front-desk work (front desk walks in and sees everything
@@ -70,16 +72,17 @@ router.get("/", async (req, res) => {
   // comment).
   const viewsQueue = await hasPermission(studioId, role, "tasks.viewQueue");
 
-  const [registrySourceResults, artistInviteTasks, artistTransferTasks, dismissals] = await Promise.all([
+  const [registrySourceResults, artistInviteTasks, artistTransferTasks, flashRequestArtistTasks, dismissals] = await Promise.all([
     viewsQueue ? Promise.all(TASK_SOURCE_REGISTRY.map((source) => source.fetch(studioId, userId))) : [],
     artistInvitePendingSource.fetch(studioId, userId),
     artistTransferPendingSource.fetch(studioId, userId),
+    flashRequestArtistPendingSource.fetch(studioId, userId),
     prisma.taskDismissal.findMany({ where: { studioId, userId }, select: { taskType: true, entityId: true } }),
   ]);
 
   const dismissedKeys = new Set(dismissals.map((d) => `${d.taskType}:${d.entityId}`));
 
-  const system = [...registrySourceResults.flat(), ...artistInviteTasks, ...artistTransferTasks]
+  const system = [...registrySourceResults.flat(), ...artistInviteTasks, ...artistTransferTasks, ...flashRequestArtistTasks]
     .filter((task) => !dismissedKeys.has(`${task.type}:${task.dismissalKey}`))
     .sort((a, b) => a.actionableAt.getTime() - b.actionableAt.getTime());
 

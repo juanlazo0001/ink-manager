@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import type { AuthPayload } from "../middleware/auth";
-import { Role } from "../../generated/prisma/enums";
+import { FlashReviewMode, Role } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { hasPermission, requirePermission, requirePermissionOrSelfArtist } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
@@ -96,7 +96,21 @@ function membershipInclude(viewerStudioId: string) {
 
 function artistInclude(viewerStudioId: string) {
   return {
-    user: { select: { id: true, email: true, role: true, name: true, phone: true, avatarUrl: true, studioId: true } },
+    user: {
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        name: true,
+        phone: true,
+        avatarUrl: true,
+        studioId: true,
+        // UI batch item 2: staff need the artist's HOME studio slug to
+        // build the public artist page / flash gallery URLs shown on the
+        // staff detail page -- neither URL is reachable from just studioId.
+        studio: { select: { slug: true } },
+      },
+    },
     // Service lines: which services this artist is tagged as offering (see
     // ArtistService) -- the detail page's checkboxes read this to know
     // what's currently checked.
@@ -281,6 +295,14 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
   // on finish or explicit skip.
   const { profileSetupCompletedAt } = req.body ?? {};
 
+  // Flash requests + review mode expansion: same "self-only, outside every
+  // other gate" shape as profileSetupCompletedAt above -- artist-owned,
+  // full stop, same "no staff bypass exists" precedent as
+  // Artist.publishedAt (NOT allowsClientSelfScheduling's studio-manageable
+  // pattern a few lines up, since this isn't a studio booking policy, it's
+  // the artist's own call on their own art).
+  const { flashReviewMode } = req.body ?? {};
+
   const artist = await prisma.artist.findUnique({
     where: { id },
     include: { user: true, artistServices: { select: { serviceId: true } }, ...membershipInclude(req.user!.studioId) },
@@ -369,6 +391,15 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     }
     if (!isSelf) {
       return res.status(403).json({ error: "Only the artist themselves can complete their own onboarding wizard" });
+    }
+  }
+
+  if (flashReviewMode !== undefined) {
+    if (!Object.values(FlashReviewMode).includes(flashReviewMode)) {
+      return res.status(400).json({ error: `flashReviewMode must be one of: ${Object.values(FlashReviewMode).join(", ")}` });
+    }
+    if (!isSelf) {
+      return res.status(403).json({ error: "Only the artist themselves can set their own flash review preference" });
     }
   }
 
@@ -473,6 +504,7 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     ...(schedulingBufferMinutes !== undefined ? { schedulingBufferMinutes } : {}),
     ...(allowsClientSelfScheduling !== undefined ? { allowsClientSelfScheduling } : {}),
     ...(profileSetupCompletedAt === true ? { profileSetupCompletedAt: new Date() } : {}),
+    ...(flashReviewMode !== undefined ? { flashReviewMode } : {}),
   };
 
   const nextServiceIds: string[] | undefined = serviceIds !== undefined ? [...new Set(serviceIds as string[])] : undefined;
