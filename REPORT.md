@@ -18651,3 +18651,188 @@ navigate to the local proof-package HTML for PDF rendering and a visual
 QA screenshot, since `file://` navigation is blocked) were both stopped
 before ending the session -- confirmed no listener remains on either
 port.
+
+# Theme defaults (Editorial Gold) + Conversations pass (direct threads, slash shortcuts)
+
+Two independent, unrelated pieces of work.
+
+## Part 1 -- Theme defaults
+
+Juan observed a studio landing on a non-Editorial-Gold default and
+suspected `onyx-lime` might be decommissioned dead code from a past
+consolidation. Investigated first: the premise didn't hold --
+`onyx-lime` was never decommissioned. It's fully alive: actively
+selectable (`THEME_PRESETS`, `apps/web/src/lib/themePresets.ts`), has
+live CSS, and was still `DEFAULT_THEME_PRESET` in both web and API. All
+5 presets are equally real; nothing to revive. The actual bug:
+`schema.prisma`'s `themePreset String @default("onyx-lime")` was never
+flipped when Editorial Gold was added as a 5th option, so every
+creation path (self-serve signup, `create-studio` script, lazy creation
+on `/studios/bootstrap`) inherited that stale default.
+
+- **`schema.prisma`**: default flipped to `"editorial-gold"`. Migration
+  generated per CLAUDE.md's standing rule (`prisma migrate diff` against
+  the live schema, never `migrate dev`), applied via `migrate deploy`.
+- **Backfill**: 39 studios were on `onyx-lime`, 1 on `editorial-gold`, 0
+  on the other three. Cross-referenced all 39 against `AuditLog` for any
+  recorded `themePreset` change (the settings PATCH route already logs a
+  full diff) -- zero had one, meaning all 39 were the untouched original
+  default, never a deliberate choice. All 39 backfilled to
+  `editorial-gold`; re-verified the same safety check immediately before
+  running the update.
+- No changes to `THEME_PRESETS`/`THEME_PRESET_KEYS`/the Settings picker
+  -- it already worked correctly end to end, just needed the default
+  fixed upstream.
+
+**Live verification**: fresh test signup confirmed to land on
+`editorial-gold` with no manual override (checked directly in the DB,
+test studio deleted after). Settings picker switched through all 5
+presets on `dev-studio`, confirmed persistence across a reload, restored
+to Editorial Gold afterward. Screenshotted.
+
+## Part 2 -- Conversations: direct threads + slash shortcuts
+
+### Direct-thread bug
+
+Investigated live first, per instruction. Root cause:
+`Conversation.staffUserId` means "the exclusive shared-inbox channel for
+this one staff member" (any OWNER/FRONT_DESK with permission can already
+see and post in ANY staff member's channel, regardless of participants
+-- confirmed via `canViewConversation`/`visibleConversationWhere`, which
+are role-gated and ignore `staffUserId` entirely for those two roles).
+The `@mention`-to-group upgrade transaction
+(`routes/conversations.ts`'s `POST /:id/messages`) flips an existing
+2-person STAFF conversation's `type` to GROUP in place and correctly
+populates `ConversationParticipant` rows for the original owner + caller
++ every mentioned person -- but never cleared `staffUserId` (the
+schema's own comment said it "stays set"). So `getOrCreateStaffConversation`'s
+`findUnique({ where: { staffUserId } })` kept resolving "start a 1:1
+with X" to that now-group thread forever after, exactly the reported
+bug.
+
+Fix needed no schema change (`staffUserId` was already nullable) and no
+general participant-set redesign:
+- The `isFirstUpgrade` block now also sets `staffUserId: null` the
+  instant a channel stops being X's exclusive 1:1 -- participant rows
+  already carry everyone forward, so nothing is lost. `GET
+  /conversations/resolve`'s plain `findUnique({ where: { staffUserId }
+  })` then correctly 404s for the old (now-group) thread with zero code
+  changes there, and `getOrCreateStaffConversation` naturally mints a
+  fresh STAFF conversation on the next "start a 1:1" request -- the
+  "distinct, coexisting threads" requirement falls out for free from
+  existing code.
+- Found in passing: the `staffUserId` branch of `POST /conversations`
+  never called `emitInvalidation` on creation, unlike the sibling
+  `clientId` branch just above it -- added, so a fresh direct thread
+  live-updates the other party without a manual refresh.
+- One-time backfill: `Conversation` rows with `type = GROUP AND
+  staffUserId IS NOT NULL` (already-broken threads from before this fix)
+  had `staffUserId` nulled. Found exactly 1 on `dev-studio`.
+
+**Live verification** (desktop + mobile, 390px): created a GROUP thread
+via a real `@mention` upgrade, confirmed `staffUserId` correctly nulled
+and full participant set populated. Called `POST /conversations
+{staffUserId}` for the same person afterward -- a genuinely new STAFF
+conversation was created (distinct id), confirmed via direct DB read
+that the group thread's full prior history (7 messages) stayed intact
+and untouched, and the new message landed exclusively in the new
+thread. Both threads appeared live in the conversation list without a
+reload (realtime fix confirmed), at both viewport sizes. Screenshotted.
+Test-induced state (the fresh 1:1 and the promotion I caused to
+construct the test) reverted afterward to leave `dev-studio` as found;
+the pre-existing broken thread the backfill fixed was left corrected
+(a real bug fix, not test residue).
+
+### `/` tagging removed, replaced with a shortcut menu
+
+Investigated first: `/` in a CLIENT thread opened an autocomplete to
+link a business record (Inquiry/Appointment/GiftCard/DepositForm/
+Waiver) to the conversation itself -- never touched `Message.body`, so
+removing the trigger has zero effect on historical message rendering.
+Trigger detection was start-of-*word* (fired mid-sentence), not
+start-of-message. The manual tag button/picker/chips are a separate,
+independently-triggered UI reusing the same `ConversationTag` backend --
+removing only the `/`-trigger left manual tagging fully intact.
+
+- Removed: `slashCandidates`' tag-list derivation, `selectSlashTag`, the
+  loose `(?:^|\s)\/...` regex branch, the old dropdown JSX rendering tag
+  rows with `TagIcon`. `@`-mention handling (shares the same
+  `handleBodyChange`/`handleComposerKeyDown` functions) was edited
+  surgically to leave it untouched.
+- Added: a `/`-shortcut menu for 5 commands, each reusing an *existing*
+  send/booking action pre-targeted at the thread's client --
+  `/deposit`/`/waiver` reuse `handleCreateDepositForm`/`handleCreateWaiver`
+  verbatim (insert-link, same as the "+" link menu's own rows);
+  `/receipt` reuses `handleResendGiftCardReceipt` (real immediate send);
+  `/estimate` is a new `handleSendEstimateShortcut` calling the same
+  `POST /inquiries/:id/send-estimate` route `InquiryDetail.tsx`'s own
+  send button uses, targeting whatever `pickPrimaryInquiry` already
+  treats as this thread's featured inquiry (same function the header/
+  portfolio picker already use); `/schedule` opens the existing
+  `AppointmentForm` component (same one `Calendar.tsx`/`InquiryDetail.tsx`
+  already use) via `Modal`, pre-filled with `fixedClientId`. No new
+  backend routes except the two below.
+- Deposit/waiver/receipt drop into a second-level list (reusing the
+  exact same option rows/handlers the "+" link menu already has) when a
+  client has more than one eligible target; a single eligible target
+  runs immediately.
+- Trigger is strictly start-of-message (`^\/...`, no `(?:^|\s)`
+  alternative) -- "/" mid-sentence never fires, matching the explicit
+  requirement (stricter than the removed tagging trigger).
+- **Permission-gating**: added `callerPermissions: string[]` to `GET
+  /:id/messages`'s response, computed via the existing
+  `getEffectivePermissions(conversation.studioId, role)` -- evaluated at
+  the THREAD's own studio, not the caller's home studio (same
+  cross-studio-scoping reasoning as `artistAccess.ts` elsewhere in this
+  app, since a guest artist's permissions can differ by studio). Each
+  command is hidden outright (not just disabled) if the caller lacks its
+  permission there.
+- Composer strings kept as plain English, matching every other
+  staff-only string in the app -- confirmed via grep that `useTranslations`/
+  `LocaleProvider` are used exclusively by public client-facing pages
+  today (deposit/waiver/intake/estimate response pages etc.), matching
+  the recorded "language is customer-specific, not staff-specific"
+  decision; there's no staff-facing language picker to act on a
+  translated string. Flagged this discrepancy to Juan before proceeding
+  rather than silently wiring a first-ever staff-app localization; he
+  chose plain English.
+
+**Live verification** (desktop + mobile, real client data, not
+synthetic): `/deposit` and `/estimate` both correctly surfaced their
+target's real, pre-existing backend validation failures inline (a
+missing artist assignment; a missing tentative appointment time) through
+a newly-shared `createFormError` display (previously only rendered
+inside the "+" menu's own open state, which would have swallowed an
+error from a `/`-command that already closed itself) -- confirms both
+commands correctly reuse the unmodified routes with all their guards
+intact, not a shortcut around them. `/receipt` sent a real SMS receipt
+(confirmed via DB read of the new message row). `/waiver` correctly
+opened a two-option sub-menu for a client with two eligible appointments,
+selecting one inserted the real signing link into the draft. `/schedule`
+opened `AppointmentForm` correctly pre-filled with the right client and
+their own inquiries in the dropdown. Filtering-as-you-type narrowed the
+list correctly (`/rec` -> only `/receipt`). Permission-hiding verified
+by temporarily setting `giftCards.issue: false` for `FRONT_DESK` on
+`dev-studio`, viewing as a Front Desk user via View As, and confirming
+`/receipt` was hidden while `/estimate`/`/schedule` (both permitted and
+eligible) remained visible -- override reverted immediately after.
+
+**Sweep**: confirmed this is the only such command-menu in the app; no
+other component implements slash-triggered actions.
+
+## Build verification
+
+`tsc -b && vite build` (web) and `tsc` (api) -- full production builds,
+both clean. `apps/api` test suite: 170/170 passing.
+
+## CLAUDE.md hygiene
+
+Migration generated via `prisma migrate diff` + `migrate deploy`, never
+`migrate dev`; no database reset offered or accepted. All backfills
+re-verified their own safety check immediately before writing. Test-
+induced conversation state (the fresh 1:1 thread and the promotion used
+to construct a clean repro) reverted after verification; the one
+real pre-existing broken thread the backfill corrected was left fixed.
+Temporary `FRONT_DESK` permission override reverted immediately after
+its one live check. Scratch Prisma scripts and screenshots removed from
+the repo before commit; `.playwright-mcp/` scratch output removed.

@@ -25,7 +25,7 @@ import { sanitizePrefillPayload } from "../lib/prefill";
 import { sendClientSms } from "../lib/clientSms";
 import { decryptSecret } from "../lib/secrets";
 import { getRfc822MessageId, getValidAccessToken, sendGmailMessage } from "../lib/gmail";
-import { hasPermission } from "../lib/permissions";
+import { getEffectivePermissions, hasPermission } from "../lib/permissions";
 
 const router = Router();
 router.use(requireAuth);
@@ -419,6 +419,13 @@ router.post("/", async (req, res) => {
     emitInvalidation({ type: "conversation.updated", studioId, conversationId: conversation.id });
     return res.status(200).json(resumed);
   }
+  // A brand-new direct thread (e.g. the fresh channel minted right after a
+  // prior one got promoted to GROUP) needs the same live-update the
+  // clientId branch above already sends on create -- otherwise the other
+  // party's list/roster only picks it up on a manual refresh.
+  if (created) {
+    emitInvalidation({ type: "conversation.updated", studioId, conversationId: conversation.id });
+  }
   res.status(created ? 201 : 200).json(conversation);
 });
 
@@ -547,6 +554,16 @@ router.get("/:id/messages", async (req, res) => {
     })),
   );
 
+  // Slash-shortcut menu, gift-card issuance, etc. all need "can this caller
+  // use this action, right here" -- evaluated at the THREAD's own studio,
+  // never the caller's home studio (a guest artist's effective permissions
+  // at a host studio can differ from their home one, same reasoning as
+  // artistAccess.ts's own studio-scoping rule elsewhere in this app).
+  // canViewConversation above already confirms the caller is allowed to be
+  // in this thread at all, so handing back their full permission set for
+  // its studio is safe.
+  const callerPermissions = await getEffectivePermissions(conversation.studioId, role);
+
   res.json({
     conversation: {
       id: conversation.id,
@@ -558,6 +575,7 @@ router.get("/:id/messages", async (req, res) => {
       primaryInquiry:
         conversation.type === ConversationType.CLIENT ? pickPrimaryInquiry(conversation.client?.inquiries) : null,
       tags,
+      callerPermissions,
     },
     messages,
     reads,
@@ -1028,7 +1046,15 @@ router.post("/:id/messages", async (req, res) => {
         lastMessageAt: now,
         archivedAt: null,
         archivedById: null,
-        ...(isFirstUpgrade ? { type: ConversationType.GROUP } : {}),
+        // Direct-thread identity fix: staffUserId means "the exclusive 1:1
+        // channel for this one person" (see getOrCreateStaffConversation's
+        // own comment) -- once a third party joins and this becomes a real
+        // group, it must stop claiming that identity so a later "start a
+        // 1:1 with X" finds no row here and mints a fresh one instead of
+        // resolving to this now-multi-party thread. Participant rows just
+        // below already carry the original owner + caller + new members
+        // forward, so nothing is lost by freeing the FK.
+        ...(isFirstUpgrade ? { type: ConversationType.GROUP, staffUserId: null } : {}),
       },
     }),
     ...(newParticipantIds.length > 0

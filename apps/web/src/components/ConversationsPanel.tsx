@@ -19,6 +19,7 @@ import { useStudio } from '../context/useStudio'
 import { useIntakeForms, type IntakeFormOption } from '../lib/useIntakeForms'
 import IntakeFormPicker from './IntakeFormPicker'
 import Modal from './Modal'
+import AppointmentForm from './AppointmentForm'
 import ImageLightbox from './ImageLightbox'
 import PresenceDot from './PresenceDot'
 import ArtistSelect from './ArtistSelect'
@@ -52,6 +53,8 @@ type Tab = 'CLIENT' | 'STAFF'
 type ConversationTypeValue = 'CLIENT' | 'STAFF' | 'GROUP'
 
 const TAGGABLE_ENTITY_TYPES = ['Inquiry', 'Appointment', 'GiftCard', 'DepositForm', 'LiabilityWaiver'] as const
+
+type SlashCommandKey = 'deposit' | 'waiver' | 'estimate' | 'receipt' | 'schedule'
 
 const DRAFT_FIELD_LABELS: Record<string, string> = {
   firstName: 'First name',
@@ -200,6 +203,11 @@ interface ThreadResponse {
     } | null
     primaryInquiry: PrimaryInquirySummary | null
     tags: ConversationTag[]
+    // Evaluated at THIS thread's own studio, not the caller's home studio --
+    // a guest artist's permissions can differ by studio. Drives the slash-
+    // shortcut menu below (each command hidden outright, not just disabled,
+    // if the caller lacks its permission here).
+    callerPermissions: string[]
   }
   messages: MessageItem[]
   reads: ConversationReadRow[]
@@ -1652,13 +1660,19 @@ function ThreadView({
   // conversation into a group (see POST /:id/messages). CLIENT threads never
   // populate or send this; mentions there stay plain text.
   const [mentionedUserIds, setMentionedUserIds] = useState<string[]>([])
-  // "/" tag shortcut: same trigger/splice mechanics as "@" mentions above,
-  // but picking a candidate calls handleAddTag (a conversation-level action)
-  // instead of inserting text, so the "/query" is removed rather than
-  // replaced -- it's a command, not something to leave visible in the message.
+  // "/" shortcut menu: same trigger/splice mechanics as "@" mentions above,
+  // but "/" only triggers at the very START of the message (never mid-word)
+  // and picking a command runs an existing send/booking action pre-targeted
+  // at this thread's client instead of inserting text -- the "/query" is
+  // removed rather than replaced, same as the tagging shortcut this
+  // replaced. slashSubMenu holds a second-level list (e.g. which of this
+  // client's several eligible appointments to send a waiver for) when a
+  // command has more than one valid target.
   const [slashQuery, setSlashQuery] = useState<string | null>(null)
   const [slashStart, setSlashStart] = useState<number | null>(null)
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
+  const [slashSubMenu, setSlashSubMenu] = useState<'deposit' | 'waiver' | 'receipt' | null>(null)
+  const [showScheduleModal, setShowScheduleModal] = useState(false)
   const bodyInputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   // Unified composer dropdowns (Claude-style mockup): "+" attach/template/
@@ -1817,7 +1831,9 @@ function ThreadView({
   const { data: linksData } = useQuery({
     queryKey: ['client-shareable-links', data?.conversation.clientId],
     queryFn: () => apiFetch<ShareableLinksResponse>(`/clients/${data!.conversation.clientId}/shareable-links`),
-    enabled: isOpen && isClientThread && showLinkMenu && !!data?.conversation.clientId,
+    // The "+" link menu AND the "/" shortcut menu both need this -- deposit/
+    // waiver/gift-card eligibility is identical data either way.
+    enabled: isOpen && isClientThread && (showLinkMenu || slashQuery !== null) && !!data?.conversation.clientId,
   })
 
   // Contact fields only, for the "Prefilled intake link" menu item below --
@@ -1954,6 +1970,29 @@ function ThreadView({
     }
   }
 
+  // /estimate: unlike deposit/waiver above, there's no existing "insert a
+  // fresh link into the draft" flow to reuse for estimates -- the closest
+  // existing action is InquiryDetail's own send-estimate button, which
+  // sends immediately (same real POST /inquiries/:id/send-estimate this
+  // calls) rather than drafting a link, so this matches that shape. Relies
+  // entirely on the route's own validateEstimateInputs guard to reject a
+  // pre-conversion inquiry with no saved price estimate yet -- surfaced
+  // through the same createFormError used by the two handlers above.
+  async function handleSendEstimateShortcut(inquiryId: string) {
+    setCreateFormError(null)
+    try {
+      await apiFetch(`/inquiries/${inquiryId}/send-estimate`, {
+        method: 'POST',
+        body: JSON.stringify({ channel: channel === 'EMAIL' ? 'EMAIL' : 'SMS' }),
+      })
+      queryClient.invalidateQueries({ queryKey: ['conversation-thread', conversationId] })
+      queryClient.invalidateQueries({ queryKey: ['conversations'] })
+      onMessageSent()
+    } catch (err) {
+      setCreateFormError(err instanceof Error ? err.message : 'Failed to send estimate')
+    }
+  }
+
   // Only fetched once the user actually types "@" -- lazy like the other
   // composer popovers above, and shares its cache key with the roster query
   // in ConversationListView. /conversations/staff is OWNER/FRONT_DESK only
@@ -1997,59 +2036,39 @@ function ThreadView({
 
   const existingTagKeys = new Set((data?.conversation.tags ?? []).map((t) => `${t.entityType}:${t.entityId}`))
 
-  // Same taggable-entity set as the tag picker below (context.inquiries /
-  // giftCards / depositForms / nextAppointment / waiver), flattened into one
-  // list for the "/" composer shortcut and filtered down to whatever's
-  // typed after the slash. Already-tagged items are left out entirely --
-  // nothing useful to do with them from a quick command palette.
-  const slashCandidates =
-    slashQuery === null || !context
+  // "/" shortcut menu: five existing send/booking actions, pre-targeted at
+  // this thread's client. Each is hidden outright (not just disabled) if
+  // the caller lacks its permission at THIS thread's studio (callerPermissions
+  // is already scoped there server-side -- see the /:id/messages route),
+  // and deposit/waiver/receipt are additionally hidden once linksData has
+  // loaded and shows no eligible target, mirroring the "+" link menu right
+  // below, which simply has nothing to offer in that case either.
+  const callerPermissions = new Set(data?.conversation.callerPermissions ?? [])
+  const slashDepositOptions = linksData?.depositFormOptions ?? []
+  const slashWaiverOptions = linksData?.waiverOptions ?? []
+  const slashGiftCardOptions = linksData?.giftCardLinks ?? []
+  const slashEstimateInquiry = pickPrimaryInquiry(context?.inquiries)
+
+  const slashCommandCandidates =
+    slashQuery === null
       ? []
-      : [
-          ...context.inquiries.map((inquiry) => ({
-            key: `Inquiry:${inquiry.id}`,
-            entityType: 'Inquiry',
-            entityId: inquiry.id,
-            label: `Inquiry: ${inquiry.description}`,
-          })),
-          ...context.giftCards.map((card) => ({
-            key: `GiftCard:${card.id}`,
-            entityType: 'GiftCard',
-            entityId: card.id,
-            label: `Gift card: $${(card.amountCents / 100).toFixed(2)}`,
-          })),
-          ...context.inquiries.flatMap((inquiry) =>
-            inquiry.depositForms.map((form) => ({
-              key: `DepositForm:${form.id}`,
-              entityType: 'DepositForm',
-              entityId: form.id,
-              label: `Deposit (Session ${form.sessionNumber}): $${form.totalCharged}`,
-            })),
-          ),
-          ...(context.nextAppointment
-            ? [
-                {
-                  key: `Appointment:${context.nextAppointment.id}`,
-                  entityType: 'Appointment',
-                  entityId: context.nextAppointment.id,
-                  label: `Appointment: ${formatDateTime(context.nextAppointment.startTime)}`,
-                },
-              ]
-            : []),
-          ...(context.nextAppointment?.waiverId
-            ? [
-                {
-                  key: `LiabilityWaiver:${context.nextAppointment.waiverId}`,
-                  entityType: 'LiabilityWaiver',
-                  entityId: context.nextAppointment.waiverId,
-                  label: `Waiver: ${context.nextAppointment.waiverStatus}`,
-                },
-              ]
-            : []),
-        ]
-          .filter((candidate) => !existingTagKeys.has(candidate.key))
-          .filter((candidate) => candidate.label.toLowerCase().includes(slashQuery.toLowerCase()))
-          .slice(0, 6)
+      : (
+          [
+            { key: 'deposit' as const, label: 'Send deposit form', permission: 'inquiries.edit' },
+            { key: 'waiver' as const, label: 'Send waiver', permission: 'waivers.generate' },
+            { key: 'estimate' as const, label: 'Send estimate', permission: 'inquiries.sendEstimate' },
+            { key: 'receipt' as const, label: 'Send gift card receipt', permission: 'giftCards.issue' },
+            { key: 'schedule' as const, label: 'Book appointment', permission: 'appointments.create' },
+          ] satisfies { key: SlashCommandKey; label: string; permission: string }[]
+        )
+          .filter((cmd) => callerPermissions.has(cmd.permission))
+          .filter((cmd) => {
+            if (cmd.key === 'deposit') return linksData === undefined || slashDepositOptions.length > 0
+            if (cmd.key === 'waiver') return linksData === undefined || slashWaiverOptions.length > 0
+            if (cmd.key === 'receipt') return linksData === undefined || slashGiftCardOptions.length > 0
+            return true
+          })
+          .filter((cmd) => cmd.label.toLowerCase().includes(slashQuery.toLowerCase()) || cmd.key.startsWith(slashQuery.toLowerCase()))
 
   // The context drawer only has room to feature one inquiry prominently
   // (pipeline + detail grid); everything else surfaces as a "+N other" link
@@ -2080,19 +2099,45 @@ function ThreadView({
     }
   }
 
-  function selectSlashTag(candidate: { entityType: string; entityId: string }) {
+  // Runs the picked command's existing action directly when there's exactly
+  // one eligible target (or none needed, for /schedule); with more than one
+  // eligible target, drops into a second-level list of the specific options
+  // instead, reusing the same rows/handlers the "+" link menu already has.
+  function selectSlashCommand(key: SlashCommandKey) {
     if (slashStart === null) return
     const caret = bodyInputRef.current?.selectionStart ?? body.length
     const nextBody = `${body.slice(0, slashStart)}${body.slice(caret)}`
     setBody(nextBody)
     setSlashQuery(null)
     setSlashStart(null)
-    handleAddTag(candidate.entityType, candidate.entityId)
 
     requestAnimationFrame(() => {
       bodyInputRef.current?.focus()
       bodyInputRef.current?.setSelectionRange(slashStart, slashStart)
     })
+
+    if (key === 'deposit') {
+      if (slashDepositOptions.length === 1) handleCreateDepositForm(slashDepositOptions[0].inquiryId)
+      else if (slashDepositOptions.length > 1) setSlashSubMenu('deposit')
+      return
+    }
+    if (key === 'waiver') {
+      if (slashWaiverOptions.length === 1) handleCreateWaiver(slashWaiverOptions[0].appointmentId)
+      else if (slashWaiverOptions.length > 1) setSlashSubMenu('waiver')
+      return
+    }
+    if (key === 'receipt') {
+      if (slashGiftCardOptions.length === 1) handleResendGiftCardReceipt(slashGiftCardOptions[0].giftCardId)
+      else if (slashGiftCardOptions.length > 1) setSlashSubMenu('receipt')
+      return
+    }
+    if (key === 'estimate') {
+      if (slashEstimateInquiry) handleSendEstimateShortcut(slashEstimateInquiry.id)
+      return
+    }
+    if (key === 'schedule') {
+      setShowScheduleModal(true)
+    }
   }
 
   async function handleRemoveTag(tagId: string) {
@@ -2216,9 +2261,12 @@ function ThreadView({
     setMentionQuery(null)
     setMentionStart(null)
 
-    // "/" tagging shortcut only makes sense for client threads -- staff
-    // threads have no inquiry/gift-card/appointment context to tag.
-    const slashMatch = isClientThread ? uptoCaret.match(/(?:^|\s)\/(\w*(?:\s\w*)?)$/) : null
+    // "/" shortcut menu only makes sense for client threads -- staff
+    // threads have no client to send a deposit/waiver/estimate/receipt/
+    // appointment against. Anchored to the absolute start of the message
+    // (no `|\s` alternative) -- unlike the old tagging trigger this
+    // replaced, "/" appearing mid-sentence must never open the menu.
+    const slashMatch = isClientThread ? uptoCaret.match(/^\/(\w*(?:\s\w*)?)$/) : null
     if (slashMatch) {
       setSlashQuery(slashMatch[1])
       setSlashStart(caret - slashMatch[1].length - 1)
@@ -2265,16 +2313,16 @@ function ThreadView({
       return
     }
 
-    if (slashQuery !== null && slashCandidates.length > 0) {
+    if (slashQuery !== null && slashCommandCandidates.length > 0) {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
-        setSlashActiveIndex((i) => (i + 1) % slashCandidates.length)
+        setSlashActiveIndex((i) => (i + 1) % slashCommandCandidates.length)
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
-        setSlashActiveIndex((i) => (i - 1 + slashCandidates.length) % slashCandidates.length)
+        setSlashActiveIndex((i) => (i - 1 + slashCommandCandidates.length) % slashCommandCandidates.length)
       } else if (event.key === 'Enter' || event.key === 'Tab') {
         event.preventDefault()
-        selectSlashTag(slashCandidates[slashActiveIndex])
+        selectSlashCommand(slashCommandCandidates[slashActiveIndex].key)
       } else if (event.key === 'Escape') {
         event.preventDefault()
         setSlashQuery(null)
@@ -3558,7 +3606,6 @@ function ThreadView({
                 </span>
               </button>
             ))}
-            {createFormError && <p className="px-3 py-1 text-xs text-danger">{createFormError}</p>}
 
             {[
               { label: 'All policies', url: linksData?.allPoliciesUrl ?? null },
@@ -3631,6 +3678,13 @@ function ThreadView({
         )}
 
         {sendError && <p className="mb-2 text-xs text-danger">{sendError}</p>}
+        {/* Shared by the "+" link menu's deposit/waiver rows above and the
+            "/" shortcut menu below -- rendered once here, outside either
+            menu's own open/closed state, so an error still shows after the
+            menu that triggered it has already closed (e.g. picking a "/"
+            command closes the menu immediately, before the request even
+            resolves). */}
+        {createFormError && <p className="mb-2 text-xs text-danger">{createFormError}</p>}
 
         {mentionQuery !== null && mentionCandidates.length > 0 && (
           <div className="mb-2 max-h-40 overflow-y-auto rounded-lg border border-border p-1">
@@ -3665,27 +3719,84 @@ function ThreadView({
           </div>
         )}
 
-        {slashQuery !== null && slashCandidates.length > 0 && (
+        {slashQuery !== null && slashCommandCandidates.length > 0 && (
           <div className="mb-2 max-h-40 overflow-y-auto rounded-lg border border-border p-1">
-            {slashCandidates.map((candidate, index) => (
+            {slashCommandCandidates.map((candidate, index) => (
               <button
                 key={candidate.key}
                 type="button"
                 onMouseDown={(e) => {
                   // Prevent the textarea from losing focus/selection before
-                  // selectSlashTag reads its caret position.
+                  // selectSlashCommand reads its caret position.
                   e.preventDefault()
-                  selectSlashTag(candidate)
+                  selectSlashCommand(candidate.key)
                 }}
                 className={[
                   'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm',
                   index === slashActiveIndex ? 'bg-surface text-fg' : 'text-fg-secondary hover:bg-surface',
                 ].join(' ')}
               >
-                <TagIcon className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
+                <span className="shrink-0 font-mono text-xs text-fg-muted">/{candidate.key}</span>
                 <span className="min-w-0 flex-1 truncate">{candidate.label}</span>
               </button>
             ))}
+          </div>
+        )}
+
+        {/* Second level of the "/" menu -- only reached when a command has
+            more than one eligible target (e.g. two appointments without a
+            waiver yet). Reuses the exact same rows/handlers the "+" link
+            menu already has for these three actions. */}
+        {slashSubMenu !== null && (
+          <div className="mb-2 max-h-40 overflow-y-auto rounded-lg border border-border p-1">
+            {slashSubMenu === 'deposit' &&
+              slashDepositOptions.map((option) => (
+                <button
+                  key={option.inquiryId}
+                  type="button"
+                  disabled={creatingDepositId === option.inquiryId}
+                  onClick={() => {
+                    handleCreateDepositForm(option.inquiryId)
+                    setSlashSubMenu(null)
+                  }}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <span className="truncate">{option.label}</span>
+                  <span className="shrink-0 text-fg-muted">{creatingDepositId === option.inquiryId ? 'Creating…' : 'Send'}</span>
+                </button>
+              ))}
+            {slashSubMenu === 'waiver' &&
+              slashWaiverOptions.map((option) => (
+                <button
+                  key={option.appointmentId}
+                  type="button"
+                  disabled={creatingWaiverId === option.appointmentId}
+                  onClick={() => {
+                    handleCreateWaiver(option.appointmentId)
+                    setSlashSubMenu(null)
+                  }}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <span className="truncate">{new Date(option.label).toLocaleDateString()}</span>
+                  <span className="shrink-0 text-fg-muted">{creatingWaiverId === option.appointmentId ? 'Creating…' : 'Send'}</span>
+                </button>
+              ))}
+            {slashSubMenu === 'receipt' &&
+              slashGiftCardOptions.map((link) => (
+                <button
+                  key={link.giftCardId}
+                  type="button"
+                  disabled={resendingReceiptId === link.giftCardId}
+                  onClick={() => {
+                    handleResendGiftCardReceipt(link.giftCardId)
+                    setSlashSubMenu(null)
+                  }}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <span className="truncate">{link.label}</span>
+                  <span className="shrink-0 text-fg-muted">Send</span>
+                </button>
+              ))}
           </div>
         )}
 
@@ -3710,7 +3821,7 @@ function ThreadView({
             value={body}
             onChange={handleBodyChange}
             onKeyDown={handleComposerKeyDown}
-            placeholder={isClientThread ? 'Type a message… (@ to mention, / to tag)' : 'Type a message… (@ to mention)'}
+            placeholder={isClientThread ? 'Type a message… (@ to mention, / for shortcuts)' : 'Type a message… (@ to mention)'}
             className="max-h-40 min-h-[22px] w-full resize-none overflow-y-auto border-0 bg-transparent px-1 pb-2.5 text-base text-fg placeholder:text-fg-muted focus:outline-none"
           />
 
@@ -3983,6 +4094,25 @@ function ThreadView({
           onClose={() => setShowFormPicker(false)}
           onSelect={(form: IntakeFormOption) => insertPrefillLink(form.slug)}
         />
+      )}
+
+      {/* /schedule: the same AppointmentForm Calendar's "New Appointment"
+          and InquiryDetail's "add a session" already use, pre-filled with
+          this thread's client -- its own "Project (inquiry)" dropdown
+          handles which inquiry when there's more than one, or blocks
+          submit with none, exactly as it does everywhere else. */}
+      {showScheduleModal && data?.conversation.clientId && (
+        <Modal title="New Appointment" onClose={() => setShowScheduleModal(false)}>
+          <AppointmentForm
+            fixedClientId={data.conversation.clientId}
+            onCreated={() => {
+              setShowScheduleModal(false)
+              queryClient.invalidateQueries({ queryKey: ['client-shareable-links', data.conversation.clientId] })
+              queryClient.invalidateQueries({ queryKey: ['conversation-thread', conversationId] })
+            }}
+            onCancel={() => setShowScheduleModal(false)}
+          />
+        </Modal>
       )}
 
       <AnimatePresence>

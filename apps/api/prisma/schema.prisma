@@ -2222,10 +2222,11 @@ model StudioSettings {
   depositTiers                  Json?
   // Package C2: one of a fixed, curated set of theme presets (see
   // apps/api/src/lib/themePresets.ts's THEME_PRESET_KEYS) -- never
-  // free-form. Default matches the current live theme's key exactly, so
-  // every existing studio's appearance is unchanged until an OWNER
-  // deliberately picks a different one.
-  themePreset                   String   @default("onyx-lime")
+  // free-form. Editorial Gold is the canonical default for every new
+  // studio; onyx-lime and the others remain fully real, OWNER-selectable
+  // presets, just no longer the fallback a studio lands on before ever
+  // touching Settings.
+  themePreset                   String   @default("editorial-gold")
   // Package O: the reward issued to a referrer once the client they
   // referred pays their first deposit. $25 default matches the task's own
   // spec; OWNER-editable like every other numeric default on this model.
