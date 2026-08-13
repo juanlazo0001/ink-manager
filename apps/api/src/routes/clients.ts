@@ -15,6 +15,7 @@ import { performMerge, validateMergePair } from "../lib/clientMerge";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { callerBelongsToStudio, activeStudioIdsForCaller, hasPermissionAt } from "../lib/artistAccess";
 import { isSupportedLocale } from "../lib/locale";
+import { streamClientFullExport } from "../lib/clientFullExport";
 
 const router = Router();
 
@@ -172,6 +173,80 @@ const EXPORT_FIELD_LABELS: Record<ExportFieldKey, string> = Object.fromEntries(
   EXPORT_FIELD_DEFS.map((f) => [f.key, f.label]),
 ) as Record<ExportFieldKey, string>;
 
+// Shared by both POST /export (below) and POST /export-full -- "which
+// clients does this export request mean" must never drift between the
+// two, or a client visible in one export could silently vanish from the
+// other. Exactly one of clientIds/filter, identical validation and
+// filter semantics GET / above already uses (just uncapped, unlike that
+// route's own take: 100 list-view limit).
+async function resolveClientExportWhere(
+  user: Parameters<typeof activeStudioIdsForCaller>[0],
+  body: unknown,
+): Promise<{ error: string; status: 400 } | { where: Prisma.ClientWhereInput }> {
+  const { clientIds, filter } = (body as { clientIds?: unknown; filter?: unknown }) ?? {};
+
+  if (clientIds !== undefined && (!Array.isArray(clientIds) || clientIds.some((v) => typeof v !== "string"))) {
+    return { error: "clientIds must be an array of strings", status: 400 };
+  }
+  if (filter !== undefined && (typeof filter !== "object" || filter === null || Array.isArray(filter))) {
+    return { error: "filter must be an object", status: 400 };
+  }
+  if (!clientIds && !filter) {
+    return { error: "Provide either clientIds or filter", status: 400 };
+  }
+
+  const studioIds = await activeStudioIdsForCaller(user);
+
+  if (clientIds) {
+    return {
+      where: { id: { in: clientIds as string[] }, studioId: { in: studioIds }, ...NOT_MERGED, ...NOT_TRANSFERRED },
+    };
+  }
+
+  const f = filter as { q?: unknown; includeArchived?: unknown; activity?: unknown };
+  const q = typeof f.q === "string" ? f.q.trim() : "";
+  const includeArchived = f.includeArchived === true;
+  const activity = (Array.isArray(f.activity) ? f.activity : []).filter((v: unknown): v is ActivityFilter =>
+    VALID_ACTIVITY_FILTERS.includes(v as ActivityFilter),
+  );
+  const now = new Date();
+  const activityConditions: Prisma.ClientWhereInput[] = [];
+  if (activity.includes("upcoming_appointment")) {
+    activityConditions.push({ appointments: { some: { startTime: { gte: now }, status: "CONFIRMED" } } });
+  }
+  if (activity.includes("active_project")) {
+    activityConditions.push({ inquiries: { some: { status: { in: ACTIVE_PROJECT_STATUSES } } } });
+  }
+  if (activity.includes("no_activity")) {
+    activityConditions.push({
+      appointments: { none: { startTime: { gte: now }, status: "CONFIRMED" } },
+      inquiries: { none: { status: { in: ACTIVE_PROJECT_STATUSES } } },
+    });
+  }
+  const nameConditions: Prisma.ClientWhereInput[] = q
+    ? q
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((word: string) => {
+          const contains = { contains: word, mode: "insensitive" as const };
+          return { OR: [{ firstName: contains }, { lastName: contains }] };
+        })
+    : [];
+
+  const baseWhere: Prisma.ClientWhereInput = {
+    studioId: { in: studioIds },
+    ...NOT_MERGED,
+    ...NOT_TRANSFERRED,
+    ...(includeArchived ? {} : NOT_ARCHIVED),
+  };
+
+  return {
+    where: {
+      AND: [baseWhere, ...(activityConditions.length > 0 ? [{ OR: activityConditions }] : []), ...nameConditions],
+    },
+  };
+}
+
 // Staff quick win: CSV export. Gated behind bulkActions.use ("select
 // multiple records and act on them at once") rather than clients.view
 // alone -- bulk-extracting contact data out of the app as a portable
@@ -200,7 +275,7 @@ const EXPORT_FIELD_LABELS: Record<ExportFieldKey, string> = Object.fromEntries(
 // order (the picker's own display order); omitted entirely means "all of
 // them," preserving pre-picker behavior for any caller that doesn't send it.
 router.post("/export", requirePermission("bulkActions.use"), async (req, res) => {
-  const { clientIds, filter, fields } = req.body ?? {};
+  const { fields } = req.body ?? {};
 
   if (
     fields !== undefined &&
@@ -212,58 +287,11 @@ router.post("/export", requirePermission("bulkActions.use"), async (req, res) =>
   }
   const selectedFields: ExportFieldKey[] = fields ?? (EXPORT_FIELD_KEYS as ExportFieldKey[]);
 
-  if (clientIds !== undefined && (!Array.isArray(clientIds) || clientIds.some((v) => typeof v !== "string"))) {
-    return res.status(400).json({ error: "clientIds must be an array of strings" });
+  const resolved = await resolveClientExportWhere(req.user!, req.body);
+  if ("error" in resolved) {
+    return res.status(resolved.status).json({ error: resolved.error });
   }
-  if (filter !== undefined && (typeof filter !== "object" || filter === null || Array.isArray(filter))) {
-    return res.status(400).json({ error: "filter must be an object" });
-  }
-  if (!clientIds && !filter) {
-    return res.status(400).json({ error: "Provide either clientIds or filter" });
-  }
-
-  const studioIds = await activeStudioIdsForCaller(req.user!);
-  let where: Prisma.ClientWhereInput;
-
-  if (clientIds) {
-    where = { id: { in: clientIds }, studioId: { in: studioIds }, ...NOT_MERGED, ...NOT_TRANSFERRED };
-  } else {
-    const q = typeof filter.q === "string" ? filter.q.trim() : "";
-    const includeArchived = filter.includeArchived === true;
-    const activity = (Array.isArray(filter.activity) ? filter.activity : []).filter((v: unknown): v is ActivityFilter =>
-      VALID_ACTIVITY_FILTERS.includes(v as ActivityFilter),
-    );
-    const now = new Date();
-    const activityConditions: Prisma.ClientWhereInput[] = [];
-    if (activity.includes("upcoming_appointment")) {
-      activityConditions.push({ appointments: { some: { startTime: { gte: now }, status: "CONFIRMED" } } });
-    }
-    if (activity.includes("active_project")) {
-      activityConditions.push({ inquiries: { some: { status: { in: ACTIVE_PROJECT_STATUSES } } } });
-    }
-    if (activity.includes("no_activity")) {
-      activityConditions.push({
-        appointments: { none: { startTime: { gte: now }, status: "CONFIRMED" } },
-        inquiries: { none: { status: { in: ACTIVE_PROJECT_STATUSES } } },
-      });
-    }
-    const nameConditions: Prisma.ClientWhereInput[] = q
-      ? q.split(/\s+/).filter(Boolean).map((word: string) => {
-          const contains = { contains: word, mode: "insensitive" as const };
-          return { OR: [{ firstName: contains }, { lastName: contains }] };
-        })
-      : [];
-
-    const baseWhere: Prisma.ClientWhereInput = {
-      studioId: { in: studioIds },
-      ...NOT_MERGED,
-      ...NOT_TRANSFERRED,
-      ...(includeArchived ? {} : NOT_ARCHIVED),
-    };
-    where = {
-      AND: [baseWhere, ...(activityConditions.length > 0 ? [{ OR: activityConditions }] : []), ...nameConditions],
-    };
-  }
+  const { where } = resolved;
 
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="clients-export-${new Date().toISOString().slice(0, 10)}.csv"`);
@@ -343,6 +371,34 @@ router.post("/export", requirePermission("bulkActions.use"), async (req, res) =>
 
   stringifier.end();
 });
+
+// "Export All Data": the comprehensive, health-data-inclusive counterpart
+// to POST /export above. A separately-gated action, not a checkbox on the
+// lightweight picker -- reaching real waiver/health data specifically
+// requires waivers.viewStatus on top of ordinary bulkActions.use, same
+// precedent GET /:id/pdf on waivers.ts already established for a single
+// waiver. Body contract is identical to POST /export's own (clientIds or
+// filter, via the same resolveClientExportWhere helper) so the two routes
+// can never disagree about which clients "current filters" or "selected"
+// means; there is no `fields` picker here, since a comprehensive export
+// means every column, every entity.
+router.post(
+  "/export-full",
+  requirePermission("bulkActions.use"),
+  requirePermission("waivers.viewStatus"),
+  async (req, res) => {
+    const resolved = await resolveClientExportWhere(req.user!, req.body);
+    if ("error" in resolved) {
+      return res.status(resolved.status).json({ error: resolved.error });
+    }
+    const { where } = resolved;
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="clients-full-export-${new Date().toISOString().slice(0, 10)}.zip"`);
+
+    await streamClientFullExport(where, res);
+  },
+);
 
 // Backs the manual-merge search picker (§2): find ANY client in the
 // studio by name/email/phone, not just contact-matching auto-suggestions.

@@ -19259,3 +19259,110 @@ established, with explicit authorization requested and given first. Dev servers
 (`:4000` api, `:5174` web) left running rather than stopped, given the live concurrent
 session discovered above -- stopping them risks disrupting work this session can't see
 the full state of.
+
+# Client "Export All Data": full-record ZIP export
+
+The lightweight CSV export ("Client CSV export: column picker", above) covers ~12
+contact fields and deliberately excludes health/waiver data. Juan asked for something
+much bigger: a full record per client -- every Inquiry, Session, Gift Card, Deposit
+Form, and signed Waiver, plus the actual signed PDFs -- bundled into one download. That
+directly conflicts with the previous export's own hard rule ("health and waiver data
+are not exportable"), so this shipped as a **new, separately-gated action** ("Export All
+Data"), not a checkbox on the existing picker, preserving that rule for the lightweight
+path while opening a second, more heavily gated door for the comprehensive one. Three
+scoping questions (ZIP-of-CSVs vs one joined row per client, whether to include health
+data at all, whether to bundle PDFs) were put to Juan directly rather than guessed; all
+three chose the more permissive/heavier option.
+
+## What changed
+
+- **New `apps/api/src/lib/clientFullExport.ts`**: `streamClientFullExport(where, res)`
+  -- batched (cursor, 500 clients/batch, same precedent as the CSV export), one nested
+  Prisma query per batch pulling every relation needed (inquiries incl. depositForms,
+  appointments, giftCards, liabilityWaivers, studio branding), no N+1. Builds six
+  `csv-stringify` stringifiers (clients/inquiries/sessions/gift-cards/deposits/waivers),
+  each piped straight into an `archiver` ZIP entry and written to incrementally as
+  batches are processed; PDFs for **signed** deposit forms and **signed** waivers only
+  (unsigned ones are skipped, same guard the existing single-record PDF routes already
+  use) are generated via the existing `generateDepositFormPdf`/`generateWaiverPdf` and
+  appended to the archive as each is produced -- no separate pass. `waivers.csv`
+  includes full health Q&A as human-readable "N. Question: Answer" text (never a raw
+  JSON blob) plus legal name/DOB/emergency contact/signature name -- explicitly
+  authorized by Juan, a deliberate reversal of the CSV export's own floor. It still
+  never includes the raw ID image/URL, only a boolean `idImageOnFile` flag, matching the
+  single-waiver PDF route's own existing choice.
+- **`apps/api/src/routes/waivers.ts`**: `resolveWaiverSnapshotContent` (the
+  locale-resolution helper the single-waiver PDF route already used) exported so the
+  bulk export can call the identical logic -- a waiver inside a ZIP renders the same
+  content a staff member would get fetching it one at a time.
+- **`apps/api/src/routes/clients.ts`**: the `where`-resolution logic `POST /export`
+  already had (clientIds vs filter, activity/search/archived semantics) was factored out
+  into `resolveClientExportWhere`, now shared by both routes -- so "current filters" or
+  "selected" can never mean two different things depending on which export a caller
+  clicked. New `POST /export-full` route is thin: resolves `where`, sets ZIP headers,
+  delegates to the lib. Gated by **both** `requirePermission("bulkActions.use")` and
+  `requirePermission("waivers.viewStatus")`, chained (`requirePermission` only takes one
+  key; Express runs middleware in sequence, which ANDs the checks) -- matches the
+  existing precedent that reaching real health data specifically requires
+  `waivers.viewStatus` on top of ordinary bulk-export access. Flagged, not fixed (out of
+  scope for this pass): `waivers.viewStatus` is *also* ARTIST's default key for a
+  completely different, narrow `/status`-only route (id/status/signedAt/verifiedAt, no
+  health data) -- the exact same pre-existing gap the single-waiver `GET /:id/pdf` route
+  already has today. ARTIST doesn't get `bulkActions.use` by default, so this export
+  stays blocked for artists out of the box, but a studio that manually overrides ARTIST
+  to `bulkActions.use: true` would silently also open this door, inheriting a
+  permission-key-granularity problem that predates this change.
+- **`apps/web/src/pages/Clients.tsx`**: new `canExportFullData` (mirrors the backend's
+  dual gate client-side) gates a new "Export All Data" button that appears alongside the
+  existing "Export CSV" flow once selection mode is active. Clicking it opens a plain
+  confirmation modal (no field picker -- comprehensive means everything) stating plainly
+  that the export includes health screening answers, signatures, and ID-on-file status,
+  for OWNER/Front-Desk use, and that a large export can take a while. Confirming calls
+  `downloadFile('/clients/export-full', ...)` the same way the existing export already
+  does.
+- **Dependency pin, worth reading before ever bumping this package**: `archiver` was
+  first installed at its latest, `^8.0.0` -- which turned out to be a from-scratch ESM
+  rewrite with `"type": "module"` and no `"require"` condition in its exports map at
+  all. This app's `apps/api` compiles to CommonJS; under that target, `require("archiver")`
+  -- what *any* import of it compiles to, static or dynamic, since dynamic `import()`
+  itself gets downleveled to a `require()`-wrapped promise under `module: "commonjs"` --
+  throws `ERR_REQUIRE_ESM` at runtime. `tsc --noEmit` cannot see this gap (it's a
+  runtime module-resolution failure, not a type error); it was only caught by actually
+  requiring the compiled `dist/` output in Node. Fixed by pinning to `archiver@7.0.1` +
+  `@types/archiver@6.0.3` -- the last major version with the classic CJS factory API
+  (`archiver("zip", opts)`) and a real `main` entry, not a rewrite. Confirmed via a
+  direct `require()` smoke test against the compiled `dist/` output, not just a type
+  check.
+- **Accepted, documented tradeoff**: PDF generation (`pdfkit`) is synchronous and
+  CPU-bound within the request -- a large export (hundreds of signed documents) will
+  take real wall-clock time before the download completes. No async-job/
+  notify-when-ready infrastructure exists in this app; building one was out of scope for
+  this pass.
+
+## Verification
+
+Full production builds (`tsc -b && vite build` web, `tsc` api) clean, both before and
+after re-verifying against a later upstream commit that landed mid-session. Live: rather
+than working directly in the shared primary tree (another concurrent session had
+uncommitted edits to unrelated files sitting in it at the time), spun up an isolated
+worktree via `scripts/new-session.ps1`, applied just this change's diff on top of the
+same base commit, installed the pinned `archiver`/`@types/archiver` versions there, and
+ran the whole live check against that copy -- confirmed via the running dev server's own
+process command line, not just a response status code (see this file's own prior
+"Worktree verification collision" lesson). Logged into dev-studio as OWNER, found an
+existing client with one signed deposit form and two signed waivers via a direct
+(read-only) query, triggered "Export All Data" through the actual UI end to end, and
+confirmed: all six CSVs present with correct headers and `clientId` joins across every
+entity; the signed deposit form produced a `deposit-forms/*.pdf`; both signed waivers
+produced `waivers/*.pdf`; the bulk-generated waiver PDF matched the single-waiver
+`GET /:id/pdf` route's own output at the same byte size (only the embedded "Generated
+on" timestamp differs, expected since both are generated fresh per request). Separately
+exported two other clients with an unsigned deposit form and an unsigned waiver: both
+appear correctly as CSV rows with no corresponding PDF file. Confirmed the permission
+gate directly: `POST /export-full` returns 403 for an ARTIST token (default
+`bulkActions.use: false`, confirmed against this exact dev-studio's actual
+`RolePermission` overrides rather than assumed defaults), and the "Export All Data"
+button is entirely absent from that same account's UI. `apps/api` test suite: 170/170
+passing. Worktree, its two dev servers, and one lingering `tsx` process left behind by a
+force-killed server (blocked the worktree directory's own deletion until found and
+killed) all cleaned up before finishing.

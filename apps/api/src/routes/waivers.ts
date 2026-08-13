@@ -22,7 +22,10 @@ import { parseAcceptLanguage } from "../lib/locale";
 // re-evaluated against the studio's CURRENT live translation every call
 // (not snapshotted), per this waiver's own frozen English content as the
 // seed. See GET /verify/:token below for the full seed-equality reasoning.
-function resolveWaiverSnapshotContent(
+// Exported so lib/clientFullExport.ts's bulk waiver-PDF generation can
+// reuse the identical resolution -- a waiver bundled into a full data
+// export must render byte-for-byte the same as fetching it one at a time.
+export function resolveWaiverSnapshotContent(
   waiver: {
     healthQuestionsSnapshot: unknown;
     clausesSnapshot: unknown;

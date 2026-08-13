@@ -122,6 +122,10 @@ export default function Clients() {
   const canAddClient = profile?.permissions.includes('clients.edit') ?? false
   const canImportClients = profile?.permissions.includes('clients.import') ?? false
   const canExportClients = profile?.permissions.includes('bulkActions.use') ?? false
+  // "Export All Data" mirrors the backend's dual gate (bulkActions.use AND
+  // waivers.viewStatus, see clients.ts's POST /export-full) so the button
+  // is simply absent for anyone who couldn't use it anyway.
+  const canExportFullData = canExportClients && (profile?.permissions.includes('waivers.viewStatus') ?? false)
   const [search, setSearch] = useState('')
   const [activityFilter, setActivityFilter] = useState<string[]>(() => loadClientFilterState().activityFilter)
   const [showArchived, setShowArchived] = useState(() => loadClientFilterState().showArchived)
@@ -155,6 +159,9 @@ export default function Clients() {
   const [exportError, setExportError] = useState<string | null>(null)
   const [showExportFieldPicker, setShowExportFieldPicker] = useState(false)
   const [exportFields, setExportFields] = useState<Set<string>>(() => new Set(loadExportFields()))
+  const [showExportAllDataModal, setShowExportAllDataModal] = useState(false)
+  const [exportingFullData, setExportingFullData] = useState(false)
+  const [exportFullDataError, setExportFullDataError] = useState<string | null>(null)
 
   useEffect(() => {
     localStorage.setItem(EXPORT_FIELDS_STORAGE_KEY, JSON.stringify([...exportFields]))
@@ -173,6 +180,7 @@ export default function Clients() {
     setSelectionMode(false)
     setSelectedIds(new Set())
     setExportError(null)
+    setExportFullDataError(null)
   }
 
   const queryClient = useQueryClient()
@@ -287,6 +295,31 @@ export default function Clients() {
     }
   }
 
+  // Same selectedIds/current-filters split as handleExport above -- no
+  // fields picker here, a comprehensive export always includes every
+  // column across every entity.
+  async function handleExportFullData() {
+    setExportingFullData(true)
+    setExportFullDataError(null)
+    try {
+      const body =
+        selectedIds.size > 0
+          ? { clientIds: [...selectedIds] }
+          : { filter: { q: search.trim() || undefined, includeArchived: showArchived, activity: activityFilter } }
+      await downloadFile(`/clients/export-full`, `clients-full-export-${new Date().toISOString().slice(0, 10)}.zip`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+      setSelectionMode(false)
+      setSelectedIds(new Set())
+      setShowExportAllDataModal(false)
+    } catch (err) {
+      setExportFullDataError(err instanceof Error ? err.message : 'Failed to export client data')
+    } finally {
+      setExportingFullData(false)
+    }
+  }
+
   return (
     <>
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
@@ -342,15 +375,25 @@ export default function Clients() {
                     <button
                       type="button"
                       onClick={exitSelectionMode}
-                      disabled={exporting}
+                      disabled={exporting || exportingFullData}
                       className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                     >
                       <span className="whitespace-nowrap">Cancel</span>
                     </button>
+                    {canExportFullData && (
+                      <button
+                        type="button"
+                        onClick={() => setShowExportAllDataModal(true)}
+                        disabled={exporting || exportingFullData}
+                        className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                      >
+                        <span className="whitespace-nowrap">Export All Data</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setShowExportFieldPicker(true)}
-                      disabled={exporting}
+                      disabled={exporting || exportingFullData}
                       className="shrink-0 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                     >
                       <span className="whitespace-nowrap">
@@ -571,6 +614,33 @@ export default function Clients() {
             className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
           >
             {exporting ? 'Exporting…' : selectedIds.size > 0 ? `Export ${selectedIds.size} Selected` : 'Export All'}
+          </button>
+        </Modal>
+      )}
+
+      {showExportAllDataModal && (
+        <Modal title="Export All Data" onClose={() => setShowExportAllDataModal(false)}>
+          <p className="text-sm text-fg">
+            This bundles a full record for {selectedIds.size > 0 ? `the ${selectedIds.size} selected client${selectedIds.size === 1 ? '' : 's'}` : 'every client matching your current filters'} into a ZIP: contact info,
+            inquiries, sessions, gift cards, deposits, and signed waivers &mdash; including{' '}
+            <strong className="font-semibold">health screening answers, signatures, and whether an ID is on file</strong>.
+            Signed deposit-form and waiver PDFs are included too. For OWNER/Front-Desk use only. A large export can take a
+            while to generate before the download starts.
+          </p>
+
+          {exportFullDataError && <p className="mt-4 text-sm text-danger">{exportFullDataError}</p>}
+
+          <button
+            type="button"
+            onClick={handleExportFullData}
+            disabled={exportingFullData}
+            className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+          >
+            {exportingFullData
+              ? 'Exporting…'
+              : selectedIds.size > 0
+                ? `Export ${selectedIds.size} Selected`
+                : 'Export All Data'}
           </button>
         </Modal>
       )}
