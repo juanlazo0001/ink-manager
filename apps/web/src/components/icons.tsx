@@ -444,6 +444,28 @@ export function ScanIcon({ className }: IconProps) {
   )
 }
 
+// Circle-slash -- universal "ban/void" glyph.
+export function BanIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <circle cx="10" cy="10" r="7.5" />
+      <line x1="4.7" y1="15.3" x2="15.3" y2="4.7" />
+    </svg>
+  )
+}
+
+// Person + arrow -- "transfer to someone else" glyph (Transfer to Client).
+export function TransferIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <circle cx="7" cy="6" r="2.5" />
+      <path d="M2.5 16c0-3 2-4.5 4.5-4.5" strokeLinecap="round" />
+      <path d="M11 11.5h6.5" strokeLinecap="round" />
+      <path d="M14.5 8.5 17.5 11.5 14.5 14.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 // Classic map pin -- the deposit confirmation's studio-address link, small
 // and inline next to the small address copy, not a standalone nav-sized
 // glyph, so it's deliberately plainer (one outline + one dot) than the

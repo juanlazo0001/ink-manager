@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatPhoneInput } from '../lib/format'
-import { ArrowLeftIcon } from '../components/icons'
+import { ArrowLeftIcon, AttachmentIcon, BanIcon, CalendarIcon, CopyIcon, ScanIcon, TransferIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
 import QrCode from '../components/QrCode'
@@ -435,9 +435,12 @@ export default function GiftCardDetail() {
                     <button
                       type="button"
                       onClick={handleCopyLink}
-                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                      aria-label={copied ? 'Copied!' : 'Copy link'}
+                      title={copied ? 'Copied!' : 'Copy link'}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-sm font-medium text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
-                      {copied ? 'Copied!' : 'Copy link'}
+                      <CopyIcon className="h-4 w-4" />
+                      <span className="hidden whitespace-nowrap md:inline">{copied ? 'Copied!' : 'Copy link'}</span>
                     </button>
                   )}
 
@@ -458,9 +461,12 @@ export default function GiftCardDetail() {
                     <button
                       type="button"
                       onClick={() => setEditingExpiry((v) => !v)}
-                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                      aria-label="Edit expiration"
+                      title="Edit expiration"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-sm font-medium text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
-                      Edit expiration
+                      <CalendarIcon className="h-4 w-4" />
+                      <span className="hidden whitespace-nowrap md:inline">Edit expiration</span>
                     </button>
                   )}
 
@@ -469,9 +475,12 @@ export default function GiftCardDetail() {
                       type="button"
                       onClick={handleRedeem}
                       disabled={redeeming}
-                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      aria-label={redeeming ? 'Redeeming…' : 'Redeem card'}
+                      title={redeeming ? 'Redeeming…' : 'Redeem card'}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
-                      {redeeming ? 'Redeeming…' : 'Redeem card'}
+                      <ScanIcon className="h-4 w-4" />
+                      <span className="hidden whitespace-nowrap md:inline">{redeeming ? 'Redeeming…' : 'Redeem card'}</span>
                     </button>
                   )}
 
@@ -480,9 +489,12 @@ export default function GiftCardDetail() {
                       type="button"
                       onClick={handleVoid}
                       disabled={voiding}
-                      className="rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10 disabled:opacity-60"
+                      aria-label={voiding ? 'Voiding…' : 'Void card'}
+                      title={voiding ? 'Voiding…' : 'Void card'}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-danger/40 text-sm font-medium text-danger transition hover:bg-danger/10 disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
-                      {voiding ? 'Voiding…' : 'Void card'}
+                      <BanIcon className="h-4 w-4" />
+                      <span className="hidden whitespace-nowrap md:inline">{voiding ? 'Voiding…' : 'Void card'}</span>
                     </button>
                   )}
 
@@ -490,9 +502,12 @@ export default function GiftCardDetail() {
                     <button
                       type="button"
                       onClick={() => setShowReassignHolder(true)}
-                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                      aria-label="Transfer to Client"
+                      title="Transfer to Client"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-sm font-medium text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
-                      Transfer to Client
+                      <TransferIcon className="h-4 w-4" />
+                      <span className="hidden whitespace-nowrap md:inline">Transfer to Client</span>
                     </button>
                   )}
 
@@ -500,9 +515,12 @@ export default function GiftCardDetail() {
                     <button
                       type="button"
                       onClick={() => setShowAttachSession(true)}
-                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                      aria-label="Attach to Session"
+                      title="Attach to Session"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-sm font-medium text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
-                      Attach to Session
+                      <AttachmentIcon className="h-4 w-4" />
+                      <span className="hidden whitespace-nowrap md:inline">Attach to Session</span>
                     </button>
                   )}
                 </div>
