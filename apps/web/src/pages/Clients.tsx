@@ -89,6 +89,35 @@ const EXPORT_FIELD_GROUPS: { group: string; fields: { key: string; label: string
 ]
 const ALL_EXPORT_FIELD_KEYS = EXPORT_FIELD_GROUPS.flatMap((g) => g.fields.map((f) => f.key))
 
+// Full-record categories, beyond contact fields -- mirrors the backend's
+// own SECTION_KEYS (apps/api/src/lib/clientFullExport.ts) exactly, same
+// duplicated-but-must-stay-in-sync convention as EXPORT_FIELD_GROUPS
+// above. Only shown to callers with waivers.viewStatus (canExportFullData
+// below); picking any of these switches the download from a plain CSV to
+// a ZIP (POST /clients/export-full instead of /export).
+const FULL_RECORD_SECTIONS: { key: string; label: string }[] = [
+  { key: 'inquiries', label: 'Inquiries' },
+  { key: 'sessions', label: 'Sessions' },
+  { key: 'giftCards', label: 'Gift Cards' },
+  { key: 'deposits', label: 'Deposits' },
+  { key: 'waivers', label: 'Waivers' },
+]
+const ALL_SECTION_KEYS = FULL_RECORD_SECTIONS.map((s) => s.key)
+
+const EXPORT_SECTIONS_STORAGE_KEY = 'ink-manager:clients-export-sections'
+
+function loadExportSections(): string[] {
+  try {
+    const raw = localStorage.getItem(EXPORT_SECTIONS_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((k) => ALL_SECTION_KEYS.includes(k))
+  } catch {
+    return []
+  }
+}
+
 // Browser-local, not account-wide -- same convention as CLIENT_FILTER_STORAGE_KEY
 // just above (Inquiries.tsx's own column-visibility memory uses the
 // identical pattern). No dedicated per-user preference infrastructure
@@ -122,9 +151,11 @@ export default function Clients() {
   const canAddClient = profile?.permissions.includes('clients.edit') ?? false
   const canImportClients = profile?.permissions.includes('clients.import') ?? false
   const canExportClients = profile?.permissions.includes('bulkActions.use') ?? false
-  // "Export All Data" mirrors the backend's dual gate (bulkActions.use AND
-  // waivers.viewStatus, see clients.ts's POST /export-full) so the button
-  // is simply absent for anyone who couldn't use it anyway.
+  // Gates the full-record section/PDF checkboxes inside the export modal
+  // (Inquiries/Sessions/Gift Cards/Deposits/Waivers) -- mirrors the
+  // backend's dual gate on POST /export-full (bulkActions.use AND
+  // waivers.viewStatus) so those checkboxes are simply absent for anyone
+  // who couldn't use them anyway, same as the button used to be absent.
   const canExportFullData = canExportClients && (profile?.permissions.includes('waivers.viewStatus') ?? false)
   const [search, setSearch] = useState('')
   const [activityFilter, setActivityFilter] = useState<string[]>(() => loadClientFilterState().activityFilter)
@@ -159,13 +190,16 @@ export default function Clients() {
   const [exportError, setExportError] = useState<string | null>(null)
   const [showExportFieldPicker, setShowExportFieldPicker] = useState(false)
   const [exportFields, setExportFields] = useState<Set<string>>(() => new Set(loadExportFields()))
-  const [showExportAllDataModal, setShowExportAllDataModal] = useState(false)
-  const [exportingFullData, setExportingFullData] = useState(false)
-  const [exportFullDataError, setExportFullDataError] = useState<string | null>(null)
+  const [exportSections, setExportSections] = useState<Set<string>>(() => new Set(loadExportSections()))
+  const [includePdfs, setIncludePdfs] = useState(false)
 
   useEffect(() => {
     localStorage.setItem(EXPORT_FIELDS_STORAGE_KEY, JSON.stringify([...exportFields]))
   }, [exportFields])
+
+  useEffect(() => {
+    localStorage.setItem(EXPORT_SECTIONS_STORAGE_KEY, JSON.stringify([...exportSections]))
+  }, [exportSections])
 
   function toggleExportField(key: string) {
     setExportFields((prev) => {
@@ -176,11 +210,23 @@ export default function Clients() {
     })
   }
 
+  function toggleExportSection(key: string) {
+    setExportSections((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      // Deposits/Waivers PDFs only ever make sense alongside their own
+      // section -- unchecking the last of those two turns includePdfs
+      // back off, rather than leaving a silently-ignored true behind.
+      if (!next.has('deposits') && !next.has('waivers')) setIncludePdfs(false)
+      return next
+    })
+  }
+
   function exitSelectionMode() {
     setSelectionMode(false)
     setSelectedIds(new Set())
     setExportError(null)
-    setExportFullDataError(null)
   }
 
   const queryClient = useQueryClient()
@@ -272,19 +318,34 @@ export default function Clients() {
   // just what's loaded/visible -- the backend re-derives the filter with
   // no cap, see clients.ts's own POST /export). A non-empty selection
   // exports exactly those rows instead, whichever way staff picked them.
+  //
+  // Same button/modal drives both outputs: picking only contact fields
+  // hits POST /export and downloads a plain CSV, unchanged from before
+  // full-record sections existed. Checking any of Inquiries/Sessions/
+  // Gift Cards/Deposits/Waivers switches to POST /export-full and
+  // downloads a ZIP instead -- exportSections.size is the only thing
+  // that decides which.
   async function handleExport() {
     setExporting(true)
     setExportError(null)
     try {
       const fields = ALL_EXPORT_FIELD_KEYS.filter((k) => exportFields.has(k))
-      const body =
+      const filterBody =
         selectedIds.size > 0
-          ? { clientIds: [...selectedIds], fields }
-          : { filter: { q: search.trim() || undefined, includeArchived: showArchived, activity: activityFilter }, fields }
-      await downloadFile(`/clients/export`, `clients-export-${new Date().toISOString().slice(0, 10)}.csv`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      })
+          ? { clientIds: [...selectedIds] }
+          : { filter: { q: search.trim() || undefined, includeArchived: showArchived, activity: activityFilter } }
+
+      if (exportSections.size > 0) {
+        await downloadFile(`/clients/export-full`, `clients-full-export-${new Date().toISOString().slice(0, 10)}.zip`, {
+          method: 'POST',
+          body: JSON.stringify({ ...filterBody, fields, sections: [...exportSections], includePdfs }),
+        })
+      } else {
+        await downloadFile(`/clients/export`, `clients-export-${new Date().toISOString().slice(0, 10)}.csv`, {
+          method: 'POST',
+          body: JSON.stringify({ ...filterBody, fields }),
+        })
+      }
       setSelectionMode(false)
       setSelectedIds(new Set())
       setShowExportFieldPicker(false)
@@ -292,31 +353,6 @@ export default function Clients() {
       setExportError(err instanceof Error ? err.message : 'Failed to export clients')
     } finally {
       setExporting(false)
-    }
-  }
-
-  // Same selectedIds/current-filters split as handleExport above -- no
-  // fields picker here, a comprehensive export always includes every
-  // column across every entity.
-  async function handleExportFullData() {
-    setExportingFullData(true)
-    setExportFullDataError(null)
-    try {
-      const body =
-        selectedIds.size > 0
-          ? { clientIds: [...selectedIds] }
-          : { filter: { q: search.trim() || undefined, includeArchived: showArchived, activity: activityFilter } }
-      await downloadFile(`/clients/export-full`, `clients-full-export-${new Date().toISOString().slice(0, 10)}.zip`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      })
-      setSelectionMode(false)
-      setSelectedIds(new Set())
-      setShowExportAllDataModal(false)
-    } catch (err) {
-      setExportFullDataError(err instanceof Error ? err.message : 'Failed to export client data')
-    } finally {
-      setExportingFullData(false)
     }
   }
 
@@ -367,7 +403,7 @@ export default function Clients() {
                     onClick={() => setSelectionMode(true)}
                     className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
                   >
-                    <span className="whitespace-nowrap">Export CSV</span>
+                    <span className="whitespace-nowrap">Export</span>
                   </button>
                 )}
                 {canExportClients && selectionMode && (
@@ -375,25 +411,15 @@ export default function Clients() {
                     <button
                       type="button"
                       onClick={exitSelectionMode}
-                      disabled={exporting || exportingFullData}
+                      disabled={exporting}
                       className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                     >
                       <span className="whitespace-nowrap">Cancel</span>
                     </button>
-                    {canExportFullData && (
-                      <button
-                        type="button"
-                        onClick={() => setShowExportAllDataModal(true)}
-                        disabled={exporting || exportingFullData}
-                        className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
-                      >
-                        <span className="whitespace-nowrap">Export All Data</span>
-                      </button>
-                    )}
                     <button
                       type="button"
                       onClick={() => setShowExportFieldPicker(true)}
-                      disabled={exporting || exportingFullData}
+                      disabled={exporting}
                       className="shrink-0 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                     >
                       <span className="whitespace-nowrap">
@@ -549,7 +575,7 @@ export default function Clients() {
         </div>
 
       {showExportFieldPicker && (
-        <Modal title="Choose Export Columns" onClose={() => setShowExportFieldPicker(false)}>
+        <Modal title="Choose What to Export" onClose={() => setShowExportFieldPicker(false)}>
           <div className="space-y-5">
             {EXPORT_FIELD_GROUPS.map((group) => {
               const groupKeys = group.fields.map((f) => f.key)
@@ -600,10 +626,74 @@ export default function Clients() {
                 </div>
               )
             })}
+
+            {canExportFullData && (
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-muted">
+                    Full Record Data (OWNER)
+                  </h3>
+                  <div className="flex gap-3 text-xs font-medium text-accent">
+                    <button
+                      type="button"
+                      disabled={ALL_SECTION_KEYS.every((k) => exportSections.has(k))}
+                      onClick={() => setExportSections(new Set(ALL_SECTION_KEYS))}
+                      className="hover:underline disabled:opacity-40 disabled:no-underline"
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      disabled={exportSections.size === 0}
+                      onClick={() => {
+                        setExportSections(new Set())
+                        setIncludePdfs(false)
+                      }}
+                      className="hover:underline disabled:opacity-40 disabled:no-underline"
+                    >
+                      None
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                  {FULL_RECORD_SECTIONS.map((section) => (
+                    <label key={section.key} className="flex cursor-pointer items-center gap-2 text-sm text-fg">
+                      <input
+                        type="checkbox"
+                        checked={exportSections.has(section.key)}
+                        onChange={() => toggleExportSection(section.key)}
+                        className="h-4 w-4 shrink-0 rounded border-border accent-accent"
+                      />
+                      <span>{section.label}</span>
+                    </label>
+                  ))}
+                </div>
+                {(exportSections.has('deposits') || exportSections.has('waivers')) && (
+                  <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-fg">
+                    <input
+                      type="checkbox"
+                      checked={includePdfs}
+                      onChange={() => setIncludePdfs((v) => !v)}
+                      className="h-4 w-4 shrink-0 rounded border-border accent-accent"
+                    />
+                    <span>Include signed PDFs (deposit forms &amp; waivers)</span>
+                  </label>
+                )}
+                {exportSections.size > 0 && (
+                  <p className="mt-3 text-sm text-fg-secondary">
+                    Waivers include{' '}
+                    <strong className="font-semibold text-fg">
+                      health screening answers, signatures, and whether an ID is on file
+                    </strong>
+                    . This switches the download to a ZIP and can take a while to generate for a large export.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {exportFields.size === 0 && (
-            <p className="mt-4 text-sm text-danger">Select at least one column to export.</p>
+            <p className="mt-4 text-sm text-danger">Select at least one contact column to export.</p>
           )}
           {exportError && <p className="mt-4 text-sm text-danger">{exportError}</p>}
 
@@ -614,33 +704,6 @@ export default function Clients() {
             className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
           >
             {exporting ? 'Exporting…' : selectedIds.size > 0 ? `Export ${selectedIds.size} Selected` : 'Export All'}
-          </button>
-        </Modal>
-      )}
-
-      {showExportAllDataModal && (
-        <Modal title="Export All Data" onClose={() => setShowExportAllDataModal(false)}>
-          <p className="text-sm text-fg">
-            This bundles a full record for {selectedIds.size > 0 ? `the ${selectedIds.size} selected client${selectedIds.size === 1 ? '' : 's'}` : 'every client matching your current filters'} into a ZIP: contact info,
-            inquiries, sessions, gift cards, deposits, and signed waivers &mdash; including{' '}
-            <strong className="font-semibold">health screening answers, signatures, and whether an ID is on file</strong>.
-            Signed deposit-form and waiver PDFs are included too. For OWNER/Front-Desk use only. A large export can take a
-            while to generate before the download starts.
-          </p>
-
-          {exportFullDataError && <p className="mt-4 text-sm text-danger">{exportFullDataError}</p>}
-
-          <button
-            type="button"
-            onClick={handleExportFullData}
-            disabled={exportingFullData}
-            className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
-          >
-            {exportingFullData
-              ? 'Exporting…'
-              : selectedIds.size > 0
-                ? `Export ${selectedIds.size} Selected`
-                : 'Export All Data'}
           </button>
         </Modal>
       )}

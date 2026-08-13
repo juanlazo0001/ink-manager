@@ -15,7 +15,8 @@ import { performMerge, validateMergePair } from "../lib/clientMerge";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { callerBelongsToStudio, activeStudioIdsForCaller, hasPermissionAt } from "../lib/artistAccess";
 import { isSupportedLocale } from "../lib/locale";
-import { streamClientFullExport } from "../lib/clientFullExport";
+import { streamClientFullExport, SECTION_KEYS, type SectionKey } from "../lib/clientFullExport";
+import { EXPORT_FIELD_KEYS, EXPORT_FIELD_LABELS, buildClientContactValues, type ExportFieldKey } from "../lib/clientExportFields";
 
 const router = Router();
 
@@ -145,33 +146,6 @@ router.get("/", requirePermission("clients.view"), async (req, res) => {
   });
   res.json(clients);
 });
-
-// Column picker: the full set of columns this route can ever emit, in
-// canonical order -- the frontend's own field list (Clients.tsx) mirrors
-// this exactly (key + label), same duplicated-but-must-stay-in-sync
-// pattern themePresets.ts already uses between web and api. This list is
-// ALSO the hard security floor: health/waiver fields are never added
-// here, so there is no key a caller could ever request that would leak
-// them, regardless of what the frontend picker does or doesn't show.
-const EXPORT_FIELD_DEFS = [
-  { key: "firstName", label: "First Name" },
-  { key: "lastName", label: "Last Name" },
-  { key: "primaryPhone", label: "Primary Phone" },
-  { key: "otherPhones", label: "Other Phones" },
-  { key: "primaryEmail", label: "Primary Email" },
-  { key: "otherEmails", label: "Other Emails" },
-  { key: "instagram", label: "Instagram" },
-  { key: "facebook", label: "Facebook" },
-  { key: "otherContact", label: "Other Contact" },
-  { key: "address", label: "Address" },
-  { key: "referralCode", label: "Referral Code" },
-  { key: "createdDate", label: "Created Date" },
-] as const;
-type ExportFieldKey = (typeof EXPORT_FIELD_DEFS)[number]["key"];
-const EXPORT_FIELD_KEYS: readonly string[] = EXPORT_FIELD_DEFS.map((f) => f.key);
-const EXPORT_FIELD_LABELS: Record<ExportFieldKey, string> = Object.fromEntries(
-  EXPORT_FIELD_DEFS.map((f) => [f.key, f.label]),
-) as Record<ExportFieldKey, string>;
 
 // Shared by both POST /export (below) and POST /export-full -- "which
 // clients does this export request mean" must never drift between the
@@ -342,26 +316,7 @@ router.post("/export", requirePermission("bulkActions.use"), async (req, res) =>
     if (batch.length === 0) break;
 
     for (const c of batch) {
-      const primaryPhone = c.phones.find((p) => p.isPrimary)?.phone ?? c.phones[0]?.phone ?? c.phone ?? "";
-      const otherPhones = c.phones.map((p) => p.phone).filter((p) => p !== primaryPhone);
-      const primaryEmail = c.emails.find((e) => e.isPrimary)?.email ?? c.emails[0]?.email ?? c.email ?? "";
-      const otherEmails = c.emails.map((e) => e.email).filter((e) => e !== primaryEmail);
-
-      const valuesByField: Record<ExportFieldKey, string> = {
-        firstName: c.firstName,
-        lastName: c.lastName,
-        primaryPhone,
-        otherPhones: otherPhones.join("; "),
-        primaryEmail,
-        otherEmails: otherEmails.join("; "),
-        instagram: c.instagramHandle ?? "",
-        facebook: c.facebookProfileUrl ?? "",
-        otherContact: c.otherContact ?? "",
-        address: c.address ?? "",
-        referralCode: c.referralCode,
-        createdDate: c.createdAt.toISOString().slice(0, 10),
-      };
-
+      const valuesByField = buildClientContactValues(c);
       stringifier.write(selectedFields.map((key) => valuesByField[key]));
     }
 
@@ -372,21 +327,45 @@ router.post("/export", requirePermission("bulkActions.use"), async (req, res) =>
   stringifier.end();
 });
 
-// "Export All Data": the comprehensive, health-data-inclusive counterpart
-// to POST /export above. A separately-gated action, not a checkbox on the
-// lightweight picker -- reaching real waiver/health data specifically
-// requires waivers.viewStatus on top of ordinary bulkActions.use, same
-// precedent GET /:id/pdf on waivers.ts already established for a single
-// waiver. Body contract is identical to POST /export's own (clientIds or
-// filter, via the same resolveClientExportWhere helper) so the two routes
-// can never disagree about which clients "current filters" or "selected"
-// means; there is no `fields` picker here, since a comprehensive export
-// means every column, every entity.
+// The comprehensive, health-data-inclusive counterpart to POST /export
+// above -- one row per Inquiry/Session/Gift Card/Deposit/Waiver, plus
+// signed PDFs, bundled into a ZIP alongside a clients.csv built from the
+// same `fields` picker POST /export uses. Reached from the SAME "Export"
+// button/modal as the plain CSV export on the frontend (Clients.tsx) --
+// picking any of `sections` is what switches the download from a CSV to
+// this ZIP -- but kept as its own, more heavily gated ROUTE here, since
+// reaching real waiver/health data specifically requires waivers.viewStatus
+// on top of ordinary bulkActions.use, same precedent GET /:id/pdf on
+// waivers.ts already established for a single waiver. `sections` is
+// REQUIRED (unlike `fields`, which still defaults to "all") -- this route
+// is only ever called once at least one full-record section is checked;
+// there's no sensible "export everything" default for a set this sensitive.
 router.post(
   "/export-full",
   requirePermission("bulkActions.use"),
   requirePermission("waivers.viewStatus"),
   async (req, res) => {
+    const { fields, sections, includePdfs } = req.body ?? {};
+
+    if (
+      fields !== undefined &&
+      (!Array.isArray(fields) ||
+        fields.length === 0 ||
+        fields.some((f: unknown) => typeof f !== "string" || !EXPORT_FIELD_KEYS.includes(f)))
+    ) {
+      return res.status(400).json({ error: `fields must be a non-empty array from: ${EXPORT_FIELD_KEYS.join(", ")}` });
+    }
+    const selectedFields: ExportFieldKey[] = fields ?? (EXPORT_FIELD_KEYS as ExportFieldKey[]);
+
+    if (
+      !Array.isArray(sections) ||
+      sections.length === 0 ||
+      sections.some((s: unknown) => typeof s !== "string" || !SECTION_KEYS.includes(s as SectionKey))
+    ) {
+      return res.status(400).json({ error: `sections must be a non-empty array from: ${SECTION_KEYS.join(", ")}` });
+    }
+    const selectedSections = new Set(sections as SectionKey[]);
+
     const resolved = await resolveClientExportWhere(req.user!, req.body);
     if ("error" in resolved) {
       return res.status(resolved.status).json({ error: resolved.error });
@@ -396,7 +375,11 @@ router.post(
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="clients-full-export-${new Date().toISOString().slice(0, 10)}.zip"`);
 
-    await streamClientFullExport(where, res);
+    await streamClientFullExport(
+      where,
+      { fields: selectedFields, sections: selectedSections, includePdfs: includePdfs === true },
+      res,
+    );
   },
 );
 

@@ -19366,3 +19366,82 @@ button is entirely absent from that same account's UI. `apps/api` test suite: 17
 passing. Worktree, its two dev servers, and one lingering `tsx` process left behind by a
 force-killed server (blocked the worktree directory's own deletion until found and
 killed) all cleaned up before finishing.
+
+# Export All Data: merged into the single Export button/modal
+
+Follow-up to "Export All Data: full-record ZIP export" (above), same session: Juan asked
+for the separate "Export All Data" button/modal to go away -- one "Export" button, one
+modal, with the full-record categories (Inquiries, Sessions, Gift Cards, Deposits,
+Waivers) appearing as additional checkboxes inside it, selectable only by callers who
+can actually reach them (`waivers.viewStatus`, matching the backend gate rather than a
+hardcoded OWNER check -- confirmed with Juan directly, since a studio might reasonably
+grant Front Desk that permission). Also confirmed with Juan: checking any full-record
+item switches the download from a CSV to a ZIP (checking only contact fields still
+downloads a plain CSV, byte-identical to before this pass); and signed-PDF bundling is
+its own separate checkbox, not automatic just from checking Deposits/Waivers.
+
+## What changed
+
+- **New `apps/api/src/lib/clientExportFields.ts`**: `EXPORT_FIELD_DEFS`/
+  `EXPORT_FIELD_KEYS`/`EXPORT_FIELD_LABELS` (moved out of `routes/clients.ts` verbatim)
+  plus a new `buildClientContactValues()` helper factoring out the primaryPhone/
+  otherPhones/primaryEmail/otherEmails dedup logic POST /export's row-building already
+  had. Deliberately its own leaf module, not re-exported from `routes/clients.ts` --
+  `lib/clientFullExport.ts` needs these same constants for the ZIP's `clients.csv`
+  entry, and `routes/clients.ts` already imports `streamClientFullExport` from that same
+  lib file, so exporting them from `routes/clients.ts` instead would have been a real
+  circular import (two modules requiring each other at the top level, not just a lint
+  complaint) -- both routes and lib now depend on this one shared, dependency-free
+  module instead of on each other.
+- **`apps/api/src/lib/clientFullExport.ts`**: `streamClientFullExport` now takes an
+  `options: { fields, sections, includePdfs }` argument instead of always emitting all
+  five full-record CSVs and every signed PDF. `SECTION_KEYS`/`SectionKey`
+  (`"inquiries" | "sessions" | "giftCards" | "deposits" | "waivers"`) exported as the
+  one canonical list the route validates `sections` against. Each section's
+  `csv-stringify` stream (and its `archive.append`) is now created only if that section
+  was requested -- an unrequested section's ZIP entry doesn't exist at all, not an empty
+  file -- and PDF generation for a signed deposit form/waiver additionally requires
+  `includePdfs`. clients.csv itself now uses the shared `buildClientContactValues()` and
+  the caller-selected `fields`, instead of always every contact column.
+- **`apps/api/src/routes/clients.ts`, `POST /export-full`**: now accepts `fields`
+  (same validation as `POST /export`'s own, still optional/defaults to all contact
+  columns) and a **required** `sections: string[]` (400 if missing/empty/invalid --
+  unlike `fields`, there's no sensible "export everything" default for a category set
+  this sensitive) plus `includePdfs: boolean`. Still gated by the same chained
+  `requirePermission("bulkActions.use")` + `requirePermission("waivers.viewStatus")` as
+  before -- unchanged, since the sensitivity of what this route can return hasn't
+  changed, only how granularly a caller can ask for it.
+- **`apps/web/src/pages/Clients.tsx`**: the separate "Export All Data" button and its
+  own confirmation modal are gone. The existing "Choose Export Columns" modal (now
+  "Choose What to Export") gains a "Full Record Data (OWNER)" group -- Inquiries/
+  Sessions/Gift Cards/Deposits/Waivers checkboxes, an All/None pair matching the
+  existing contact-field groups' own pattern, an "Include signed PDFs" checkbox that
+  only renders once Deposits or Waivers is checked (and auto-clears if both get
+  unchecked again), and a warning paragraph (the old modal's own health-data copy,
+  now inline and only shown once at least one full-record item is checked) -- all
+  gated behind the same `canExportFullData` (`bulkActions.use` AND `waivers.viewStatus`)
+  that used to gate the separate button. `exportSections`/`includePdfs` persist to
+  `localStorage` the same way `exportFields` already did. The single "Export"
+  button/modal now dispatches to `POST /clients/export` (plain CSV) when
+  `exportSections` is empty, or `POST /clients/export-full` (ZIP) otherwise -- the only
+  thing that decides which request goes out.
+
+## Verification
+
+Full production builds (`tsc -b && vite build` web, `tsc` api) clean. Live, same
+isolated-worktree discipline as the prior entry (another concurrent session's dev
+server was live on the shared default ports again): logged in as OWNER, checked
+Deposits + Waivers + Include signed PDFs for the same known-good client from before,
+confirmed the downloaded ZIP contained exactly `clients.csv`/`deposits.csv`/
+`waivers.csv` plus their PDFs -- no `inquiries.csv`/`sessions.csv`/`gift-cards.csv`,
+confirming unselected sections are omitted, not emitted empty. Re-opened the modal,
+unchecked both (via the group's own "None"), submitted again, and confirmed the
+download switched back to a plain `.csv` (not a ZIP) with the expected contact columns
+-- the format-switch itself, not just each format in isolation. Confirmed the backend
+gate directly: an ARTIST token (no `bulkActions.use` by default) still gets 403 on
+`POST /export-full` even with a `sections` array in the body; an OWNER token gets 400
+for a missing, empty, or invalid `sections` array. `apps/api` test suite: 170/170
+passing. Worktree and its two dev servers (plus, again, one lingering `tsx` watcher
+process that blocked the worktree directory's own deletion until killed -- same
+class of cleanup gotcha as the prior entry, evidently not a one-off) cleaned up
+before finishing.
