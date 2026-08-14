@@ -19490,3 +19490,182 @@ taller; and the Clients page's Cancel / Export All render at the same height and
 same secondary/primary treatments as Import Clients / Add Client beside them. Re-checked
 both pages at 1280x800 to confirm the desktop single-row layout was unaffected. Worktree
 and its dev servers (plus the by-now-familiar lingering `tsx` watcher) cleaned up.
+
+# START/rejoin consent copy, SMS keyword policy section, and the A2P staging walkthrough
+
+Two commits on `main`: `6fb1b7e` (Part 1, copy + policy + keyword alignment)
+and `308018e` (Part 2, walkthrough harness). Part 3 (Edition 03 PDF) is
+deliberately unfinished -- see "Open items" at the end.
+
+## An incident: one real SMS was sent, contrary to the task's hard rule
+
+Reporting this first because it is the most important thing in this entry.
+
+The task's hard rule was "no real SMS ever." One real message was nonetheless
+handed to Twilio. What happened: I started the dev API with `SMS_DRY_RUN=true`,
+then confirmed readiness by polling `GET /health` and getting a 200. The 200 was
+real but came from a **different server** -- a pre-existing dev API on port 4000
+that this session did not start and that had no `SMS_DRY_RUN` set. My own
+process had died on `EADDRINUSE` seconds earlier. Every simulated webhook POST
+went to that other server, and the START keyword's opt-in confirmation went out
+through the real Twilio path.
+
+The send: SID `SM7035928dca91155968b9185452653ee8`, `+18508804483` ->
+`+19105550147`. A read-only Twilio fetch (done with the user's explicit
+go-ahead, after stopping and reporting) returned **`status: undelivered`,
+`errorCode: 30034`, `price: null`** -- 30034 is "message from an unregistered
+number," i.e. A2P 10DLC blocked it at the carrier. It reached no handset and was
+not billed. The destination was also inside the NANP `555-01XX` reserved-
+fictional range, so no real subscriber could have received it regardless.
+
+**This repo already had the exact rule that would have prevented it**
+(`feedback_worktree_verification_collision`: a 2xx does not prove you reached
+your own server -- check the persisted data and the server's own startup log,
+not just the status code). I had that lesson available and still verified with
+`/health`. The corrected procedure, used for the re-run: wait on **my own
+process's log** for "listening on port 4000", assert no `EADDRINUSE` in it,
+confirm the PID holding the port matches the process I launched, prove the env
+var propagates (`SMS_DRY_RUN=true npx tsx -e` printing `"true"`), and only then
+send -- plus check the first outbound row's provider SID for the `DRYRUN` prefix
+before continuing past the first send.
+
+Final accounting, queried directly: 5 outbound SMS rows in the 6h window --
+1 real (the incident above) and 4 `DRYRUN`.
+
+## Part 0 -- investigation (the task required reporting before building)
+
+`prompt-start-disclosure-and-staging-walkthrough.md` does not exist anywhere in
+the repo, so this prompt governed with nothing to reconcile.
+
+- **Consent copy lives in 3 places**, not 2: `en.ts` and `es.ts`
+  (`intake.smsConsentDefault` = phone helper, `intake.smsOptInBody` = checkbox),
+  plus the hardcoded English mirror in `server.mjs`'s `renderInquirySsr()`. Two
+  asymmetries constrain "SSR<->client byte parity": the SSR snapshot contains
+  **only the checkbox** (no phone-helper text at all) and is **English-only**
+  regardless of visitor language.
+- **Static policy pages**: `marketing/privacy/index.html` and
+  `marketing/terms/index.html` -- plain static HTML, **no build step**, served by
+  `serve .` as its own Railway service at `inkmanager.app`. Convention (per
+  `marketing/README.md`): edit the canonical `.md` draft first, then hand-convert.
+  `web.inkmanager.app/privacy|/terms` are 301 redirects to them.
+- **Signature validation**: `verifyTwilioSignature` -> `Twilio.validateRequest`,
+  403 on failure, **no bypass of any kind existed**. Kept it that way -- see Part 2.
+- **`OptOutType` is captured nowhere** (zero occurrences repo-wide). The handler
+  derives keywords from `Body` itself.
+- **`smsOptedOutAt` in staff UI**: `ClientDetail.tsx:1591` (warning line) and
+  `AuditTrail.tsx:184-185` (`opted in/out of texts`). Not in `ConversationsPanel`.
+
+## Part 1 -- copy, policy, keyword alignment (`6fb1b7e`)
+
+Checkbox gains "Reply START to rejoin at any time."; phone helper gains "or
+START to rejoin". Applied to `en.ts`, `es.ts`, and the SSR mirror. **Spanish was
+also brought to full parity** -- it was still missing the message-frequency
+statement left out of scope in the prior session; keywords STOP/START/HELP
+deliberately stay in English since those are what Twilio recognizes.
+
+New "Text Messaging (SMS) Keywords" section added to **both** Privacy and Terms,
+canonical `.md` drafts edited first then hand-converted into the static HTML.
+
+**Keyword sets aligned exactly to the Twilio Console's Opt-Out Management
+config** (user's explicit instruction): opt-out `CANCEL, END, OPTOUT, QUIT,
+REVOKE, STOP, STOPALL, UNSUBSCRIBE`; opt-in `START, UNSTOP, YES`; help `HELP,
+INFO`. Adds OPTOUT/REVOKE/INFO, which the handler previously did not recognize
+even though the new policy copy promises them. `START_KEYWORDS` renamed
+`OPT_IN_KEYWORDS`. A comment names the console config as the source of truth in
+both directions, because a drift there means Twilio confirms an opt-out while
+our own record silently disagrees -- exactly what a carrier reviewer tests.
+
+Verification, after deploy rather than before: polled all three services until
+live, then confirmed in **raw no-JS `curl`** that the intake SSR, `/privacy`,
+and `/terms` all carry the new text; proved SSR<->client parity
+**programmatically** (extract both strings, substitute `{{studioName}}`, assert
+byte-identical -- `true`) rather than by eye.
+
+## Part 2 -- staging walkthrough (`308018e`)
+
+`scripts/simulate-twilio-inbound.ps1` + `apps/api/src/scripts/
+simulateTwilioInbound.ts`.
+
+**No signature bypass was added.** The Node half reads the studio's own auth
+token and computes a genuine `X-Twilio-Signature` (HMAC-SHA1 over the signed URL
+plus lexicographically-sorted params), so the untouched production handler
+validates it exactly as it would a real Twilio request. An env-gated
+"skip signature check" would have put a credential-check bypass into a
+production code path; signing for real costs nothing and avoids that entirely.
+Note the signature must be computed over `TWILIO_SMS_WEBHOOK_URL` (the server's
+own constant), not the URL posted to.
+
+**Structural guard, duplicated independently on both halves**: target must be a
+loopback host or contain "staging"; anything else is refused loudly before a
+request is built. Verified by actually pointing both halves at the production
+Railway host and confirming each refuses.
+
+`SMS_DRY_RUN` (in `clientSms.ts`) is double-gated: off unless exactly `"true"`,
+**and force-disabled under `NODE_ENV=production`** regardless. The important
+direction is the second one -- a dry-run flag leaking into production would
+silently drop real customer messages while the thread showed them queued, worse
+than the problem it solves. It exists because `sendSmsMessage` only persists a
+Message row on provider acceptance, so with blocked credentials the opt-in
+confirmation and HELP reply would leave no trace in the thread and screenshots
+4/5/7 would be uncapturable.
+
+Full cycle run against dev `Riley Chen` / `+19105550162` (also reserved-
+fictional): ordinary inbound -> STOP -> outbound attempt refused in the composer
+("This client has opted out of SMS and cannot be texted") -> START -> HELP ->
+ordinary inbound -> outbound sends again. Consent state, thread, and audit trail
+verified from the database at each step, not inferred from 200s.
+
+## Screenshots (13)
+
+`C:\Users\User\Documents\Twilio-Proof-Package-BlackHiveInk\edition-03-working\
+screenshots\` -- 5 copy/policy exhibits (`e03-*`) and 8 walkthrough exhibits
+(`walkthrough-*`). All outbound rows show `queued`, captured honestly; nothing
+was staged to look delivered.
+
+## Windows-specific gotchas worth remembering
+
+Passing JSON through PowerShell -> `npx` -> node mangles inner double quotes;
+switched to a temp-file handoff. Then `Set-Content -Encoding utf8` on
+PowerShell 5.1 writes a **BOM**, which `JSON.parse` rejects -- stripped on the
+read side, which is robust regardless of writer.
+
+## Build verification
+
+`npm run build` (web) and `npx tsc --noEmit` (api) -- both clean before each
+commit. No tests reference the changed keyword sets.
+
+## Open items -- explicitly unfinished
+
+- **Part 3 (Edition 03 PDF) is NOT built.** The task names Edition 02 as the
+  layout reference and says it moves to "99 Archive" per convention. Neither
+  exists on this machine -- searched the repo plus Documents/Desktop/Downloads/
+  OneDrive; the only prior package is the unlabeled Aug-12
+  `Black-Hive-Ink-SMS-Consent-Proof-Package.pdf`. Asked, and the user chose to
+  supply Edition 02 rather than have me substitute a stand-in. Assembly waits on
+  that file. Exhibits A and B (Twilio console Senders / Opt-Out Management) are
+  Juan-supplied by design and are also still outstanding.
+- **No Spanish policy pages exist.** Per the user's decision, Spanish covers the
+  consent copy only; the new keyword section is on the English pages only. If
+  Spanish policy pages are ever wanted, the consent copy's links are hardcoded to
+  the English URLs and would need locale-aware routing.
+- **Port 4000's dev API was restarted by this session** (with the user's
+  go-ahead) and is now stopped, along with the dev web server on 5173. The
+  pre-existing API that was running before this session began is therefore no
+  longer running -- restart it if it was wanted.
+- **Dev data left behind**: clients `Jordan Reyes` (`+19105550147`, the incident
+  run) and `Riley Chen` (`+19105550162`, the clean run, left opted-in) in Dev
+  Studio, with their threads and audit rows. Jordan's thread deliberately
+  preserved as the incident record rather than tidied away.
+
+## CLAUDE.md hygiene
+
+No schema change, no migration, no database reset. All DB writes were to the
+**dev** database only (both write scripts hard-refuse any `DATABASE_URL` that
+isn't the known dev host); the single production DB read in this session was
+read-only. One-off forensic scripts (`checkMessageStatus.ts`,
+`walkthroughAudit.ts`) deleted rather than committed; the reusable harness was
+kept deliberately. `.playwright-mcp/` scratch output removed. Working tree clean
+except two untracked files that predate this session
+(`marketing/package-lock.json`, `public/desktop/screenshots/
+ink-manager-portal-restyle-v3.html`), left untouched. Zero background shells or
+dev servers left running.
