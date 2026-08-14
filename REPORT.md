@@ -19669,3 +19669,75 @@ except two untracked files that predate this session
 (`marketing/package-lock.json`, `public/desktop/screenshots/
 ink-manager-portal-restyle-v3.html`), left untouched. Zero background shells or
 dev servers left running.
+
+# Edition 03 assembly (closing the open item from the previous entry)
+
+The previous entry listed Part 3 as explicitly unfinished, blocked on Edition 02
+as the layout reference. The user supplied it
+(`Downloads\Black-Hive-Ink-SMS-Consent-Proof-Package-Edition-02.pdf`), so this
+closes that item. No repo code changed in this pass -- document work only.
+
+## Matching Edition 02
+
+Extracted Edition 02's text with `pypdf` (installed locally for this; no PDF
+tooling existed on the machine) and rendered it in the browser to read its
+visual language. It is a reviewer-facing document, not an engineering one:
+gold letter-spaced uppercase eyebrows, Fraunces serif headings, Outfit body,
+gold-ruled two-column tables with check marks, uppercase exhibit captions, and
+a running footer. Notably it contains **no file paths, function names, or route
+references** anywhere -- Edition 03 deliberately holds that same register, so
+the earlier prompt's "reference the real handler file/route" instruction was
+correctly not carried forward into this reviewer-facing document.
+
+## Structure
+
+10 pages: cover + Reviewer's Map (the two requested items mapped to exhibits);
+Exhibit A (Senders) and B (Opt-Out Management) as drop-in slots; C (intake form,
+checkbox close-crop, requirements table, raw HTML); D (published keyword policy,
+rendered + raw); E (the eight-step walkthrough); and a closing summary quoting
+the exact confirmation templates.
+
+## Two judgement calls worth recording
+
+**The suggested Exhibit E caption was not usable as written.** The prompt
+proposed "Outbound shows queued because the number is not yet active under the
+campaign." That is not why these particular rows show queued -- they show queued
+because the walkthrough ran with transmission disabled, so nothing was handed to
+a carrier at all. Wrote both facts separately instead, which is also the stronger
+claim: the number's pre-approval state is *evidenced* by the 30034 result rather
+than asserted. Flagged the choice; the user confirmed keeping both 30034
+mentions, in neutral wording ("a test send attempt was correctly blocked by
+Twilio with error 30034 -- undelivered, unbilled"). The document never
+characterizes that send as accidental, and never did.
+
+**Aspect-ratio distortion, caught by measuring rather than by eye.** An early
+pass set `width:100%` together with `max-height` on the exhibit images, which
+overrides `height:auto` and squashes them -- a 1280x900 screenshot was rendering
+at 690x234, roughly 2x vertically compressed. In an evidence document that is
+disqualifying, and it is not obvious at a glance. Caught by comparing natural to
+rendered aspect ratios in the DOM and asserting the skew was zero; the final
+render measures 0% skew on all 13 images.
+
+## Screenshot re-crops
+
+The four large exhibits were re-captured as clipped element crops rather than
+full viewports, cutting dead page gutters. Effective downscale in the PDF
+improved from about 63% to about 24%, so the UI and source text is legible in
+print, not only on screen. The full-view-plus-close-crop pairing Edition 02
+established for the intake form was preserved.
+
+## Deliverables
+
+`C:\Users\User\Documents\Twilio-Proof-Package-BlackHiveInk\`:
+- `Black Hive Ink and Arts — SMS Consent Proof Package (Edition 03).pdf`
+- `99 Archive\` -- Edition 02 and the unlabeled Aug-12 package (relabeled
+  Edition 01). Per convention, nothing was overwritten.
+- `edition-03-working\` -- source HTML and all 13 screenshots.
+
+## Still open
+
+**Exhibits A and B are unplaced.** The user said the two Twilio Console captures
+were incoming; they had not appeared in Downloads or on the Desktop by the end of
+this pass, checked twice. The PDF carries clearly-marked drop-in slots for both,
+and placing them is a re-render with no other change. Reported as pending rather
+than implied complete.
