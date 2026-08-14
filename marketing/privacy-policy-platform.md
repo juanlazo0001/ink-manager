@@ -49,6 +49,18 @@ If you provide a phone number or email address to a Studio through Ink Manager, 
 
 No mobile information will be shared with third parties or affiliates for marketing or promotional purposes. Text messaging originator opt-in data and consent will not be shared with any third parties, excluding the messaging providers necessary to deliver messages on our behalf.
 
+## Text Messaging (SMS) Keywords
+
+If you have consented to receive text messages from a studio using Ink Manager, those messages are sent from the studio's dedicated phone number.
+
+Opt out: Reply STOP (or CANCEL, END, QUIT, STOPALL, UNSUBSCRIBE, OPTOUT, REVOKE) to any message. You will receive one final confirmation — "You have successfully been unsubscribed. You will not receive any more messages from this number. Reply START to resubscribe." — and no further messages will be sent.
+
+Rejoin: Reply START, YES, or UNSTOP to the same number at any time. You will receive a confirmation — "You have successfully been re-subscribed to messages from this number. Reply HELP for help. Reply STOP to unsubscribe. Msg&Data Rates May Apply." — and messaging will resume.
+
+Help: Reply HELP or INFO at any time.
+
+Message frequency varies. Message and data rates may apply. Consent to receive text messages is never a condition of booking or purchase.
+
 ## Who we share information with
 
 - **The Studio you're interacting with** — they are the primary party responsible for your service and will have access to the information you submit.

@@ -34,6 +34,18 @@ Deposit and service payments made through the platform are processed by our paym
 
 If you provide a phone number or email address through the platform, you may receive transactional messages related to your inquiry or appointment. Message frequency varies. Message and data rates may apply. Reply **STOP** to stop receiving SMS messages at any time, or **HELP** for assistance. See our Privacy Policy for more detail on how we handle your contact information.
 
+## Text Messaging (SMS) Keywords
+
+If you have consented to receive text messages from a studio using Ink Manager, those messages are sent from the studio's dedicated phone number.
+
+Opt out: Reply STOP (or CANCEL, END, QUIT, STOPALL, UNSUBSCRIBE, OPTOUT, REVOKE) to any message. You will receive one final confirmation — "You have successfully been unsubscribed. You will not receive any more messages from this number. Reply START to resubscribe." — and no further messages will be sent.
+
+Rejoin: Reply START, YES, or UNSTOP to the same number at any time. You will receive a confirmation — "You have successfully been re-subscribed to messages from this number. Reply HELP for help. Reply STOP to unsubscribe. Msg&Data Rates May Apply." — and messaging will resume.
+
+Help: Reply HELP or INFO at any time.
+
+Message frequency varies. Message and data rates may apply. Consent to receive text messages is never a condition of booking or purchase.
+
 ## Waivers and health information
 
 Where a Studio requires a liability waiver, health screening, or identity verification before your appointment, the information you provide is collected on the Studio's behalf and is subject to the Studio's own waiver terms in addition to this policy.

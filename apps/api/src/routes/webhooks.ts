@@ -39,9 +39,33 @@ function twiml(res: import("express").Response) {
 // how long a freshly-issued self-schedule token stays valid.
 const SELF_SCHEDULE_TOKEN_TTL_DAYS = 7;
 
-const STOP_KEYWORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
-const START_KEYWORDS = new Set(["START", "UNSTOP", "YES"]);
-const HELP_KEYWORDS = new Set(["HELP"]);
+// SOURCE OF TRUTH: these three sets mirror the keyword lists configured in
+// the Twilio Console under Messaging > Opt-Out Management (Advanced
+// Opt-Out) for this account, EXACTLY -- not a superset, not a convenient
+// subset. Twilio intercepts these keywords at the platform level and sends
+// its own confirmation; our handler additionally reconciles the client's
+// own consent state in this database. If the two lists drift, a customer
+// gets Twilio's confirmation while our own record silently disagrees --
+// which is precisely the mismatch a carrier reviewer tests for. Anyone
+// editing the console lists must edit these too, and vice versa; the
+// published policy copy (marketing/privacy/index.html and terms/index.html,
+// "Text Messaging (SMS) Keywords") quotes these same lists verbatim.
+//
+// Matching is case-insensitive and whitespace-trimmed (see `keyword` below),
+// so the console's title-case spelling and a customer's lowercase "stop"
+// both resolve here.
+const STOP_KEYWORDS = new Set([
+  "CANCEL",
+  "END",
+  "OPTOUT",
+  "QUIT",
+  "REVOKE",
+  "STOP",
+  "STOPALL",
+  "UNSUBSCRIBE",
+]);
+const OPT_IN_KEYWORDS = new Set(["START", "UNSTOP", "YES"]);
+const HELP_KEYWORDS = new Set(["HELP", "INFO"]);
 
 // Both auto-replies render the studio's own saved template (the same
 // StudioSettings.reminderTemplates JSON field/editor as the reminder
@@ -208,7 +232,7 @@ router.post("/twilio/sms", async (req, res) => {
       action: "sms_opted_out",
       changes: { via: "inbound_keyword", keyword },
     });
-  } else if (START_KEYWORDS.has(keyword) && client.smsOptedOutAt) {
+  } else if (OPT_IN_KEYWORDS.has(keyword) && client.smsOptedOutAt) {
     await prisma.client.update({ where: { id: client.id }, data: { smsOptedOutAt: null } });
     await logAudit({
       studioId,

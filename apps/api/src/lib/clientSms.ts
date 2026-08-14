@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { prisma } from "./prisma";
 import { IntegrationChannel, IntegrationStatus, MessageChannel, MessageDirection } from "../../generated/prisma/enums";
 import { decryptSecret } from "./secrets";
@@ -9,6 +10,39 @@ import { emitInvalidation } from "./realtime/registry";
 type SendSmsMessageResult =
   | { sent: true; messageId: string; providerSid: string }
   | { sent: false; reason: "not_connected" | "send_failed"; error?: string };
+
+let dryRunWarned = false;
+
+// Staging-only escape hatch, DOUBLE-gated and default-secure in both
+// directions:
+//
+//   1. Off unless SMS_DRY_RUN is the exact string "true" -- an unset,
+//      empty, or typo'd value leaves the real send path untouched, so
+//      nothing about production behavior changes by default.
+//   2. Force-disabled whenever NODE_ENV === "production", regardless of
+//      SMS_DRY_RUN. This is the important direction: a dry-run flag that
+//      leaked into the production environment would silently drop real
+//      customer messages while the thread showed them as queued -- far
+//      worse than the problem it solves. In production this function can
+//      only ever return false, so the flag is inert there by construction
+//      rather than by deployment discipline.
+//
+// Its purpose is the A2P staging walkthrough: exercise the genuine send
+// path (integration lookup, credential decrypt, opt-out gating, Message
+// row, realtime broadcast) with the single irreversible step -- handing
+// the message to Twilio -- skipped, so a campaign-pending number can be
+// demonstrated end-to-end without a real SMS ever leaving the account.
+function isSmsDryRun(): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  if (process.env.SMS_DRY_RUN !== "true") return false;
+  if (!dryRunWarned) {
+    dryRunWarned = true;
+    console.warn(
+      "[SMS_DRY_RUN] Outbound SMS is in DRY-RUN mode: messages are recorded in-app but never sent to Twilio.",
+    );
+  }
+  return true;
+}
 
 // Shared by both the real-send success path and the logged-failure path in
 // sendSmsMessage below -- same row shape either way (channel SMS,
@@ -144,11 +178,23 @@ async function sendSmsMessage(params: {
   const toNumber = `+1${toPhone}`;
 
   let result;
-  try {
-    result = await sendSms(credentials, fromNumber, toNumber, body, TWILIO_STATUS_CALLBACK_URL);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Twilio send failed";
-    return failed("send_failed", message);
+  if (isSmsDryRun()) {
+    // Staging-only: everything above this line ran for real (integration
+    // lookup, credential decrypt, opted-out/no-phone gating), so what's
+    // exercised is the real send path minus the one irreversible step --
+    // handing the message to Twilio. The Message row is still written, so
+    // the thread shows exactly what staff would see, and deliveryStatus
+    // "queued" is the literal truth: accepted by the app, never handed to
+    // a carrier. See isSmsDryRun's own comment for why this cannot be on
+    // in production.
+    result = { sid: `DRYRUN${crypto.randomUUID().replace(/-/g, "").slice(0, 26)}`, status: "queued" };
+  } else {
+    try {
+      result = await sendSms(credentials, fromNumber, toNumber, body, TWILIO_STATUS_CALLBACK_URL);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Twilio send failed";
+      return failed("send_failed", message);
+    }
   }
 
   const message = await createOutboundSmsMessage({
