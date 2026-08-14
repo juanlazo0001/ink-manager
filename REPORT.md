@@ -19741,3 +19741,62 @@ were incoming; they had not appeared in Downloads or on the Desktop by the end o
 this pass, checked twice. The PDF carries clearly-marked drop-in slots for both,
 and placing them is a re-render with no other change. Reported as pending rather
 than implied complete.
+
+# Edition 03 final: console exhibits placed, and a blank-exhibit defect caught
+
+Closes the remaining open item. Edition 03 is now 11 pages with all 15 images
+placed and zero placeholder slots. No repo code changed.
+
+## Exhibits A and B
+
+The user supplied both Twilio Console captures. Cropped with Pillow: Exhibit A
+lost only the phone OS status bar, Exhibit B was trimmed to the breadcrumb, tab
+row, heading and the full Opt-out keywords card. Nothing of evidentiary value
+was removed from either.
+
+**Exhibit B independently validated this session's keyword change.** The console
+lists opt-out as Cancel / End / Optout / Quit / Revoke / Stop / Stopall /
+Unsubscribe, opt-in as Start / Unstop / Yes, and help as Help / Info -- matching
+the sets committed in `6fb1b7e` exactly, including the OPTOUT, REVOKE and INFO
+additions. The console's own confirmation strings also match the wording
+published in the policy section verbatim. So the alignment was correct, and is
+now evidenced rather than asserted.
+
+## A blank exhibit shipped in the previous render
+
+Exhibit E3 (the blocked-outbound composer) was **entirely blank** in the PDF
+handed over earlier -- a solid dark rectangle with no content. Caught only when
+a directory listing showed the file at **626 bytes** while every sibling was
+14KB-640KB. The element-targeted screenshot had captured an empty region.
+
+The lesson worth keeping: **verifying that an image file exists and loads is not
+the same as verifying it has content.** The earlier check confirmed 0 broken
+images and 0 aspect skew, and both were true of a blank black rectangle. File
+size relative to siblings is a cheap and effective blank-image signal; actually
+viewing each capture is the reliable one. Every one of the 15 images has now
+been viewed individually.
+
+Re-captured by measuring the refusal element's bounding box first and taking a
+clip-based screenshot at those exact coordinates, rather than trusting an
+element handle. Required a brief re-run: dev API restarted with `SMS_DRY_RUN`
+(verified via its own startup log and the PID owning port 4000, per the
+corrected procedure), Riley Chen opted out, the refusal captured, then opted
+back in. All sends in that pass carried `DRYRUN` provider SIDs; no real SMS.
+
+## Two things flagged to the user, not silently changed
+
+- The Twilio account balance ($18.91) is legible in Exhibit A's header. Left in
+  place -- cropping it would mean cutting the account-name and Active-status row
+  that gives the exhibit its context, and Twilio can see the balance regardless.
+- Twilio's Advanced Opt-Out sends its own HELP reply, and this app additionally
+  sends the studio's saved help template, so a client texting HELP may receive
+  two messages. Not a defect introduced here and not in scope, but worth a
+  decision before campaign approval.
+
+## Final state
+
+`Black Hive Ink and Arts — SMS Consent Proof Package (Edition 03).pdf`, 11 pages,
+in `C:\Users\User\Documents\Twilio-Proof-Package-BlackHiveInk\`. Editions 01 and
+02 preserved in `99 Archive\`. Zero dev servers or background shells left
+running; working tree clean but for the two untracked files that predate this
+session.
