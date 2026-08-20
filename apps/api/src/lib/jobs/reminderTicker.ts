@@ -30,17 +30,30 @@ interface StudioCounts {
   sent: number;
   skippedNotConnected: number;
   skippedOptedOut: number;
+  // A2P compliance: counted separately from skippedOptedOut so a studio's
+  // reminder log distinguishes "they asked us to stop" from "they never
+  // opted in" -- different follow-ups, and only the second is fixable by
+  // asking the client to opt in.
+  skippedNoConsent: number;
   skippedNoPhone: number;
   skippedSendFailed: number;
 }
 
 function emptyCounts(): StudioCounts {
-  return { sent: 0, skippedNotConnected: 0, skippedOptedOut: 0, skippedNoPhone: 0, skippedSendFailed: 0 };
+  return {
+    sent: 0,
+    skippedNotConnected: 0,
+    skippedOptedOut: 0,
+    skippedNoConsent: 0,
+    skippedNoPhone: 0,
+    skippedSendFailed: 0,
+  };
 }
 
 function recordSkip(counts: StudioCounts, reason: string): void {
   if (reason === "not_connected") counts.skippedNotConnected += 1;
   else if (reason === "opted_out") counts.skippedOptedOut += 1;
+  else if (reason === "no_consent") counts.skippedNoConsent += 1;
   else if (reason === "no_phone") counts.skippedNoPhone += 1;
   else counts.skippedSendFailed += 1;
 }

@@ -40,6 +40,8 @@ interface GiftCard {
     email: string | null
     phones: { id: string }[]
     emails: { id: string }[]
+    smsConsentGivenAt: string | null
+    smsOptedOutAt: string | null
   }
   appointment: {
     id: string
@@ -450,6 +452,8 @@ export default function GiftCardDetail() {
                         label="Send Receipt"
                         hasPhone={card.client.phones.length > 0}
                         hasEmail={card.client.emails.length > 0}
+                        smsConsentGivenAt={card.client.smsConsentGivenAt}
+                        smsOptedOutAt={card.client.smsOptedOutAt}
                         sending={sendingReceipt}
                         onSend={(channel) => handleSendReceipt(channel)}
                       />

@@ -1,6 +1,10 @@
 export type ClientSendResult =
   | { sent: true }
-  | { sent: false; reason: 'not_connected' | 'no_phone' | 'opted_out' | 'no_email' | 'send_failed'; error?: string }
+  | {
+      sent: false
+      reason: 'not_connected' | 'no_phone' | 'no_consent' | 'opted_out' | 'no_email' | 'send_failed'
+      error?: string
+    }
 
 // Shared across every auto-send-on-generate flow (estimate, deposit form,
 // waiver, consent form, prefilled intake link) -- same best-effort send
@@ -21,6 +25,8 @@ export function describeSendResult(
       return `${thing} generated, but SMS isn't connected for this studio — share the link below manually.`
     case 'no_phone':
       return `${thing} generated, but this client has no phone on file — share the link below manually.`
+    case 'no_consent':
+      return `${thing} generated, but this client has no SMS consent on file — share the link below manually, or ask them to text START to opt in.`
     case 'opted_out':
       return `${thing} generated, but this client has opted out of texts — share the link below manually.`
     case 'no_email':

@@ -320,14 +320,15 @@ export const es: typeof en = {
     noPreference: 'Sin preferencia',
     referenceImagesHint: 'Fotos o diseños que muestren el estilo que buscas.',
     placementPhotoHint: 'Una foto del área donde quieres el tatuaje.',
-    smsConsentDefault:
-      'Al proporcionar tu número de teléfono, aceptas recibir mensajes SMS sobre tu solicitud y cita. La frecuencia de los mensajes varía. Pueden aplicar tarifas de mensajes y datos. Responde STOP para cancelar o START para volver a suscribirte.',
+    phoneHelpDefault:
+      'Opcional — lo usamos para comunicarnos contigo sobre tu solicitud. Para recibir actualizaciones por mensaje de texto, marca la casilla de consentimiento a continuación.',
+    phoneHelpDefaultRequired:
+      'Lo usamos para comunicarnos contigo sobre tu solicitud. Para recibir actualizaciones por mensaje de texto, marca la casilla de consentimiento a continuación.',
     seeOurPrivacyAndTerms: 'Consulta nuestra',
     smsOptInBody:
       'Acepto recibir mensajes de texto de {{studioName}} sobre mi cita, incluyendo recordatorios, seguimientos de presupuestos y actualizaciones. La frecuencia de los mensajes varía. Pueden aplicar tarifas de mensajes y datos. Responde STOP para cancelar o HELP para obtener ayuda. Responde START para volver a suscribirte en cualquier momento.',
     viewOurPrivacyAndTerms: 'Consulta nuestra',
     smsOptInDefaultStudioName: 'el estudio',
-    pleaseAgreeToSms: 'Por favor, acepta recibir mensajes de texto para enviar este formulario.',
     submitting: 'Enviando…',
     submitInquiry: 'Enviar solicitud',
     pleaseFillRequiredFields: 'Por favor, completa todos los campos requeridos.',

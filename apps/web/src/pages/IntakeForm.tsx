@@ -108,8 +108,15 @@ function IntakeFormContent() {
   // field list -- always rendered, fixed position right before submit,
   // never reorderable/disableable (a legal requirement, not a business
   // preference a studio can turn off).
+  //
+  // A2P compliance fix (Twilio review): this box is GENUINELY optional --
+  // it is never a submit gate, not even when a phone number is entered.
+  // Forced consent is exactly what a carrier reviewer rejects. Leaving it
+  // unchecked submits normally and simply records no consent on the
+  // client (Client.smsConsentGivenAt stays null), which the send path and
+  // the send-channel picker both treat as "SMS unavailable" -- see
+  // lib/clientSms.ts and components/SendChannelButton.tsx.
   const [smsConsent, setSmsConsent] = useState(false)
-  const [smsConsentError, setSmsConsentError] = useState(false)
 
   const [studioCheck, setStudioCheck] = useState<StudioCheck>('loading')
   const [studioName, setStudioName] = useState('')
@@ -279,7 +286,6 @@ function IntakeFormContent() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSubmitError(null)
-    setSmsConsentError(false)
 
     const missingSystem: string[] = []
     if (isRequired('name') && (!firstName || !lastName)) missingSystem.push('name')
@@ -331,11 +337,6 @@ function IntakeFormContent() {
     })
     if (missingCustomField) {
       setSubmitError(t('intake.pleaseAnswer', { fieldLabel: missingCustomField.label }))
-      return
-    }
-
-    if (!smsConsent) {
-      setSmsConsentError(true)
       return
     }
 
@@ -441,7 +442,7 @@ function IntakeFormContent() {
             {/* Links to Ink Manager's own platform Privacy Policy/Terms
                 (moved to the marketing site), not the per-Studio
                 /privacy/:studioSlug page -- that's a different,
-                separately-authored document this consent copy
+                separately-authored document this helper copy
                 deliberately doesn't link to. Points at the bare
                 inkmanager.app domain, not www.inkmanager.app: as of this
                 writing www isn't yet attached as a custom domain on the
@@ -451,7 +452,8 @@ function IntakeFormContent() {
                 attached; switch this back to www at that point for the
                 canonical hostname. */}
             <p className="mt-1 text-[11px] leading-snug text-fg-muted">
-              {field.helpText || t('intake.smsConsentDefault')}{' '}
+              {field.helpText ||
+                (field.required ? t('intake.phoneHelpDefaultRequired') : t('intake.phoneHelpDefault'))}{' '}
               {t('intake.seeOurPrivacyAndTerms')}{' '}
               <a
                 href="https://inkmanager.app/privacy"
@@ -870,10 +872,7 @@ function IntakeFormContent() {
                   <input
                     type="checkbox"
                     checked={smsConsent}
-                    onChange={(e) => {
-                      setSmsConsent(e.target.checked)
-                      if (e.target.checked) setSmsConsentError(false)
-                    }}
+                    onChange={(e) => setSmsConsent(e.target.checked)}
                     className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
                   />
                   <span>
@@ -899,9 +898,6 @@ function IntakeFormContent() {
                     .
                   </span>
                 </label>
-                {smsConsentError && (
-                  <p className="mt-1 text-xs text-danger">{t('intake.pleaseAgreeToSms')}</p>
-                )}
               </div>
 
               {submitError && (

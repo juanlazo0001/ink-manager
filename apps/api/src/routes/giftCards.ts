@@ -47,6 +47,12 @@ const GIFT_CARD_DETAIL_INCLUDE = {
       lastName: true,
       phone: true,
       email: true,
+      // A2P compliance: the send-channel picker (SendChannelButton) needs
+      // both to decide whether SMS is even offerable for this client, and
+      // to name the reason when it isn't. Consent is genuinely optional at
+      // intake, so "phone on file, no consent" is an ordinary state.
+      smsConsentGivenAt: true,
+      smsOptedOutAt: true,
       phones: { select: { id: true } },
       emails: { select: { id: true } },
     },
@@ -440,6 +446,7 @@ router.get("/:id", async (req, res) => {
 const TEXT_RECEIPT_ERROR_MESSAGES: Record<string, string> = {
   not_connected: "This studio's SMS integration isn't connected -- connect it in Settings to send text receipts.",
   no_phone: "This client has no phone number on file.",
+  no_consent: "This client has no SMS consent on file -- they can opt in by texting START.",
   opted_out: "This client has opted out of text messages.",
   no_email: "This client has no email address on file.",
   send_failed: "The receipt failed to send -- try again in a moment.",

@@ -90,6 +90,8 @@ interface Appointment {
     email: string | null
     phones: { id: string }[]
     emails: { id: string }[]
+    smsConsentGivenAt: string | null
+    smsOptedOutAt: string | null
   }
   // Default true elsewhere -- matches every studio's always-on behavior
   // before this flag existed. Not defaulted here since `appointment` is
@@ -1153,6 +1155,8 @@ export default function AppointmentDetail() {
                         label="Create & Send Waiver"
                         hasPhone={appointment.client.phones.length > 0}
                         hasEmail={appointment.client.emails.length > 0}
+                        smsConsentGivenAt={appointment.client.smsConsentGivenAt}
+                        smsOptedOutAt={appointment.client.smsOptedOutAt}
                         sending={creatingWaiver}
                         sendingLabel="Creating…"
                         onSend={(channel) => handleCreateWaiver(channel)}

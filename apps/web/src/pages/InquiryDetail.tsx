@@ -143,6 +143,8 @@ interface Inquiry {
     phone: string | null
     phones: { id: string }[]
     emails: { id: string }[]
+    smsConsentGivenAt: string | null
+    smsOptedOutAt: string | null
   }
   preferredArtist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } } | null
   assignedArtist:
@@ -2598,6 +2600,8 @@ export default function InquiryDetail() {
                           label={inquiry.estimateSentAt ? 'Generate & Resend Estimate' : 'Generate & Send Estimate'}
                           hasPhone={inquiry.client.phones.length > 0}
                           hasEmail={inquiry.client.emails.length > 0}
+                          smsConsentGivenAt={inquiry.client.smsConsentGivenAt}
+                          smsOptedOutAt={inquiry.client.smsOptedOutAt}
                           sending={sendingEstimate}
                           onSend={(channel) => handleSendEstimate(channel)}
                         />
@@ -4208,6 +4212,8 @@ export default function InquiryDetail() {
                         label="Revise & Send for Approval"
                         hasPhone={inquiry.client.phones.length > 0}
                         hasEmail={inquiry.client.emails.length > 0}
+                        smsConsentGivenAt={inquiry.client.smsConsentGivenAt}
+                        smsOptedOutAt={inquiry.client.smsOptedOutAt}
                         sending={revisingEstimate}
                         onSend={(channel) => handleReviseEstimate(channel)}
                         className="flex flex-1 items-center justify-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"

@@ -364,14 +364,21 @@ export const en = {
     noPreference: 'No preference',
     referenceImagesHint: 'Photos or designs that show the style you are going for.',
     placementPhotoHint: 'A photo of the area where you want the tattoo.',
-    smsConsentDefault:
-      'By providing your phone number, you consent to receive SMS messages about your inquiry and appointment. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or START to rejoin.',
+    // A2P compliance (Twilio review): this helper text must NOT imply that
+    // providing a phone number is itself consent to be texted -- consent
+    // comes only from the checkbox below, which is genuinely optional. Two
+    // variants because a studio can configure the phone field as required,
+    // and leading with "Optional" next to a required field would contradict
+    // the asterisk; everything after that first word is identical.
+    phoneHelpDefault:
+      'Optional — used to contact you about your inquiry. Text-message updates require the consent box below.',
+    phoneHelpDefaultRequired:
+      'Used to contact you about your inquiry. Text-message updates require the consent box below.',
     seeOurPrivacyAndTerms: 'See our',
     smsOptInBody:
       'I agree to receive text messages from {{studioName}} regarding my appointment, including reminders, estimate follow-ups, and updates. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help. Reply START to rejoin at any time.',
     viewOurPrivacyAndTerms: 'View our',
     smsOptInDefaultStudioName: 'the studio',
-    pleaseAgreeToSms: 'Please agree to receive text messages to submit this form.',
     submitting: 'Submitting…',
     submitInquiry: 'Submit inquiry',
     pleaseFillRequiredFields: 'Please fill out all required fields.',

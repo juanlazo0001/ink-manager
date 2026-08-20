@@ -92,7 +92,8 @@ router.post("/", optionalAuth, async (req, res) => {
   // middleware to hang requirePermission off of (it's dual-purpose: public
   // intake form + authenticated staff walk-in log), so the permission check
   // is inline via hasPermission() directly, same public-only-carve-out
-  // reasoning as the other in-route checks in this handler (smsConsent, etc.).
+  // reasoning as the other in-route checks in this handler (custom-field
+  // required-ness, etc.).
   if (isStaffRequest && !(await hasPermission(req.user!.studioId, req.user!.role, "inquiries.create"))) {
     return res.status(403).json({ error: "Forbidden" });
   }
@@ -180,17 +181,19 @@ router.post("/", optionalAuth, async (req, res) => {
     return res.status(400).json({ error: `Missing required field(s): ${missingLabels.join(", ")}` });
   }
 
-  // A2P 10DLC compliance: the PUBLIC intake form's consent checkbox is
-  // required to submit at all (unchecked-by-default, enforced here too, not
-  // just via a disabled button) -- staff logging a walk-in/phone inquiry
-  // through this same route has no such checkbox in its UI and isn't the
-  // client affirmatively opting in themselves, so this only applies to the
-  // public path. Deliberately kept OUTSIDE the configurable field list --
-  // this is a legal requirement, not a business preference a studio can
-  // reorder or disable.
-  if (!isStaffRequest && body.smsConsent !== true) {
-    return res.status(400).json({ error: "SMS consent is required to submit this form" });
-  }
+  // A2P 10DLC compliance (Twilio review fix): the PUBLIC intake form's
+  // consent checkbox is unchecked-by-default and GENUINELY OPTIONAL -- it
+  // is deliberately NOT a submit gate here, and must never become one
+  // again. Forced consent (a submission that cannot go through without the
+  // box ticked) is precisely what a carrier reviewer rejects; the earlier
+  // version of this route returned 400 on an unticked box, which is the
+  // defect this replaces. An unticked box submits normally and simply
+  // records no consent (smsConsentGivenAt stays null), which every send
+  // path then treats exactly like an opt-out -- see lib/clientSms.ts.
+  //
+  // The checkbox is still kept OUTSIDE the configurable field list on the
+  // form itself (always rendered, fixed position, never reorderable or
+  // disableable) -- what changed is that it no longer blocks submission.
 
   const firstName = isShown("name") && typeof body.firstName === "string" ? body.firstName.trim() : "";
   const lastName = isShown("name") && typeof body.lastName === "string" ? body.lastName.trim() : "";
@@ -353,9 +356,8 @@ router.post("/", optionalAuth, async (req, res) => {
   // about what a question says/requires. Required-ness for CUSTOM fields
   // is only enforced on the PUBLIC path: StaffInquiryForm (a walk-in/phone
   // call logged on the client's behalf) has no UI for these questions at
-  // all -- same public-only carve-out already applied to smsConsent above,
-  // for the same reason (staff can't be blocked by a question they were
-  // never shown and may not have thought to ask over the phone).
+  // all -- staff can't be blocked by a question they were never shown and
+  // may not have thought to ask over the phone.
   const effectiveFields = isStaffRequest
     ? liveFields.map((f) => (f.fieldKind === IntakeFieldKind.CUSTOM ? { ...f, required: false } : f))
     : liveFields;
@@ -582,6 +584,12 @@ const INQUIRY_INCLUDE = {
       lastName: true,
       email: true,
       phone: true,
+      // A2P compliance: the send-channel picker (SendChannelButton) needs
+      // both to decide whether SMS is even offerable for this client, and
+      // to name the reason when it isn't. Consent is genuinely optional at
+      // intake, so "phone on file, no consent" is an ordinary state.
+      smsConsentGivenAt: true,
+      smsOptedOutAt: true,
       phones: { select: { id: true } },
       emails: { select: { id: true } },
     },

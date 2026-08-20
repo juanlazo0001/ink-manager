@@ -850,6 +850,7 @@ router.post("/:id/messages", async (req, res) => {
         const errorMessages: Record<string, string> = {
           not_connected: "SMS is not connected for this studio",
           no_phone: "This client has no phone number on file",
+          no_consent: "This client has no SMS consent on file and cannot be texted",
           opted_out: "This client has opted out of SMS and cannot be texted",
           send_failed: result.error ?? "Failed to send the SMS",
         };

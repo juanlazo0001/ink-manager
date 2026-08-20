@@ -33,6 +33,21 @@ interface SendChannelButtonProps {
   // convenience and reintroducing the same bug at a new call site.
   hasPhone: boolean
   hasEmail: boolean
+  // A2P compliance: a phone number is NOT permission to text it. Consent
+  // is genuinely optional on the public intake form, so "phone on file, no
+  // consent" is an ordinary state -- and it has to look exactly like an
+  // opt-out here: SMS is not offered at all, and the button says why
+  // rather than leaving a channel silently missing. Both are the raw
+  // nullable timestamps straight off the client record (ISO strings, or
+  // Date-ish nulls), not pre-computed booleans, so a caller can't
+  // accidentally invert the sense of the check.
+  //
+  // Optional for the one caller that legitimately has no client record in
+  // hand; omitting them means "not known", which errs toward showing SMS
+  // rather than hiding a channel a studio expects -- the server-side gate
+  // in lib/clientSms.ts is the real enforcement either way.
+  smsConsentGivenAt?: string | null
+  smsOptedOutAt?: string | null
   sending: boolean
   sendingLabel?: string
   onSend: (channel: SendChannel) => void
@@ -61,6 +76,8 @@ export default function SendChannelButton({
   label,
   hasPhone,
   hasEmail,
+  smsConsentGivenAt,
+  smsOptedOutAt,
   sending,
   sendingLabel = 'Sending…',
   onSend,
@@ -75,7 +92,20 @@ export default function SendChannelButton({
     staleTime: 60_000,
   })
 
-  const smsAvailable = hasPhone && (status?.sms ?? true)
+  // Ordered most-specific first: a client with no phone at all is told
+  // that, not "no consent". `undefined` (caller didn't pass the field)
+  // deliberately does NOT block -- only an explicit null does.
+  const smsBlockedReason: string | null = !hasPhone
+    ? 'no phone number on file'
+    : smsConsentGivenAt === null
+      ? 'no SMS consent on file'
+      : smsOptedOutAt
+        ? 'opted out of SMS'
+        : !(status?.sms ?? true)
+          ? 'no SMS integration connected for this studio'
+          : null
+
+  const smsAvailable = smsBlockedReason === null
   const emailAvailable = hasEmail
 
   const baseClass =
@@ -84,7 +114,16 @@ export default function SendChannelButton({
   const labelClass = 'hidden whitespace-nowrap text-sm font-semibold md:inline'
 
   if (!smsAvailable && !emailAvailable) {
-    const reason = !hasPhone && !hasEmail ? 'no phone or email on file' : 'no available send channel'
+    // Always names the actual blocker rather than a generic "no available
+    // send channel" -- staff seeing "no SMS consent on file" know it's
+    // fixable (the client can text START, or give consent through any
+    // other opt-in path); a silently missing option teaches them nothing.
+    const reason =
+      !hasPhone && !hasEmail
+        ? 'no phone or email on file'
+        : !hasEmail && smsBlockedReason
+          ? `${smsBlockedReason}, and no email on file`
+          : (smsBlockedReason ?? 'no available send channel')
     const title = `Can't send -- this client has ${reason}.`
     return (
       <button type="button" disabled aria-label={label} title={title} className={baseClass}>
@@ -111,13 +150,17 @@ export default function SendChannelButton({
   }
 
   if (emailAvailable && !smsAvailable) {
+    // Email-only, with SMS explained rather than just absent.
+    const title = smsBlockedReason
+      ? `${label} via Email — SMS unavailable: this client has ${smsBlockedReason}.`
+      : `${label} via Email`
     return (
       <button
         type="button"
         onClick={() => onSend('EMAIL')}
         disabled={sending}
         aria-label={`${label} via Email`}
-        title={`${label} via Email`}
+        title={title}
         className={baseClass}
       >
         <SendIcon className="h-4 w-4" />

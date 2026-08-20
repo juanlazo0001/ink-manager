@@ -412,6 +412,12 @@ const APPOINTMENT_DETAIL_INCLUDE = {
       referralCode: true,
       phone: true,
       email: true,
+      // A2P compliance: the send-channel picker (SendChannelButton) needs
+      // both to decide whether SMS is even offerable for this client, and
+      // to name the reason when it isn't. Consent is genuinely optional at
+      // intake, so "phone on file, no consent" is an ordinary state.
+      smsConsentGivenAt: true,
+      smsOptedOutAt: true,
       phones: { select: { id: true } },
       emails: { select: { id: true } },
     },

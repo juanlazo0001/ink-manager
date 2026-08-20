@@ -223,7 +223,12 @@ router.post("/twilio/sms", async (req, res) => {
   // it's not swallowed.
   const keyword = messageBody.trim().toUpperCase();
   if (STOP_KEYWORDS.has(keyword) && !client.smsOptedOutAt) {
-    await prisma.client.update({ where: { id: client.id }, data: { smsOptedOutAt: new Date() } });
+    // Reassigned (not just awaited) so the consent-capture step further
+    // down sees this request's own writes -- it guards on smsOptedOutAt /
+    // smsConsentGivenAt, and a stale in-memory client would make it
+    // re-consent someone who just texted STOP, or stamp a second timestamp
+    // over the one the opt-in branch set moments earlier.
+    client = await prisma.client.update({ where: { id: client.id }, data: { smsOptedOutAt: new Date() } });
     await logAudit({
       studioId,
       actorUserId: null,
@@ -232,19 +237,71 @@ router.post("/twilio/sms", async (req, res) => {
       action: "sms_opted_out",
       changes: { via: "inbound_keyword", keyword },
     });
-  } else if (OPT_IN_KEYWORDS.has(keyword) && client.smsOptedOutAt) {
-    await prisma.client.update({ where: { id: client.id }, data: { smsOptedOutAt: null } });
+  } else if (OPT_IN_KEYWORDS.has(keyword) && (client.smsOptedOutAt || !client.smsConsentGivenAt)) {
+    // A2P compliance fix: an inbound opt-in keyword is now ALSO the path
+    // back for a client who simply never consented in the first place --
+    // consent on the public intake form is genuinely optional
+    // (routes/inquiries.ts), so "has a phone, no consent on file" is an
+    // ordinary state, and texting START is the client affirmatively opting
+    // in. Hence the widened condition above: it previously fired only for
+    // someone already opted OUT, which would have left a never-consented
+    // client with no way in. Consent is only ever SET here, never
+    // overwritten -- a returning client keeps their original timestamp,
+    // the same rule the intake route follows.
+    const consentWasOnFile = client.smsConsentGivenAt !== null;
+    client = await prisma.client.update({
+      where: { id: client.id },
+      data: {
+        smsOptedOutAt: null,
+        ...(client.smsConsentGivenAt
+          ? {}
+          : { smsConsentGivenAt: new Date(), smsConsentSource: "inbound_keyword" }),
+      },
+    });
     await logAudit({
       studioId,
       actorUserId: null,
       entityType: "Client",
       entityId: client.id,
       action: "sms_opted_in",
-      changes: { via: "inbound_keyword", keyword },
+      changes: {
+        via: "inbound_keyword",
+        keyword,
+        ...(consentWasOnFile ? {} : { consentRecorded: true }),
+      },
     });
     await sendOptInConfirmation(studioId, client.id);
   } else if (HELP_KEYWORDS.has(keyword)) {
     await sendHelpResponse(studioId, client.id);
+  }
+
+  // A2P compliance fix, second consent path: a client who TEXTS THIS STUDIO
+  // FIRST has opted in to a conversational reply -- that's the CTIA/A2P
+  // consumer-initiated case, and it's how this app already behaved in
+  // practice before consent was enforced on the send path. Now that
+  // Client.smsConsentGivenAt is a hard block in lib/clientSms.ts, that
+  // implicit behavior has to become an explicit, timestamped record, or
+  // staff would be unable to reply to an inbound message from anyone who
+  // skipped the (now optional) intake checkbox -- including the "Unknown
+  // (new SMS contact)" client this handler creates from an unrecognized
+  // number just above.
+  //
+  // Guarded on smsOptedOutAt so a STOP (handled above, sets it in this same
+  // request) or an already-opted-out client texting HELP never silently
+  // re-consents. Only ever SET, never overwritten, same as everywhere else.
+  if (!client.smsConsentGivenAt && !client.smsOptedOutAt && !STOP_KEYWORDS.has(keyword)) {
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { smsConsentGivenAt: new Date(), smsConsentSource: "inbound_sms" },
+    });
+    await logAudit({
+      studioId,
+      actorUserId: null,
+      entityType: "Client",
+      entityId: client.id,
+      action: "sms_opted_in",
+      changes: { via: "inbound_sms", consentRecorded: true },
+    });
   }
 
   const { conversation } = await getOrCreateClientConversation(studioId, client.id, null);

@@ -79,7 +79,14 @@
 // and its disclosure language (the actual thing a carrier reviewer
 // checks for) are fixed copy in IntakeForm.tsx, not studio-configurable;
 // reproducing the full dynamic field list here would be a second render
-// path for content a crawler doesn't need. index.html uses
+// path for content a crawler doesn't need. The phone field's label and
+// helper line ARE mirrored, for the same reason the checkbox is: a carrier
+// reviewer fetching this URL with no JS must see that a phone number is
+// not itself consent -- the implied-consent sentence that used to sit
+// there is exactly what the review flagged. This snapshot mirrors the real
+// form and adds nothing of its own; both the helper line and the checkbox
+// disclosure are byte-identical to IntakeForm.tsx's en.ts strings, and
+// must stay that way. index.html uses
 // `createRoot(...).render(...)` (not hydrateRoot), so this is safe:
 // React fully replaces #root's contents on mount rather than trying to
 // reconcile against this server-rendered markup, no hydration-mismatch
@@ -361,7 +368,9 @@ async function renderInquirySsr(req, studioSlug, formSlug) {
         <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:1.75rem;margin:0 0 0.5rem">${safeName} — Tattoo Inquiry</h1>
         <p style="color:#c7bea9;font-size:0.9375rem">Tell us about the tattoo you have in mind.</p>
         <p style="color:#c7bea9;font-size:0.8125rem">You must be 18 years or older to receive a tattoo. Submitting this form does not confirm an appointment — it starts a conversation with the studio.</p>
-        <label style="display:flex;gap:0.5rem;align-items:flex-start;color:#c7bea9;font-size:0.875rem;margin-top:1.5rem">
+        <p style="color:#f2ece0;font-size:0.8125rem;font-weight:600;margin:1.5rem 0 0.25rem">Phone</p>
+        <p style="color:#c7bea9;font-size:0.8125rem;margin:0">Optional — used to contact you about your inquiry. Text-message updates require the consent box below.</p>
+        <label style="display:flex;gap:0.5rem;align-items:flex-start;color:#c7bea9;font-size:0.875rem;margin-top:0.75rem">
           <input type="checkbox" disabled />
           <span>I agree to receive text messages from ${safeName} regarding my appointment, including reminders, estimate follow-ups, and updates. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help. Reply START to rejoin at any time. View our
             <a href="https://inkmanager.app/privacy" style="color:#c99a5b">Privacy Policy</a> and

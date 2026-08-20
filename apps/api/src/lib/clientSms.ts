@@ -220,18 +220,33 @@ async function sendSmsMessage(params: {
 
 export type SendClientSmsResult =
   | { sent: true; messageId: string; providerSid: string }
-  | { sent: false; reason: "not_connected" | "no_phone" | "opted_out" | "send_failed"; error?: string };
+  | { sent: false; reason: "not_connected" | "no_phone" | "no_consent" | "opted_out" | "send_failed"; error?: string };
 
-// Client-facing wrapper: refuses an opted-out or phoneless client before
-// ever reaching Twilio, regardless of connection status or what the UI
-// happens to show -- this is the actual enforcement point.
+// Client-facing wrapper: refuses a phoneless, non-consenting or opted-out
+// client before ever reaching Twilio, regardless of connection status or
+// what the UI happens to show -- this is the actual enforcement point.
+//
+// A2P 10DLC (Twilio review fix): "no consent on file" and "opted out" are
+// the SAME refusal here by design. Consent on the public intake form is
+// genuinely optional (routes/inquiries.ts), so a client can perfectly well
+// have a phone number and no consent -- and a phone number alone has never
+// been consent to text. Client.smsConsentGivenAt being null is therefore a
+// hard block, structurally, not a UI convention: every send path in this
+// app funnels through here, so no caller can text a non-consenting client
+// even by mistake. Consent stays obtainable afterwards through the normal
+// opt-in paths (an inbound START/opt-in keyword, routes/webhooks.ts).
 //
 // bypassOptOutCheck exists for exactly one caller: the inbound HELP-keyword
 // auto-reply (routes/webhooks.ts). CTIA/A2P convention (and the task that
 // added it) requires HELP to work regardless of current opt-in/opt-out
 // status -- it's basic customer service, not a marketing message. Every
 // other caller (reminders, composer, opt-in confirmation) leaves this
-// false/omitted and gets the normal enforcement.
+// false/omitted and gets the normal enforcement. It covers the consent
+// check for the same reason: someone who texts HELP to this number has
+// initiated the exchange themselves and must get an answer, whether or not
+// they ever ticked a box. Note the opt-in confirmation reply itself is
+// sent AFTER webhooks.ts records the opt-in, so it has real consent on
+// file by the time it reaches this check and needs no bypass.
 export async function sendClientSms(params: {
   studioId: string;
   clientId: string;
@@ -241,7 +256,7 @@ export async function sendClientSms(params: {
   bypassOptOutCheck?: boolean;
   replyToId?: string;
   // See sendSmsMessage's own comment on this flag -- passed through
-  // unchanged. Deliberately NOT applied to the no_phone/opted_out branches
+  // unchanged. Deliberately NOT applied to the no_phone/no_consent/opted_out branches
   // right below: those are pre-flight checks on the recipient, not a
   // channel attempt (nothing was ever dialed), so there's no "attempt" to
   // log there the way there is for not_connected/send_failed.
@@ -256,6 +271,9 @@ export async function sendClientSms(params: {
   });
   if (!client) {
     return { sent: false, reason: "no_phone" };
+  }
+  if (!client.smsConsentGivenAt && !bypassOptOutCheck) {
+    return { sent: false, reason: "no_consent" };
   }
   if (client.smsOptedOutAt && !bypassOptOutCheck) {
     return { sent: false, reason: "opted_out" };

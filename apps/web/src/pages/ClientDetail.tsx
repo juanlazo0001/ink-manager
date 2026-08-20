@@ -1858,6 +1858,8 @@ export default function ClientDetail() {
                         label="Send Inquiry"
                         hasPhone={client.phones.length > 0}
                         hasEmail={client.emails.length > 0}
+                        smsConsentGivenAt={client.smsConsentGivenAt}
+                        smsOptedOutAt={client.smsOptedOutAt}
                         sending={copyingPrefillLink}
                         onSend={(channel) => handleCopyPrefillLink(channel)}
                       />
@@ -2118,6 +2120,8 @@ export default function ClientDetail() {
                         label="Send Deposit Form"
                         hasPhone={client.phones.length > 0}
                         hasEmail={client.emails.length > 0}
+                        smsConsentGivenAt={client.smsConsentGivenAt}
+                        smsOptedOutAt={client.smsOptedOutAt}
                         sending={sendingDepositId !== null}
                         onSend={(channel) => handleSendDepositForm(eligibleDepositInquiries[0].id, channel)}
                       />
@@ -2333,6 +2337,8 @@ export default function ClientDetail() {
                         label="Send Waiver"
                         hasPhone={client.phones.length > 0}
                         hasEmail={client.emails.length > 0}
+                        smsConsentGivenAt={client.smsConsentGivenAt}
+                        smsOptedOutAt={client.smsOptedOutAt}
                         sending={sendingWaiverId !== null}
                         onSend={(channel) => handleSendWaiver(eligibleWaiverAppointments[0].id, channel)}
                       />
