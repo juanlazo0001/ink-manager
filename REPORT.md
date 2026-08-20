@@ -19800,3 +19800,184 @@ in `C:\Users\User\Documents\Twilio-Proof-Package-BlackHiveInk\`. Editions 01 and
 02 preserved in `99 Archive\`. Zero dev servers or background shells left
 running; working tree clean but for the two untracked files that predate this
 session.
+
+# A2P compliance: making SMS consent genuinely optional (Twilio review follow-up)
+
+Twilio reviewed the live intake form and flagged forced consent. The investigation
+below confirms the flag, then fixes it in a way that keeps "no consent" meaningful
+rather than merely cosmetic.
+
+## Investigation: the checkbox was required unconditionally
+
+The task asked whether the box was required always, or only when a phone number was
+entered. **Unconditionally, on both tiers, with no reference to the phone field at
+all:**
+
+- `apps/web/src/pages/IntakeForm.tsx` ran `if (!smsConsent) { setSmsConsentError(true);
+  return }` as the last check in `handleSubmit`, after every other validation. It was
+  positioned nowhere near the phone field's own validation and read no phone state.
+- `apps/api/src/routes/inquiries.ts` enforced the same thing server-side:
+  `if (!isStaffRequest && body.smsConsent !== true) return res.status(400)`, with the
+  message "SMS consent is required to submit this form".
+
+So a client who left the phone field blank entirely still could not submit without
+agreeing to receive text messages. That is the strongest form of the defect Twilio
+described, and the flag was correct. Both checks were removed.
+
+Note the API check was public-path-only (`!isStaffRequest`); staff logging a walk-in
+through the same route were never blocked. That carve-out is now moot and its
+downstream references in that file's comments were corrected.
+
+## The other half: no consent = no SMS, structurally
+
+Making consent optional is only safe if declining it actually means something, so the
+enforcement landed in the same change:
+
+- **`apps/api/src/lib/clientSms.ts`** now refuses any client whose
+  `smsConsentGivenAt` is null, before the phone is resolved and before Twilio is
+  reached, returning a new `no_consent` reason. Every client-facing send path in the
+  app funnels through `sendClientSms`, so this is structural -- no caller can text a
+  non-consenting client, including by mistake. The reason is deliberately kept
+  **distinct** from `opted_out` everywhere it surfaces (composer 400, gift-card
+  receipt, `describeSendResult`, and a new `skippedNoConsent` counter in
+  `reminderTicker`) so staff and the reminder log can tell "never opted in" from
+  "asked us to stop" -- different follow-ups, and only the first is fixable by asking.
+- `bypassOptOutCheck` (the inbound HELP auto-reply, per CTIA convention) covers the
+  consent check too: someone who texts HELP initiated the exchange and must get an
+  answer whether or not they ever ticked a box.
+
+**On "treats a no-consent phone exactly like an opted-out one".** The two surfaces
+handle opt-out differently today, and the fix matches each one's existing behavior
+rather than inventing a third:
+
+- `SendChannelButton` (the shared send-channel picker) previously offered SMS to
+  opted-out clients and let the server refuse. It now blocks both states up front:
+  SMS is not offered, and the button title names the reason ("no SMS consent on
+  file" / "opted out of SMS"), so staff see an explanation rather than a silently
+  missing option. Email is untouched in every case. Applied at all seven call sites;
+  the four API routes behind them now select the two consent timestamps.
+- The Conversations composer offers SMS and refuses on send with a reason -- which is
+  exactly what Edition 03's `walkthrough-2b-outbound-blocked.png` exhibit shows for
+  opt-out. No-consent now behaves identically there: "This client has no SMS consent
+  on file and cannot be texted." Deliberately left as parity with opt-out rather than
+  widened into a new pre-gate.
+
+## Two ways back in, both timestamped
+
+Consent is genuinely optional, so "phone on file, no consent" is now an ordinary
+state that needs a real path out of it. `routes/webhooks.ts` gained both:
+
+1. The inbound opt-in keyword branch previously fired **only** for a client already
+   opted out, which would have left a never-consented client with no way in. Its
+   condition is widened, and it records `smsConsentGivenAt` with source
+   `inbound_keyword` when none is on file.
+2. A client who **texts the studio first** is recorded as consenting
+   (`inbound_sms`) -- the CTIA consumer-initiated case, and how the app already
+   behaved in practice before consent became a hard block. Without this, staff could
+   not reply to an inbound message from anyone who skipped the now-optional checkbox,
+   including the "Unknown (new SMS contact)" client that handler creates from an
+   unrecognized number.
+
+Both are guarded on `smsOptedOutAt` so a STOP (or an opted-out client texting HELP)
+never silently re-consents, and both preserve an existing timestamp rather than
+overwriting it. The in-memory `client` is reassigned from each update so the second
+step sees the first step's writes -- without that, an opt-in keyword would have
+stamped consent twice, with the wrong source on the second write.
+
+## Copy
+
+The phone helper's implied-consent sentence ("By providing your phone number, you
+consent to receive SMS messages...") is gone, replaced with the neutral copy the task
+specified, in `en.ts` and `es.ts`, and mirrored into `server.mjs`'s no-JS SSR
+snapshot -- which previously carried only the checkbox disclosure, so a non-JS
+reviewer never saw the phone field's framing at all. The SSR snapshot mirrors the
+real form and adds nothing of its own.
+
+**One deliberate deviation, flagged.** A studio can configure the phone field as
+*required*, and rendering "Optional — ..." beside a required field's asterisk would
+be a visible contradiction. There are therefore two strings: `phoneHelpDefault` (the
+task's copy verbatim, used whenever phone is optional -- the default, and what Black
+Hive Ink uses) and `phoneHelpDefaultRequired` (identical but without the leading
+"Optional — "). The checkbox's own approved wording is untouched, byte for byte, in
+both languages and in SSR.
+
+## Verification
+
+**Automated.** New `apps/api/src/routes/smsConsentOptional.test.ts` pins the
+regression from both ends: phone + unticked box submits 201 with no consent recorded;
+an *absent* `smsConsent` field (a raw no-JS POST, which never sends an unchecked
+checkbox) behaves identically; a ticked box stamps consent at submission time with
+source `intake_form`; a later unticked submission from the same client does not erase
+it; and `sendClientSms` returns `no_consent`, then `not_connected` once consent
+exists (proving the first refusal was the consent gate specifically), then
+`opted_out`. Full API suite: 173/173 pass. `tsc` (api) and `tsc -b && vite build`
+(web) both clean.
+
+**Live on dev**, against `dev-studio`, which has a **CONNECTED** SMS integration --
+so the refusals below are the consent gate, not a missing integration:
+
+- Phone `(910) 555-0188`, box unticked, submitted from the real form: succeeded.
+  Database shows the phone stored and `smsConsentGivenAt: null` -- a phone number is
+  kept as a contact method without being read as permission.
+- That client's page shows "SMS Consent: Not yet given"; `Send Inquiry` renders as
+  **Email only**, titled "Send Inquiry via Email — SMS unavailable: this client has
+  no SMS consent on file."
+- Sending to that client through the composer returned 400 "This client has no SMS
+  consent on file and cannot be texted."
+- Phone `(910) 555-0199`, box ticked: `smsConsentGivenAt` = 2026-08-20T21:07:47Z,
+  source `intake_form`, page shows "SMS Consent: Given Aug 20, 2026, 5:07 PM", and
+  `Send Inquiry` restores the SMS/Email picker.
+- Spanish checked on the same page: neutral helper copy present, checkbox disclosure
+  unchanged.
+
+**A false pass worth recording.** The first ticked-box attempt recorded *no* consent,
+which looked like a bug in the fix. It was not: the browser was still logged in as
+the dev owner, so `optionalAuth` set `req.user`, `isStaffRequest` became true, and the
+public-path-only consent write was skipped -- pre-existing, correct behavior. Redone
+logged out, it recorded consent as above. A 201 from a form is not evidence that the
+public code path ran.
+
+**Production**, `https://web.inkmanager.app/inquiry/black-hive-ink`, after deploying
+`ff78c20`:
+
+- Raw no-JS `curl` fetch returns the new helper line and no trace of the
+  implied-consent sentence, with the checkbox disclosure intact. Saved as evidence
+  (below).
+- The API tier was confirmed **without writing any data**: a POST with `smsConsent`
+  omitted entirely and a deliberately invalid `preferredArtistId` returned
+  "preferredArtistId must belong to this studio". Under the old code that request
+  would have stopped earlier at "SMS consent is required to submit this form"; the
+  invalid-artist check sits after where that gate used to be, and every write in the
+  route sits after the invalid-artist check, so this probe distinguishes the two
+  builds while creating nothing.
+
+## Screenshots
+
+Recaptured from **production** at Edition 03's exact crop geometry (642x482 and
+606x81, verified), in
+`C:\Users\User\Documents\Twilio-Proof-Package-BlackHiveInk\a2p-optional-consent-recapture-2026-08-20\`:
+
+- `i-intake-phone-helper.png` -- full form through the phone field and its new helper
+- `ii-checkbox-crop.png` -- consent checkbox close crop, wording unchanged
+- `iii-intake-raw-html-excerpt.txt` / `iii-intake-raw-html-full.html` -- the raw no-JS
+  response
+
+Placed in a new dated folder rather than overwriting `edition-03-working\screenshots\`,
+per the standing "nothing is overwritten" convention. **They are not yet in a PDF** --
+whoever builds the next Edition drops them into the slots Edition 03's `e03-i` /
+`e03-ii` / `e03-iii` currently occupy. Reported as pending rather than implied
+complete.
+
+## Databases touched
+
+No migration and no backfill -- this change adds no column and rewrites no existing
+rows. `Client.smsConsentGivenAt` already existed. **Dev** received three test clients
+from the live checks (Nolan Noconsent, Yolanda Yesconsent, and their inquiries);
+**production received no writes at all**, by construction of the probe described
+above.
+
+**One consequence worth stating plainly:** every existing client whose
+`smsConsentGivenAt` is null -- on dev and on production alike -- is now unreachable by
+SMS until they opt in through one of the two inbound paths above. That is the intended
+behavior of this fix, not an oversight, but it is a real behavior change for existing
+data, and studios should be told rather than left to discover it.
