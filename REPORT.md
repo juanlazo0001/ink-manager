@@ -20122,3 +20122,119 @@ far longer than this session.
 Unchanged from the previous entry: the recaptured production screenshots in
 `a2p-optional-consent-recapture-2026-08-20\` are **not yet placed in a PDF**. Edition
 and email work was deferred behind this outage, deliberately.
+
+# Edition 04 of the Twilio proof package: the optional-consent correction, documented
+
+Closes the open item carried by the last two entries. The recaptured production
+screenshots are now placed in a delivered PDF.
+
+## Why a new edition rather than a screenshot swap
+
+Edition 03 states, in its own Exhibit C prose, that the form carries "a **required**
+consent checkbox". That sentence was accurate when written and is now false, and it
+happens to describe precisely the thing the reviewer flagged. Dropping new images into
+Edition 03's text would have left a compliance document asserting the defect had not
+been fixed. The text had to move with the exhibits.
+
+## What Edition 04 changes
+
+Everything Edition 03 documented about keywords, published policy, and opt-out /
+opt-back-in handling is unchanged and carried forward verbatim. What changed:
+
+- **Cover** — Edition 04, August 21 2026, superseding Edition 03. The "in response to"
+  line now names the finding (consent not genuinely optional) rather than a generic
+  follow-up. The reviewer's map gained a third row for it, and its heading stopped
+  saying "the two items requested" now that there are three (caught in visual QA, not
+  by any check I had written).
+- **"What changed" note** — rewritten to state the finding plainly, agree with it, and
+  describe both halves of the correction.
+- **Exhibit C** — the "required checkbox" sentence replaced; C1's caption no longer
+  quotes the deleted implied-consent sentence, and quotes the neutral replacement in
+  full while naming what it replaced; C2 gains a line noting the checkbox wording is
+  unchanged character for character.
+- **Requirements table** — a seventh row, "Consent is not a condition of service". The
+  START row lost its "added in this edition" marker, which belonged to Edition 03.
+- **New page, Exhibits C4 and C5** — what declining consent actually does. Placed as a
+  third "Exhibit C · continued" page rather than a new letter, so D and E keep their
+  labels and a reviewer holding Edition 03 can still follow the structure.
+
+## Exhibits
+
+Recaptured from **production** (`web.inkmanager.app/inquiry/black-hive-ink`) at
+Edition 03's exact crop geometry, so the pairing Edition 02 established survives:
+
+- `e04-i-intake-phone-helper.png` (642x482, matching e03-i)
+- `e04-ii-checkbox-crop.png` (606x81, matching e03-ii)
+- `e04-iii-intake-raw-html.png` (900x408) — a genuine Chromium `view-source:` capture
+  with line wrap on, same treatment as e03-iii, now showing the Phone label and the
+  neutral helper line in the served markup
+
+Two new, captured on a **development instance** running the same code as production
+(disclosed in the document itself, matching how Edition 03 discloses its own
+walkthrough), using the reserved-fictional test client from the previous entry so no
+real client record was touched:
+
+- `e04-v-client-no-consent-state.png` (894x171) — phone on file, "SMS Consent: Not yet
+  given". Deliberately framed to match Edition 03's opted-out-state exhibit.
+- `e04-vi-outbound-blocked-no-consent.png` (546x146) — the composer refusing with
+  "This client has no SMS consent on file and cannot be texted". Deliberately framed to
+  match `walkthrough-2b-outbound-blocked.png`, so the reviewer sees the two refusals
+  side by side and can tell they are the same mechanism.
+
+The two policy exhibits keep their `e03-` filenames: that content did not change, and
+renaming them would imply a recapture that did not happen.
+
+## Layout: 17 pages, then 12
+
+The first render came out 17 pages for 12 sections. Edition 03 holds the invariant
+"one `section.page` = one printed page", and Edition 04's added prose, extra table row
+and new page broke it in five places at the margins I first chose. Rather than let it
+ship long, each overflow was measured directly (section height vs. usable page height
+in print-emulated media) and closed by tightening what this edition had added: the
+"what changed" note and three paragraphs shortened, the new table row's wording cut,
+`td` padding 10px→8px, `.wide` 88mm→84mm, `.console` 150mm→144mm. Final margins
+10mm/15mm. Tallest section 978px against 980px usable, nothing overflowing, 12 pages
+for 12 sections.
+
+Note the height caps only ever constrain **one** axis — the rule Edition 03 learned the
+hard way when `width:100%` plus `max-height` squashed exhibits by 2x vertically.
+
+## Verification
+
+Both of the defects previous editions actually shipped were checked for explicitly,
+rather than trusted:
+
+- **Blank exhibits** (Edition 03 shipped one): every crop was luma-range checked at
+  creation, and the rendered PDF was parsed with `pypdf` — 17 images across 12 pages,
+  each with a plausible byte size (14KB–627KB), matching the 17 `<img>` tags in source.
+- **Aspect distortion** (Edition 03's near-miss): measured in the browser as natural
+  aspect ratio vs. rendered content-box ratio for all 17 images. Worst skew **0.008%**.
+  The first measurement pass showed up to 3.9% and was wrong — `getBoundingClientRect`
+  includes the 1px border, which matters on a 43px-tall image; subtracting the border
+  gives the real figure.
+- **Text-level checks** on the extracted PDF text: Edition 04 on the cover, no stale
+  self-label, the new helper quoted, the old implied-consent sentence appearing only
+  once (as the quoted-and-removed line), checkbox wording intact, START disclosure
+  intact, the enforcement documented, the new table row present, the development-
+  instance disclosure present, and no leftover drop-in slot. 10/10.
+- **Visual QA** on the cover and all three Exhibit C pages, which is what caught the
+  "two items" heading. Numeric checks would never have caught it.
+
+## Deliverable
+
+`C:\Users\User\Documents\Twilio-Proof-Package-BlackHiveInk\`:
+
+- `Black Hive Ink and Arts — SMS Consent Proof Package (Edition 04).pdf` — 12 pages,
+  17 images, 3.4 MB
+- `edition-04-working\` — source HTML and all 17 screenshots
+- `99 Archive\` — Edition 03 moved here on delivery, joining 02 and 01. Nothing
+  overwritten, per the standing convention.
+
+`a2p-optional-consent-recapture-2026-08-20\` is left in place as the raw capture set
+from the previous entry; `edition-04-working\screenshots\` is the copy the document
+actually references.
+
+## Open
+
+Nothing outstanding on the Edition track. The email to Twilio has not been drafted or
+sent — that was never started, and is not implied by this entry.
