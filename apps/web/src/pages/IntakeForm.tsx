@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { apiFetch, ApiError } from '../lib/api'
+import { apiFetch, ApiError, fetchPublicWithRetry, isTransientApiFailure } from '../lib/api'
 import PhoneInput from '../components/PhoneInput'
 import CurrencyInput from '../components/CurrencyInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
@@ -63,7 +63,11 @@ interface IntakeFormFieldPublic {
 
 type CustomAnswerValue = string | string[]
 
-type StudioCheck = 'loading' | 'valid' | 'invalid'
+// 'invalid'     -- the API answered: this studio/form genuinely does not exist.
+// 'unavailable' -- we could not reach the API at all. A DIFFERENT state on
+//                  purpose: these were conflated until 2026-08-21, and every
+//                  API redeploy briefly told visitors the studio was not real.
+type StudioCheck = 'loading' | 'valid' | 'invalid' | 'unavailable'
 
 export default function IntakeForm() {
   return (
@@ -119,6 +123,9 @@ function IntakeFormContent() {
   const [smsConsent, setSmsConsent] = useState(false)
 
   const [studioCheck, setStudioCheck] = useState<StudioCheck>('loading')
+  // Bumped by the Retry button on the 'unavailable' state to re-run the
+  // studio-resolution effect below.
+  const [retryNonce, setRetryNonce] = useState(0)
   const [studioName, setStudioName] = useState('')
   const [studioLogoUrl, setStudioLogoUrl] = useState<string | null>(null)
   const [artists, setArtists] = useState<PublicArtist[]>([])
@@ -140,23 +147,25 @@ function IntakeFormContent() {
 
     let ignore = false
 
+    // OUTAGE FIX (2026-08-21): this fetch used to decide whether the studio
+    // exists -- a 404 here set studioCheck to 'invalid' and rendered the
+    // full-page "We couldn't find this studio". Two things were wrong with
+    // that. It made the artist-dropdown endpoint the authority on studio
+    // existence, which is not its job (/studio-settings/public is the real
+    // resolver, and it is fetched right below). And it could not tell this
+    // API's own 404 from Railway's edge-fallback 404, so any moment the API
+    // service was unreachable -- every redeploy included -- the public
+    // intake page told visitors the studio did not exist.
+    //
+    // It is now purely what its own comment always said it was: a
+    // nice-to-have dropdown. NO failure here affects studioCheck.
     apiFetch<PublicArtist[]>(`/artists/public?studioSlug=${encodeURIComponent(studioSlug)}`)
       .then((data) => {
         if (ignore) return
         setArtists(data)
-        setStudioCheck('valid')
       })
-      .catch((err) => {
-        if (ignore) return
-
-        if (err instanceof ApiError && err.status === 404) {
-          setStudioCheck('invalid')
-          return
-        }
-
-        // Preferred-artist dropdown is a nice-to-have; a non-404 hiccup
-        // shouldn't block the form, just leave it with "No preference" only.
-        setStudioCheck('valid')
+      .catch(() => {
+        // Leave the picker with "No preference" only.
       })
 
     return () => {
@@ -200,7 +209,7 @@ function IntakeFormContent() {
     const query = new URLSearchParams({ studioSlug, ...(hasLoadedRef.current ? { locale } : {}) })
     if (formSlug) query.set("formSlug", formSlug)
 
-    apiFetch<{
+    fetchPublicWithRetry<{
       studioName: string
       studioLogoUrl: string | null
       intakeFormFields: IntakeFormFieldPublic[]
@@ -215,25 +224,43 @@ function IntakeFormContent() {
         setFields((data.intakeFormFields ?? []).slice().sort((a, b) => a.order - b.order))
         setReferralProgramEnabled(data.referralProgramEnabled)
         if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
+        setStudioCheck('valid')
       })
       .catch((err) => {
-        // A named formSlug that doesn't resolve to a real form is a broken/
-        // stale link -- shown the same "invalid" full-page state as an
-        // unknown studio, rather than silently rendering a fieldless form.
-        // Any OTHER failure (network hiccup, studio genuinely has no
-        // formSlug segment) stays non-essential: the checkbox label falls
-        // back to generic wording and an empty field list just renders
-        // nothing above the consent checkbox.
-        if (formSlug && err instanceof ApiError && err.status === 404) {
-          setStudioCheck('invalid')
+        if (ignore) return
+
+        // OUTAGE FIX (2026-08-21): three outcomes now, not two. A transient
+        // failure (edge 404 while the API redeploys, 5xx, offline) is
+        // explicitly NOT "this studio doesn't exist" -- it gets its own
+        // retryable state. fetchPublicWithRetry has already retried a few
+        // times by the time we land here, so this is a persistent problem,
+        // but it is still the visitor's link that is fine and our service
+        // that is not, and the copy must say so.
+        if (isTransientApiFailure(err)) {
+          setStudioCheck('unavailable')
+          return
         }
+
+        // A real 404 FROM THE API: either an unknown studio slug, or a
+        // named formSlug that doesn't resolve to a real form (a broken or
+        // stale link). Both are genuinely dead links, shown as such.
+        if (err instanceof ApiError && err.status === 404) {
+          setStudioCheck('invalid')
+          return
+        }
+
+        // Anything else the API deliberately returned (a 4xx that isn't a
+        // 404) leaves the form usable rather than blocking on it: the
+        // checkbox label falls back to generic wording and an empty field
+        // list renders nothing above the consent checkbox.
+        setStudioCheck('valid')
       })
 
     return () => {
       ignore = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [studioSlug, formSlug, locale])
+  }, [studioSlug, formSlug, locale, retryNonce])
 
   // Prefill data never rides in the URL as field values -- just this
   // opaque, single-use token. An invalid/expired token quietly falls back
@@ -809,6 +836,37 @@ function IntakeFormContent() {
             <motion.div key="invalid" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition}>
               <h1 className="login-jura text-xl font-semibold text-fg">{t('intake.studioNotFoundHeading')}</h1>
               <p className="mt-2 text-sm text-fg-secondary">{t('intake.studioNotFoundBody')}</p>
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </div>
+    )
+  }
+
+  // Deliberately NOT the "we couldn't find this studio" screen above. The
+  // link is fine; we are the problem. Says so, and offers a retry -- the
+  // failure this replaces is usually over in seconds.
+  if (studioCheck === 'unavailable') {
+    return (
+      <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
+        <div className="login-panel-surface w-full max-w-lg px-4 py-8 text-center sm:p-8">
+          <div className="mb-4 flex justify-end">
+            <LanguagePicker />
+          </div>
+          <AnimatePresence mode="wait">
+            <motion.div key="unavailable" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition}>
+              <h1 className="login-jura text-xl font-semibold text-fg">{t('common.temporarilyUnavailableHeading')}</h1>
+              <p className="mt-2 text-sm text-fg-secondary">{t('common.temporarilyUnavailableBody')}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setStudioCheck('loading')
+                  setRetryNonce((n) => n + 1)
+                }}
+                className="mt-5 rounded-full bg-accent px-5 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+              >
+                {t('common.tryAgain')}
+              </button>
             </motion.div>
           </AnimatePresence>
         </div>

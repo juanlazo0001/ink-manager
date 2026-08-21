@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { apiFetch, ApiError } from '../lib/api'
+import { apiFetch, ApiError, fetchPublicWithRetry, isTransientApiFailure } from '../lib/api'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { buildMapsUrl } from '../lib/maps'
 import PublicPageFooter from '../components/PublicPageFooter'
@@ -111,7 +111,7 @@ function FlashPublicGalleryContent() {
     let ignore = false
     const query = new URLSearchParams({ studioSlug })
     if (artistId) query.set('artistId', artistId)
-    apiFetch<GalleryResponse>(`/flash-pieces/public?${query.toString()}`)
+    fetchPublicWithRetry<GalleryResponse>(`/flash-pieces/public?${query.toString()}`)
       .then((data) => {
         if (ignore) return
         setGallery(data)
@@ -120,7 +120,17 @@ function FlashPublicGalleryContent() {
       })
       .catch((err) => {
         if (ignore) return
-        setInvalidMessage(err instanceof Error ? err.message : t('flashGallery.unavailableDefault'))
+        // OUTAGE FIX (2026-08-21): an unreachable API used to surface its raw
+        // status text ("Request failed with status 404") to a visitor. Say
+        // the retryable thing instead; only a real API answer gets its own
+        // message shown.
+        setInvalidMessage(
+          isTransientApiFailure(err)
+            ? t('common.temporarilyUnavailableBody')
+            : err instanceof Error
+              ? err.message
+              : t('flashGallery.unavailableDefault'),
+        )
         setState('invalid')
       })
 

@@ -42,6 +42,10 @@ export const es: typeof en = {
     signBelow: 'Firma aquí abajo',
     clear: 'Borrar',
     pleaseSignBeforeSubmitting: 'Por favor, firma antes de enviar.',
+    tryAgain: 'Intentar de nuevo',
+    temporarilyUnavailableHeading: 'Esta página no está disponible temporalmente',
+    temporarilyUnavailableBody:
+      'Tu enlace está bien — solo estamos teniendo problemas para cargar esta página en este momento. Por favor, inténtalo de nuevo en un momento.',
   },
 
   deposit: {

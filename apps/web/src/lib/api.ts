@@ -11,12 +11,68 @@ export class ApiError extends Error {
   // banner. Optional: most error bodies have no `code` field at all, and
   // this stays undefined for those, same as before this field existed.
   code?: string
+  // Did THIS APP'S API produce this error, or did something in front of it?
+  //
+  // Every error response this API emits is `res.status(N).json({ error })`
+  // -- an `error` field is universal across every route. Railway's edge
+  // router, when a service has no reachable replica (mid-deploy, crash
+  // loop, failed healthcheck, renamed domain), answers on its behalf with
+  // `404 {"status":"error","code":404,"message":"Application not found"}`
+  // and an `x-railway-fallback: true` header -- a 404 with NO `error`
+  // field. Presence of that field is therefore the discriminator, and it
+  // matters enormously: an app 404 means "this thing does not exist", an
+  // edge 404 means "ask again in a minute". Conflating them is what took
+  // the public intake page down (see REPORT.md, 2026-08-21).
+  fromApi: boolean
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(message: string, status: number, code?: string, fromApi = true) {
     super(message)
     this.status = status
     this.code = code
+    this.fromApi = fromApi
   }
+}
+
+// "Should the caller retry, or is this answer final?"
+//
+// True for anything that is NOT this API deliberately saying no: an edge/
+// proxy response (see ApiError.fromApi), any 5xx, and a network-level
+// failure (fetch rejects with a TypeError, which is not an ApiError at
+// all). Public, unauthenticated pages MUST branch on this before rendering
+// any "we couldn't find it" state -- telling a visitor that a studio does
+// not exist because a deploy was in flight is far worse than making them
+// wait, and it is the kind of thing a carrier reviewer sees exactly once.
+export function isTransientApiFailure(err: unknown): boolean {
+  if (err instanceof ApiError) return !err.fromApi || err.status >= 500
+  // A rejected fetch (offline, DNS, TLS, connection reset) never becomes an
+  // ApiError -- it lands here.
+  return err instanceof TypeError
+}
+
+// Retry wrapper for public page loads. Deliberately retries ONLY transient
+// failures -- a genuine 404 resolves immediately as a real answer, with no
+// artificial delay added to the common "bad link" case.
+//
+// Three attempts at 400ms/1200ms covers a Railway redeploy gap (the API's
+// own start script runs `prisma migrate deploy` before listening, so the
+// window is seconds, not milliseconds) without leaving a visitor staring at
+// a spinner for anything like as long as the old failure mode cost them.
+export async function fetchPublicWithRetry<T>(
+  path: string,
+  options: RequestInit = {},
+  attempts = 3,
+): Promise<T> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await apiFetch<T>(path, options)
+    } catch (err) {
+      lastErr = err
+      if (!isTransientApiFailure(err) || attempt === attempts - 1) throw err
+      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 400 : 1200))
+    }
+  }
+  throw lastErr
 }
 
 // View As (admin impersonation): deliberately plain module state, not React
@@ -56,7 +112,17 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 
   if (!response.ok) {
     const body = await response.json().catch(() => null)
-    throw new ApiError(body?.error ?? `Request failed with status ${response.status}`, response.status, body?.code)
+    // See ApiError.fromApi: an `error` field is the fingerprint of this
+    // app's own error responses. A body without one (Railway's edge
+    // fallback, a proxy's HTML error page, an empty body) did not come
+    // from the API, whatever its status code says.
+    const fromApi = typeof body?.error === 'string'
+    throw new ApiError(
+      body?.error ?? `Request failed with status ${response.status}`,
+      response.status,
+      body?.code,
+      fromApi,
+    )
   }
 
   if (response.status === 204) {
@@ -92,7 +158,17 @@ export async function downloadFile(path: string, filename: string, options: Requ
 
   if (!response.ok) {
     const body = await response.json().catch(() => null)
-    throw new ApiError(body?.error ?? `Request failed with status ${response.status}`, response.status, body?.code)
+    // See ApiError.fromApi: an `error` field is the fingerprint of this
+    // app's own error responses. A body without one (Railway's edge
+    // fallback, a proxy's HTML error page, an empty body) did not come
+    // from the API, whatever its status code says.
+    const fromApi = typeof body?.error === 'string'
+    throw new ApiError(
+      body?.error ?? `Request failed with status ${response.status}`,
+      response.status,
+      body?.code,
+      fromApi,
+    )
   }
 
   const blob = await response.blob()

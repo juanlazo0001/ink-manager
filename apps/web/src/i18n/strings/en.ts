@@ -54,6 +54,14 @@ export const en = {
     signBelow: 'Sign below',
     clear: 'Clear',
     pleaseSignBeforeSubmitting: 'Please sign before submitting.',
+    tryAgain: 'Try again',
+    // OUTAGE FIX (2026-08-21): shown by every public page when the API is
+    // unreachable, in place of that page's own "not found" copy. It must
+    // never imply the studio/artist isn't real -- the usual cause is a
+    // redeploy in flight, and the visitor's link is perfectly good.
+    temporarilyUnavailableHeading: 'This page is temporarily unavailable',
+    temporarilyUnavailableBody:
+      "Your link is fine — we're just having trouble loading this page right now. Please try again in a moment.",
   },
 
   deposit: {

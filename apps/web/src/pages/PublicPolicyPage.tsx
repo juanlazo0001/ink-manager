@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { apiFetch, ApiError } from '../lib/api'
+import { fetchPublicWithRetry, isTransientApiFailure } from '../lib/api'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 
 interface PublicStudioPoliciesResponse {
@@ -13,7 +13,7 @@ interface PublicStudioPoliciesResponse {
   communicationPolicy: string | null
 }
 
-type PageState = 'loading' | 'invalid' | 'ready'
+type PageState = 'loading' | 'invalid' | 'unavailable' | 'ready'
 
 interface PublicPolicyPageProps {
   field:
@@ -41,7 +41,7 @@ export default function PublicPolicyPage({ field, title }: PublicPolicyPageProps
 
     let ignore = false
 
-    apiFetch<PublicStudioPoliciesResponse>(`/studio-settings/public?studioSlug=${encodeURIComponent(studioSlug)}`)
+    fetchPublicWithRetry<PublicStudioPoliciesResponse>(`/studio-settings/public?studioSlug=${encodeURIComponent(studioSlug)}`)
       .then((response) => {
         if (ignore) return
         setData(response)
@@ -49,11 +49,10 @@ export default function PublicPolicyPage({ field, title }: PublicPolicyPageProps
       })
       .catch((err) => {
         if (ignore) return
-        if (err instanceof ApiError && err.status === 404) {
-          setState('invalid')
-          return
-        }
-        setState('invalid')
+        // Both branches used to set 'invalid', making the 404 check purely
+        // decorative -- an unreachable API rendered as "this studio does
+        // not exist". Now only the API's own answer can say that.
+        setState(isTransientApiFailure(err) ? 'unavailable' : 'invalid')
       })
 
     return () => {
@@ -69,6 +68,11 @@ export default function PublicPolicyPage({ field, title }: PublicPolicyPageProps
         {state === 'loading' && <p className="text-sm text-fg-secondary">Loading…</p>}
 
         {state === 'invalid' && <p className="text-sm text-fg-secondary">This studio couldn't be found.</p>}
+        {state === 'unavailable' && (
+          <p className="text-sm text-fg-secondary">
+            This page is temporarily unavailable — your link is fine, please try again in a moment.
+          </p>
+        )}
 
         {state === 'ready' && data && (
           <>

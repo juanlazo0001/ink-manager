@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
-import { apiFetch } from '../lib/api'
+import { fetchPublicWithRetry, isTransientApiFailure } from '../lib/api'
 import { buildMapsUrl } from '../lib/maps'
 import { dateLocale } from '../i18n/locales'
 import { LocaleProvider, useLocale, useTranslations } from '../i18n'
@@ -62,7 +62,10 @@ interface ArtistPublicProfile {
   resolvedLocale?: string
 }
 
-type PageState = 'loading' | 'not-found' | 'ready'
+// OUTAGE FIX (2026-08-21): "we could not reach the API" is not the same
+// answer as "this does not exist", and this page used to render the second
+// for both. See lib/api.ts's isTransientApiFailure and REPORT.md.
+type PageState = 'loading' | 'not-found' | 'unavailable' | 'ready'
 
 export default function ArtistPublicPage() {
   return (
@@ -89,15 +92,19 @@ function ArtistPublicPageContent() {
   useEffect(() => {
     if (!publicSlug) return
     let ignore = false
-    apiFetch<ArtistPublicProfile>(`/artists/public/${publicSlug}`)
+    fetchPublicWithRetry<ArtistPublicProfile>(`/artists/public/${publicSlug}`)
       .then((data) => {
         if (ignore) return
         setProfile(data)
         setState('ready')
         if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
       })
-      .catch(() => {
-        if (!ignore) setState('not-found')
+      .catch((err) => {
+        if (ignore) return
+        // This used to be a bare `.catch(() => setState('not-found'))` --
+        // it swallowed EVERY failure mode (offline, 5xx, edge 404 during a
+        // redeploy) and told the visitor the artist did not exist.
+        setState(isTransientApiFailure(err) ? 'unavailable' : 'not-found')
       })
     return () => {
       ignore = true
@@ -120,6 +127,17 @@ function ArtistPublicPageContent() {
     return (
       <div className="login-shell flex min-h-screen items-center justify-center text-fg">
         <p className="text-sm text-fg-muted">{t('common.loading')}</p>
+      </div>
+    )
+  }
+
+  if (state === 'unavailable') {
+    return (
+      <div className="login-shell flex min-h-screen items-center justify-center px-4 text-fg">
+        <div className="login-panel-surface max-w-sm px-4 py-8 text-center sm:p-8">
+          <h1 className="login-jura text-lg font-semibold text-fg">{t('common.temporarilyUnavailableHeading')}</h1>
+          <p className="mt-2 text-sm text-fg-muted">{t('common.temporarilyUnavailableBody')}</p>
+        </div>
       </div>
     )
   }
