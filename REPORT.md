@@ -19981,3 +19981,144 @@ above.
 SMS until they opt in through one of the two inbound paths above. That is the intended
 behavior of this fix, not an oversight, but it is a real behavior change for existing
 data, and studios should be told rather than left to discover it.
+
+# Outage: the public intake page reported an unreachable API as "studio not found"
+
+`https://web.inkmanager.app/inquiry/black-hive-ink` -- the URL the Twilio reviewer
+holds -- rendered "We couldn't find this studio" while the studio was perfectly fine.
+Reported as still-live; by the time it was investigated the page had self-healed, so
+the work below is a root-cause proof rather than a live repro of the reported moment.
+
+## Root cause
+
+`IntakeForm.tsx` decided whether a studio exists from a 404 on
+`GET /artists/public?studioSlug=...`, and `apiFetch` could not tell this API's own
+404 from one manufactured in front of it.
+
+Railway's edge router answers on a service's behalf whenever that service has no
+reachable replica -- mid-deploy, crash loop, failed healthcheck, renamed domain --
+with, verified directly against a non-existent `*.up.railway.app` host on 2026-08-21:
+
+```
+HTTP/1.1 404 Not Found
+x-railway-fallback: true
+{"status":"error","code":404,"message":"Application not found"}
+```
+
+`apiFetch` turned that into `ApiError(status: 404)` exactly like a real one, and the
+page turned *that* into a full-page "this studio does not exist."
+
+So **every API redeploy briefly told every visitor of every public page that the
+business was not real** -- and `apps/api`'s start script runs `prisma migrate deploy`
+*before* it listens, which widens the window from milliseconds to seconds.
+
+**On the prime suspects, in the order given.** The consent-fix deploy was the trigger
+but not the defect. `ff78c20` changed `apps/api`, which redeployed the API service and
+opened exactly such a window. But none of its four select changes went anywhere near
+the public studio resolver: they were in `inquiries.ts`'s `INQUIRY_INCLUDE` (staff
+inquiry reads), `appointments.ts`, `giftCards.ts`, and one error string in
+`conversations.ts`. `artists.ts` -- which owns `/artists/public`, the request that
+actually gated the not-found screen -- has not been touched since `0ecb431`, and
+`studioSettings.ts` was not touched either. A concurrent merge is ruled out too:
+`a76ed4b` was still the tip of `origin/main`, with nothing between it and `38ab965`.
+The latent defect had been there all along; this deploy is simply the first time it
+was noticed, on the one URL where being noticed is expensive.
+
+## Reproduction
+
+Not inferred -- reproduced in a real browser before any fix. A local stub reproducing
+Railway's edge 404 verbatim (status, headers, body) was put in front of the web app;
+`/inquiry/black-hive-ink` rendered "We couldn't find this studio", the reported
+symptom exactly.
+
+Worth recording *why* a raw fetch could never have caught this, since that is how it
+slipped through: `server.mjs`'s SSR snapshot is rendered by the **web** service from
+its own API call, and it fails soft -- when the API is unreachable it falls back to
+the plain SPA shell rather than erroring. So `curl` returns either good SSR content or
+a bare shell, and never the broken state. The failure exists only after React mounts
+and replaces `#root`. A raw fetch verifies the SSR tier and nothing else.
+
+## The discriminator
+
+Every error response this API emits is `res.status(N).json({ error })` -- an `error`
+field is universal across every route (checked exhaustively). The edge fallback body
+has none. That is the fingerprint, and `lib/api.ts` now carries it:
+
+- `ApiError.fromApi` -- set from whether the parsed body had an `error` field.
+- `isTransientApiFailure(err)` -- true for not-from-api, any 5xx, or a rejected
+  `fetch` (which is a `TypeError`, never an `ApiError` at all).
+- `fetchPublicWithRetry(path)` -- retries **only** transient failures, 3 attempts at
+  400ms/1200ms. A redeploy gap now self-heals with no visitor action; a genuine 404
+  still resolves instantly, with no artificial delay added to the common bad-link case.
+
+## Blast radius: every public slug route shared the bug, two worse than intake
+
+The user asked specifically. Checked all of them:
+
+- **`IntakeForm`** (`/inquiry/:studioSlug`) -- the reported failure. Fixed twice over:
+  `/artists/public` no longer decides studio existence *at all* (it populates the
+  preferred-artist dropdown, which its own comment already called a nice-to-have, and
+  it now fails silently), and `/studio-settings/public` -- the actual studio resolver
+  -- is now the authority. New `unavailable` state with retryable copy and a Try
+  again button.
+- **`ArtistPublicPage`** (`/artist/:publicSlug`) -- **worse than intake.** Its handler
+  was a bare `.catch(() => setState('not-found'))`, which swallowed *every* failure
+  mode -- offline, 5xx, timeout, edge 404 -- and told the visitor the artist did not
+  exist. Split.
+- **`PublicPolicyPage`** (`/privacy/:studioSlug`, `/terms/:studioSlug`) -- **also
+  worse.** Both branches of its catch set `'invalid'`, making its 404 check purely
+  decorative. Split.
+- **`FlashPublicGallery`** (`/flash/:studioSlug`) -- less damaging (it never claimed
+  the studio was unreal) but it surfaced the raw string "Request failed with status
+  404" to visitors. Now shows the retryable copy for transient failures only.
+- **`AuthContext`**'s hand-rolled login fetch constructs `ApiError` directly and
+  predates `apiFetch`. Nothing branches on `fromApi` there, so behavior is unchanged,
+  but it was given the same rule so the class of bug cannot creep back in through it.
+- Token-based public pages (waiver, estimate, deposit, gift card, self-schedule) do
+  **not** share the "not found" conflation -- they surface a retryable error message
+  rather than a definitive denial. Left alone.
+
+New shared copy in `common` (en + es): `temporarilyUnavailableHeading` /
+`temporarilyUnavailableBody` / `tryAgain`. It states that the visitor's link is fine,
+because it is.
+
+## Verification -- real browser, per the explicit instruction
+
+Against the edge-404 stub, before and after: the intake page went from "We couldn't
+find this studio" to "This page is temporarily unavailable" with a working Try again
+button (confirmed re-firing the request by watching the stub's own request log, which
+also showed `fetchPublicWithRetry`'s 3 attempts per load).
+
+Against a real API, the half that could have regressed: `/inquiry/definitely-not-a-
+studio-xyz` still shows "We couldn't find this studio" with **no** retry button
+offered, and a real studio loads with its 22-option artist dropdown intact. On
+production, `/artist/definitely-not-an-artist-xyz` still shows "This page isn't
+available".
+
+On **production**, after deploying `59cd630`, in a real browser -- all four
+combinations, none showing a broken state, no horizontal overflow at 390px:
+
+| | Desktop 1280x900 | Mobile 390x844 |
+|---|---|---|
+| English | form, 18 fields, correct studio name, new phone helper | form, 18 fields, no overflow |
+| Español | "Solicitud de Tatuaje", ES helper + consent copy | "Solicitud de Tatuaje", "Enviar solicitud" |
+
+`/flash/black-hive-ink` also verified live (gallery renders with real pieces).
+
+Note the fix deploy touches `apps/web` only, so the API service did not restart and
+this deploy opened no new window of its own.
+
+## What this cost, honestly
+
+The previous session verified production with a raw `curl` and called it confirmed.
+That check was real but partial: it proved the SSR tier and said nothing about the
+mounted app, which is the only tier where this failure lives. The deploy then created
+the outage window, and the reviewer's URL was the one that showed it. Both the
+verification gap and the underlying conflation are fixed; the second was latent for
+far longer than this session.
+
+## Still open
+
+Unchanged from the previous entry: the recaptured production screenshots in
+`a2p-optional-consent-recapture-2026-08-20\` are **not yet placed in a PDF**. Edition
+and email work was deferred behind this outage, deliberately.

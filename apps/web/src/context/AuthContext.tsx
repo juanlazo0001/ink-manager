@@ -55,7 +55,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // fetch instead. /login's email_not_verified `code` needs to survive
       // to the caller (SignInOrForgotCard) so it can offer a "resend
       // verification" action instead of a bare error banner.
-      throw new ApiError(body?.error ?? 'Login failed', response.status, body?.code)
+      // fromApi mirrors apiFetch's own rule (an `error` field is the
+      // fingerprint of this API's error responses) so this hand-rolled
+      // fetch can't quietly misreport an edge/proxy failure as a real
+      // login rejection -- see ApiError.fromApi in lib/api.ts.
+      throw new ApiError(
+        body?.error ?? 'Login failed',
+        response.status,
+        body?.code,
+        typeof body?.error === 'string',
+      )
     }
 
     const data = await response.json()
