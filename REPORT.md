@@ -21391,3 +21391,232 @@ Branch **`mobile/session3`**, pushed, **not merged**:
   types-only by design. If a second one appears, that is the moment for a small shared
   runtime package, not before.
 - **No app icon or splash art.** Still Expo placeholders.
+
+# Mobile Session 4 — appointment detail screen
+
+Branch **`mobile/session4`** (off `mobile/session3`, still unmerged), pushed to origin.
+**Not merged to main.** Same constraints carried forward: `apps/api`, `apps/web`,
+`schema.prisma` and root dependency resolution untouched; `apps/api` read-only reference. No
+root change was needed and the lockfile did not move — only `apps/mobile` and
+`packages/shared-types`.
+
+This closes the top open item from session 3: schedule rows are now tappable and open a
+detail screen.
+
+## Part 0 — investigation
+
+### `GET /appointments/:id`
+
+Permission is evaluated at **the appointment's own studio**, not the caller's home one — a
+guest artist's view rights follow the record. Two failures come back and mean different
+things:
+
+- **404** — no such appointment, *or* it belongs to a studio the caller has no membership at.
+  Deliberately indistinguishable, so the route cannot be used to probe for records.
+- **403** — the caller is a member of that studio but lacks `appointments.view` there.
+
+The response is much richer than a list row: every appointment scalar including
+`finalCostCents`, `tipCents`, `closeoutNotes` and `notes`; `artist` (nested `user`, *not*
+flattened the way the list route flattens it); `client` with `phone`, `email`, referral code
+and SMS-consent timestamps; the project (`inquiry`) with placement, colour, budget and price
+estimate; `plannedSession` with `sessionNumber`/`totalSessions`; `giftCards`; `photos`;
+`liabilityWaiver` summary; `checkedOutBy`; the `studio`; and `fromGuestStudio`.
+
+### The finding that shaped the session
+
+**The route does not project this response per role.** Anyone holding `appointments.view` at
+that studio gets all of it — and `appointments.view` is on by default for ARTIST. So the
+money, the closeout notes and the client's phone number are all on the wire for an artist,
+and **every decision about what to actually display is the client's**.
+
+That is not a hypothetical: the API's own default sets (read from
+`apps/api/src/lib/permissions.ts`) do **not** give ARTIST `appointments.checkout`,
+`giftCards.view` or `clients.view`.
+
+Rather than re-deciding this, `apps/web`'s AppointmentDetail is the precedent, and it is
+explicit about its reasoning:
+
+| data | web's gate |
+| --- | --- |
+| final cost, tip, closeout notes | inside the `appointments.checkout` section |
+| gift card amounts/statuses | `giftCards.view`, its own separate gate — its comment: "the same financial detail `reports.viewFinancial` already keeps off an artist's dashboard by default" |
+| client phone / email | **never rendered.** Only their *presence* (`phones.length > 0`), and only inside a staff-gated send-channel picker |
+| staff management UI | `(OWNER \|\| FRONT_DESK) && !fromGuestStudio` |
+
+That last one matters and is easy to miss: a solo owner-artist reaching a host studio's
+appointment through an active guest membership carries a real OWNER role but has **no staff
+standing there** — `effectiveRoleAt` rejects every action server-side. Web learned this the
+hard way (its comment records a panel that rendered fully and then 403'd on every click).
+
+Pricing on the project (`priceEstimateLow`/`High`) *is* shown unconditionally by the web on
+this page — the `artistFieldVisibility` toggles that hide pricing from artists live on the
+**inquiries** routes, not this one. Mirrored rather than tightened, so the clients agree.
+
+## Part 1 — `packages/shared-types`
+
+`AppointmentDetail` and its sub-shapes. The file-level comment records the projection gap and
+the four gating rules, so the next client to consume this route inherits the reasoning rather
+than rediscovering it. Contact fields are typed (they are on the wire) with a note that they
+should not be displayed.
+
+## Part 2 — `src/lib/appointmentVisibility.ts`
+
+The gating rules as one pure function, kept out of the screen deliberately: this is the part
+most worth testing without rendering anything, because a mistake here is a data leak rather
+than a layout bug.
+
+```
+canSeeFinancials    -> appointments.checkout
+canSeeGiftCards     -> giftCards.view
+hasStaffStanding    -> (OWNER || FRONT_DESK) && appointment && !fromGuestStudio
+canSeeClientContact -> false, always
+```
+
+`canSeeClientContact` is a named, permanently-false field rather than an absence — so the
+decision is visible, has somewhere to be revisited, and is not something a later session
+quietly fills in by accident.
+
+**Nothing is gated on `hasStaffStanding` yet**, because the screen is read-only this session.
+It is computed anyway so the first action added cannot forget it. `appointment == null` (still
+loading) reads as false, matching web — a panel that flashes in and then vanishes is worse
+than one that arrives late.
+
+## Part 3 — the screen
+
+Header (client name, artist), then: a guest-studio banner when the record is not at the
+caller's home studio, said plainly and up front because it changes what any future action can
+do; a hero with the studio-timezone time range, duration, derived badge and
+consultation/deposit pills; then session plan, the work, booking note, waiver status, checkout
+(gated), gift cards (gated), photos, and a studio footer.
+
+Times go through session 3's studio-timezone helpers, and the zone is named whenever it
+differs from the phone's. `appointmentBadge`/`isDimmed` were narrowed to the fields they
+actually read, so the list row and the detail hero derive the same badge from the two
+differently-shaped responses without a cast.
+
+Photos are shown and open externally on tap; there is no upload or delete
+(`appointments.photos.manage` gates those, and they are actions).
+
+## Part 4 — verification
+
+From a clean tree and a fresh `npm ci`:
+
+- **`apps/web`** build 10.52s exit 0; **`apps/api`** build exit 0.
+- **`tsc --noEmit`** clean in `apps/mobile` and `packages/shared-types`.
+- **`expo export --platform ios`** — 1111 modules, no errors.
+- **Dev bundle**: manifest HTTP 200, `sdkVersion = 54.0.0`, dark; bundle HTTP 200, 6,659,403
+  bytes; React `19.1.0` once and `19.2.7` **zero** times; the visibility module, the
+  guest-studio banner and the detail 404 copy all present.
+
+**The visibility rules were verified against the API's real default permission sets**, imported
+from `apps/api/src/lib/permissions.ts` rather than retyped — so if a default ever changes, this
+check changes with it:
+
+| role | at | financials | giftCards | staffStanding | clientContact |
+| --- | --- | --- | --- | --- | --- |
+| OWNER | home | true | true | **true** | false |
+| OWNER | guest | true | true | **false** | false |
+| FRONT_DESK | home | true | true | true | false |
+| FRONT_DESK | guest | true | true | **false** | false |
+| **ARTIST** | home | **false** | **false** | false | false |
+| ARTIST | guest | false | false | false | false |
+| ARTIST + checkout | home | true | **false** | false | false |
+| (still loading) | — | true | true | **false** | false |
+
+The two that matter: an artist on their own studio's appointment sees **no** money, and an
+OWNER at a guest studio has **no** staff standing. The `ARTIST + checkout` row shows the two
+financial gates are genuinely independent, as on web.
+
+Formatters checked over their edge cases: `formatCents(5)` → `$0.05`, equal-bound estimates
+collapse to a single figure (`$400`, not `$400 – $400`), one-sided bounds read `From $400` /
+`Up to $600`, `formatEstimatedHours(1, null)` singularises to `1 hour estimated`, and both
+return `null` rather than an empty string when there is nothing to say.
+
+**Rendered and looked at**, same approach as session 3: a temporary preview route against
+fixture data, screenshotted at phone width, then deleted. Everything came out as intended —
+Fraunces hero, gold section titles, the guest banner, gated checkout figures, and the derived
+WAIVER PENDING badge.
+
+**Request construction**, `fetch` intercepted so nothing left the machine — and this is where
+the session found something.
+
+### A real gap found while verifying: unencoded path parameters
+
+Probing `fetchAppointment` with an id containing `/`, `?`, `&` and a space produced:
+
+```
+GET https://api.inkmanager.app/appointments/has spaces/and?chars
+```
+
+— a malformed URL that traverses into a different path segment and grows a stray query
+string. **Real ids are cuids and would have survived either way, which is exactly why this
+would never have been noticed.** The same pattern was already present in session 2's
+conversations module (thread, send, mark-read), so it was fixed in all five places rather than
+only the new one:
+
+```
+GET  /appointments/a%2F..%2Fb%3Fx%3D1%26y%3D2%20z
+GET  /conversations/a%2F..%2Fb%3Fx%3D1%26y%3D2%20z/messages
+GET  /conversations/ok/messages?cursor=cur%2Fsor%3Fx
+POST /conversations/a%2F..%2Fb%3Fx%3D1%26y%3D2%20z/messages
+POST /conversations/a%2F..%2Fb%3Fx%3D1%26y%3D2%20z/read
+```
+
+and a normal cuid still comes out untouched.
+
+**Live error mapping**: `GET /appointments/:id` with a junk token returns `401 fromApi=true`,
+non-transient, which `screenErrorMessage` turns into the session-expired copy added last
+session.
+
+### What is NOT verified
+
+No real appointment has ever been displayed. The visibility rules, formatters, request shapes
+and error mapping are all checked and the screen renders correctly against fixtures — but the
+gating has never been exercised against a real artist account on a real studio's data, which
+is the check that would actually catch a leak. That needs a credential and a device.
+
+### Owner walkthrough — what to check
+
+1. **Tap any appointment on Schedule.** It should open the detail screen; back returns you.
+2. **Times and date** must match the row you tapped, and the web's calendar for the same
+   session.
+3. **The badge in the hero** should match the badge on the row.
+4. **If you are the OWNER**, you should see Checkout figures (on a checked-out session) and
+   gift cards.
+5. **The check worth actually doing: log in as an ARTIST** (or temporarily turn
+   `appointments.checkout` off for a role in Settings → Permissions) and open the same
+   appointment. Final cost, tip, closeout notes and gift cards must be **absent entirely** —
+   not blank, not zero, not visible. If any figure shows, that is a leak and should be
+   reported rather than worked around.
+6. **A client's phone number or email must never appear** on this screen for anyone.
+7. **A guest-studio session**, if you have one, should show the "you are a guest here" banner
+   naming the host studio.
+8. **Pull to refresh**, and airplane-mode it to confirm the error state reads "Couldn't reach
+   the studio" rather than something about permissions.
+
+## Commits
+
+Branch **`mobile/session4`**, pushed, **not merged**:
+
+- `1127deb` — `mobile: appointment detail screen`
+- (this REPORT.md entry)
+
+## Open
+
+- **The phone gate**, now four sessions deep: login, Conversations, Schedule, and this.
+- **Read-only.** No checkout, reschedule, cancel, status change, waiver send/verify, photo
+  upload or notes. Each is separately permissioned; `hasStaffStanding` is already computed and
+  is the gate the first of them must use, alongside its own permission key.
+- **Appointment notes** (`GET /appointments/:id/notes`, OWNER/FRONT_DESK only) are a separate
+  route and are not fetched. The booking's own `notes` field is shown; the threaded notes are
+  not.
+- **Photos open in the system browser** rather than an in-app viewer, and there is no
+  pinch-zoom or swipe-through.
+- **Reference and placement images** from the project are typed but not rendered — the web
+  shows them with resolved metadata via a separate resolver; worth a pass of its own.
+- **The client is not linked.** Tapping through to a client record needs `clients.view`, which
+  ARTIST lacks by default, so it would be a dead end for the role most likely to tap it.
+- **No conversation link.** The web can start or open a thread with the client from here.
+- **`apps/web`'s calendar range is still browser-local** (session 3's finding), and
+  `colorForArtistId` is still duplicated between the two clients. Both unchanged.
+- **No app icon or splash art.** Still Expo placeholders.
