@@ -91,3 +91,72 @@ export const channelColors: Record<string, string> = {
 export function channelColor(channel: string): string {
   return channelColors[channel] ?? channelColors.OTHER;
 }
+
+/**
+ * Login-only tokens.
+ *
+ * The web's Login page is deliberately LOCKED to Editorial Gold — its
+ * `.login-shell` selector is the same one as
+ * `:root[data-theme="editorial-gold"]`, so the page renders identically
+ * whatever preset a studio has active. That "fixed platform identity"
+ * property is why these live apart from the palette above rather than
+ * being folded into it: they belong to one screen, not to the app.
+ *
+ * Every value is copied from apps/web/src/index.css, named after the
+ * custom property it came from.
+ */
+export const login = {
+  /** --color-card-glass. The frosted card fill — the photo stays softly visible behind it. */
+  cardGlass: '#100f0ed6',
+  /** --color-card-glass-opaque. Same RGB, no alpha — the fallback where blur is unavailable. */
+  cardGlassOpaque: '#100f0e',
+  /** --color-border-glass. Fainter than the app-wide border, by design. */
+  cardBorder: 'rgba(201, 154, 91, 0.1)',
+  /** --blur-card. */
+  cardBlur: 16,
+
+  /**
+   * .rings — three concentric circles behind the card. Pure CSS on web
+   * (no asset), so these are the real numbers, not a trace.
+   */
+  ring: [
+    { size: 520, color: 'rgba(201, 154, 91, 0.18)' },
+    { size: 780, color: 'rgba(201, 154, 91, 0.12)' },
+    { size: 1060, color: 'rgba(201, 154, 91, 0.07)' },
+  ],
+
+  /**
+   * .btn-gold-gradient — --btn-gold-light / --btn-gold-deep / --btn-gold-text,
+   * plus the faint white-to-dark sheen layered over the ramp and the
+   * low-opacity gold hairline. Note this is NOT the web LOGIN button's
+   * own treatment (that one is a flat --color-accent-button); it is the
+   * artist-page button token, adopted here deliberately.
+   */
+  buttonLight: '#dda65d',
+  buttonDeep: '#c9924e',
+  buttonText: '#0e0d0b',
+  buttonBorder: 'rgba(215, 164, 94, 0.34)',
+  buttonSheenTop: 'rgba(255, 255, 255, 0.08)',
+  buttonSheenBottom: 'rgba(0, 0, 0, 0.03)',
+
+  /**
+   * .hero-shade — two stacked gradients over the photograph. Both are
+   * rgba(12, 10, 8, x); only the alpha ramps, which is what keeps the
+   * scrim from tinting the image a different colour as it darkens.
+   */
+  scrimVertical: {
+    // Split into parallel tuples rather than a list of {color, at} pairs
+    // purely so the types survive: expo-linear-gradient requires readonly
+    // tuples of at least two entries, and `.map()` over an object list
+    // widens back to a plain array.
+    colors: ['rgba(12, 10, 8, 0.72)', 'rgba(12, 10, 8, 0.38)', 'rgba(12, 10, 8, 0.55)', 'rgba(12, 10, 8, 0.96)'],
+    locations: [0, 0.34, 0.66, 1],
+  },
+  scrimHorizontal: {
+    colors: ['rgba(12, 10, 8, 0.72)', 'rgba(12, 10, 8, 0.15)', 'rgba(12, 10, 8, 0.15)', 'rgba(12, 10, 8, 0.6)'],
+    locations: [0, 0.3, 0.7, 1],
+  },
+
+  /** The flat colour behind the photo while it loads, so nothing flashes. */
+  photoPlaceholder: '#0c0a08',
+} as const;

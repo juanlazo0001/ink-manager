@@ -1,66 +1,122 @@
+import { Image } from 'expo-image';
+import * as WebBrowser from 'expo-web-browser';
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Eyebrow, GoldButton } from '@/components/ui';
+import { GoldGradientButton } from '@/components/GoldGradientButton';
+import { LoginBackdrop } from '@/components/LoginBackdrop';
 import { useAuth } from '@/context/auth';
 import { API_URL } from '@/lib/api';
+import { forgotPasswordUrl } from '@/lib/forgotPassword';
 import { loginErrorMessage } from '@/lib/loginError';
-import { colors, hairline, radius, space, type } from '@/theme';
+import { colors, hairline, login as loginTokens, radius, space, type } from '@/theme';
+
+const WORDMARK = require('../../assets/login/wordmark.png');
+
+/**
+ * Below this height the wordmark and the card cannot both sit centred
+ * without crowding once the keyboard is up. iPhone SE is 667pt tall, so
+ * it takes the compact treatment.
+ */
+const COMPACT_HEIGHT = 700;
 
 export default function LoginScreen() {
   const { login } = useAuth();
+  const { height } = useWindowDimensions();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [focused, setFocused] = useState<'email' | 'password' | null>(null);
 
-  const canSubmit = email.trim().length > 0 && password.length > 0 && !submitting;
+  const compact = height < COMPACT_HEIGHT;
 
   async function onSubmit() {
-    if (!canSubmit) return;
-
+    if (submitting) return;
+    // Deliberately NOT disabled-until-valid. Web's button is always live
+    // (the form's own `required` does the validating), and a gold button
+    // that sits dimmed until both fields are filled reads as muted at
+    // rest -- which is the exact thing this pass set out to fix. Empty
+    // fields get the same inline error treatment as a rejected sign-in.
+    if (email.trim().length === 0 || password.length === 0) {
+      setError('Enter your email and password.');
+      return;
+    }
     setError(null);
     setSubmitting(true);
     try {
       await login(email.trim(), password);
-      // Deliberately no navigation call: the root layout's guards swap
-      // which routes exist the moment status flips to 'signedIn'.
+      // No navigation call: the root layout's guards swap which routes
+      // exist the moment status flips to 'signedIn'.
     } catch (err) {
       setError(loginErrorMessage(err));
       setSubmitting(false);
     }
   }
 
-  return (
-    <SafeAreaView style={styles.screen}>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <View style={styles.header}>
-            <Eyebrow style={styles.eyebrow}>Ink Manager</Eyebrow>
-            <Text style={styles.title}>Sign in{'\n'}to your studio</Text>
-          </View>
+  async function onForgotPassword() {
+    try {
+      await WebBrowser.openBrowserAsync(forgotPasswordUrl(API_URL), {
+        // An in-app browser sheet rather than a hand-off to Safari, so
+        // dismissing it returns straight to this screen.
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+        toolbarColor: colors.bg,
+        controlsColor: colors.accent,
+      });
+    } catch {
+      // Nothing useful to say if the system browser refuses to open, and
+      // an error banner here would be about the wrong thing entirely.
+    }
+  }
 
-          <View style={styles.form}>
-            <View style={styles.field}>
-              <Eyebrow>Email</Eyebrow>
+  return (
+    <View style={styles.root}>
+      <LoginBackdrop />
+
+      <SafeAreaView style={styles.safe}>
+        <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <ScrollView
+            contentContainerStyle={[styles.content, compact && styles.contentCompact]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}
+            // This is what actually guarantees the password field clears
+            // the keyboard on a short phone — KeyboardAvoidingView alone
+            // runs out of room once the card is taller than what is left
+            // of the viewport.
+            automaticallyAdjustKeyboardInsets
+          >
+            <View style={styles.card}>
+              {/* Inside the card, as its first child -- same as web,
+                  where the wordmark is the first element of
+                  .login-panel-surface rather than floating above it. */}
+              <Image
+                source={WORDMARK}
+                style={[styles.wordmark, compact && styles.wordmarkCompact]}
+                contentFit="contain"
+                accessibilityLabel="Ink Manager"
+              />
+
               <TextInput
                 style={[styles.input, focused === 'email' && styles.inputFocused]}
                 value={email}
                 onChangeText={setEmail}
                 onFocus={() => setFocused('email')}
                 onBlur={() => setFocused(null)}
-                placeholder="you@studio.com"
+                placeholder="Email"
                 placeholderTextColor={colors.fgMuted}
+                accessibilityLabel="Email"
                 autoCapitalize="none"
                 autoCorrect={false}
                 autoComplete="email"
@@ -69,18 +125,16 @@ export default function LoginScreen() {
                 returnKeyType="next"
                 editable={!submitting}
               />
-            </View>
 
-            <View style={styles.field}>
-              <Eyebrow>Password</Eyebrow>
               <TextInput
                 style={[styles.input, focused === 'password' && styles.inputFocused]}
                 value={password}
                 onChangeText={setPassword}
                 onFocus={() => setFocused('password')}
                 onBlur={() => setFocused(null)}
-                placeholder="••••••••"
+                placeholder="Password"
                 placeholderTextColor={colors.fgMuted}
+                accessibilityLabel="Password"
                 secureTextEntry
                 autoCapitalize="none"
                 autoComplete="current-password"
@@ -88,61 +142,105 @@ export default function LoginScreen() {
                 onSubmitEditing={onSubmit}
                 editable={!submitting}
               />
+
+              {error ? (
+                // Red, and only here: a rejected sign-in is exactly the
+                // punctuation case the palette reserves it for.
+                <View style={styles.errorRow}>
+                  <View style={styles.errorRule} />
+                  <Text style={styles.error} accessibilityRole="alert">
+                    {error}
+                  </Text>
+                </View>
+              ) : null}
+
+              <GoldGradientButton label="Sign in" onPress={onSubmit} busy={submitting} style={styles.button} />
+
+              <Pressable
+                onPress={onForgotPassword}
+                accessibilityRole="link"
+                hitSlop={8}
+                style={({ pressed }) => [styles.forgot, pressed && styles.forgotPressed]}
+              >
+                <Text style={styles.forgotLabel}>FORGOT PASSWORD?</Text>
+              </Pressable>
             </View>
 
-            {error ? (
-              // Red, and only here: a rejected sign-in is exactly the
-              // punctuation case the palette reserves it for.
-              <View style={styles.errorRow}>
-                <View style={styles.errorRule} />
-                <Text style={styles.error} accessibilityRole="alert">
-                  {error}
-                </Text>
-              </View>
-            ) : null}
-
-            <GoldButton label="Sign in" onPress={onSubmit} disabled={!canSubmit} busy={submitting} />
-          </View>
-
-          {/* Which API this build talks to is otherwise invisible on a
-              phone, and getting it wrong is the most likely reason a login
-              "mysteriously" fails during testing. */}
-          <Text style={styles.apiHint}>{API_URL.replace(/^https?:\/\//, '')}</Text>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+            {/* Which API this build talks to is otherwise invisible on a
+                phone, and getting it wrong is the most likely reason a
+                login "mysteriously" fails during testing. */}
+            <Text style={styles.apiHint}>{API_URL.replace(/^https?:\/\//, '')}</Text>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  root: { flex: 1, backgroundColor: loginTokens.photoPlaceholder },
+  safe: { flex: 1 },
   flex: { flex: 1 },
   content: {
     flexGrow: 1,
     justifyContent: 'center',
+    alignItems: 'center',
     paddingHorizontal: space.xl,
-    paddingVertical: space.xxxl,
-    gap: space.xxxl,
+    paddingVertical: space.xxl,
   },
-  header: { gap: space.md },
-  eyebrow: { color: colors.accent },
-  title: { ...type.display, fontSize: 34, lineHeight: 40, color: colors.fg },
-  form: { gap: space.lg },
-  field: { gap: space.sm },
+  contentCompact: { paddingVertical: space.lg },
+
+  // Web renders the wordmark at h-24 (96px) with mb-2. Matched here, and
+  // trimmed on a short screen where the card needs the room more.
+  wordmark: { width: '100%', height: 96, marginBottom: space.sm },
+  wordmarkCompact: { width: '100%', height: 72, marginBottom: space.xs },
+
+  // .login-panel-surface. The blur is deliberately NOT reproduced with a
+  // BlurView: the repo's design rules warn that backdrop-filter on a
+  // phone is a real performance risk, and --color-card-glass is already
+  // ~84% opaque (#100f0e at d6), so very little of the photograph reads
+  // through it on web either. A translucent fill over the photo gets the
+  // same result at no cost.
+  card: {
+    width: '100%',
+    // max-w-sm on web.
+    maxWidth: 384,
+    backgroundColor: loginTokens.cardGlass,
+    borderWidth: hairline,
+    borderColor: loginTokens.cardBorder,
+    borderRadius: radius.card,
+    padding: space.xxl,
+  },
+
+  // .login-input — note the 5px radius, which is web's own literal, not
+  // the card's --radius-card.
   input: {
     backgroundColor: colors.inputBg,
     borderWidth: hairline,
     borderColor: colors.inputBorder,
-    borderRadius: radius.input,
+    borderRadius: 5,
     color: colors.fg,
     ...type.body,
-    fontSize: 16,
+    fontSize: 15,
     paddingHorizontal: space.md,
     paddingVertical: space.md,
+    marginBottom: space.xl,
   },
   inputFocused: { borderColor: colors.accent },
-  errorRow: { flexDirection: 'row', gap: space.md, alignItems: 'stretch' },
+
+  errorRow: { flexDirection: 'row', gap: space.md, alignItems: 'stretch', marginBottom: space.lg },
   errorRule: { width: 2, backgroundColor: colors.dangerStrong, borderRadius: 1 },
   error: { ...type.small, color: colors.danger, flex: 1 },
-  apiHint: { ...type.meta, color: colors.fgMuted, textAlign: 'center' },
+
+  // .login-button's own margin-top: 1em, on top of the password
+  // field's mb-6 -- ~36px of separation in total, matching web.
+  button: { marginTop: space.md },
+
+  // Jura, 11px, bold, uppercase, tracking 0.14em, --login-smoke, centred,
+  // mt-4 — the web link's exact treatment.
+  forgot: { marginTop: space.lg, alignSelf: 'center' },
+  forgotPressed: { opacity: 0.6 },
+  forgotLabel: { ...type.label, fontSize: 11, letterSpacing: 1.54, color: colors.fgMuted },
+
+  apiHint: { ...type.meta, color: colors.fgMuted, marginTop: space.xl, textAlign: 'center' },
 });
