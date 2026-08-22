@@ -21804,3 +21804,234 @@ Branch **`mobile/session4b`**, pushed, **not merged**:
   a wider Editorial Gold pass over the authenticated screens is a separate piece of work.
 - **No app icon or splash art.** Still Expo placeholders — and now conspicuously so, given
   the login screen has real brand assets.
+
+# Mobile Session 5 — Tasks + Inquiries tabs
+
+Branch **`mobile/session5`**, pushed to origin, **not merged**. `apps/api`, `apps/web`,
+`schema.prisma` and root dependency resolution are untouched; the lockfile did not move.
+
+## Two premises corrected before any code was written
+
+**The prior work is not merged.** The brief said "Auth, Conversations, Schedule + appointment
+detail are built and merged" and "branch off main". `main` is still at `1db4389` and contains
+only the session‑1 scaffold — `login.tsx`, `api.ts`, `tokenStorage.ts`, the old
+`constants/theme.ts`. Sessions 2, 3, 4 and 4B are all unmerged. Branching off `main` as
+written would have discarded Conversations, Schedule, appointment detail,
+`packages/shared-types` and the login rebuild, and the two new tabs would have had no tab
+shell to live in. Branched off **`mobile/session4b`** instead, which is a clean linear
+superset of 2 → 4B (verified). Ten commits ahead of `main` at the start.
+
+**The brief was truncated**, cutting off mid-sentence in Part 1 item 2 and losing Part 1's
+remaining items, all of Part 2 (Inquiries) and Part 3 (verify/report). Part 0 was complete, so
+that was investigated and reported first, and the one genuinely blocking question — how many
+segments, given the API's real shape — was answered ("three for staff, one for artists"). The
+Inquiries tab was then built to the session's stated goal ("completes v1 screen scope")
+following the established pattern; its specific requirements never arrived, so the choices
+made are called out below rather than presented as spec.
+
+## Part 0 — investigation
+
+### Tasks: not "My Tasks vs Studio Queue"
+
+`GET /tasks` is **one call returning three lists**, and the split is by *relationship*, not
+ownership:
+
+| list | what it is | gate |
+| --- | --- | --- |
+| `personal` | real `PersonalTask` rows assigned **to** the caller | — |
+| `assignedByMe` | rows the caller created **for** someone else | route skips the query entirely for ARTIST |
+| `system` | computed work items from twelve sources, never persisted | `tasks.viewQueue` |
+
+The two kinds behave differently in a way any UI has to respect. A personal task is a row:
+`PATCH /tasks/personal/:id` with `completedAt` set completes it and `null` reopens it — and
+that route is **assignee-only**, 404ing for anyone else, so the person who delegated a task
+cannot tick it off. A system task is derived from current data; there is nothing to complete,
+and `POST /tasks/dismiss` is the only write, hiding it for that one user rather than the
+studio.
+
+Ordering comes from the API (`completedAt asc, dueAt asc, createdAt asc`) and is preserved,
+not re-sorted. Overdue on web is `dueAt && !completedAt && dueAt < now`, styled
+`border-danger/40 text-danger`.
+
+### Inquiries: the opposite of `GET /appointments/:id`
+
+Part 0.3 asked whether inquiry detail returns everything to any authenticated role the way the
+appointments route does, and whether to apply session 4's client-side gating as a second
+instance of that gap. **It does not, and there is no second instance.** This surface already
+projects per-role server-side, three ways over:
+
+1. **Separate route families.** `GET /inquiries` and `GET /inquiries/:id` are
+   `requireRole(OWNER, FRONT_DESK)` — an artist gets a 403, not a filtered list. Artists have
+   `GET /inquiries/assigned-to-me` and `/assigned-to-me/:id`, scoped to
+   `assignedArtistId === their own artist id`.
+2. **A narrower projection.** `ARTIST_INQUIRY_SELECT` returns the client as `firstName` /
+   `lastName` only — never email or phone.
+3. **`applyArtistFieldVisibility()`** on top, honouring the studio-configurable
+   `pricingDetail` and `internalNotes` toggles, batched per studio because one artist's list
+   can span several.
+
+Plus `hasPermissionAt(inquiry.studio.id, 'inquiries.view')` and `fromGuestStudio` on each row.
+
+So this route family is the model `GET /appointments/:id` ought to follow. That strengthens
+session 4's finding rather than repeating it, and it means **no client-side gating module was
+needed here** — the app's only job is to call the right route for the caller's role.
+
+Transitions are gated on permission keys evaluated at **the inquiry's own studio**
+(`hasPermissionAt`), never on role: `waitlist` / `unwaitlist` / `reopen` / `release` /
+`mark-good-candidate` / `complete-project` / `reopen-project` / `archive` → `inquiries.edit`;
+`mark-lost` → `inquiries.markLost`; `assign` → `inquiries.assignArtist`; `revise-estimate` →
+`inquiries.enterEstimate`. `respond` is the artist's own path.
+
+### Permission defaults
+
+Imported from `apps/api/src/lib/permissions.ts` rather than retyped, so the check moves if a
+default does:
+
+| key | OWNER | FRONT_DESK | ARTIST |
+| --- | --- | --- | --- |
+| `tasks.viewQueue` | yes | yes | **no** |
+| `tasks.manageOwn` | yes | yes | yes |
+| `tasks.assignToOthers` | yes | yes | **no** |
+| `inquiries.view` | yes | yes | yes |
+| `inquiries.edit` / `markLost` / `assignArtist` | yes | yes | **no** |
+| `inquiries.enterEstimate` | yes | yes | yes |
+
+## Part 1 — Tasks tab
+
+Three segments for staff, one for artists — derived from the caller's **permissions**, not
+their role name, so a studio that grants an artist `tasks.viewQueue` gets the segment and one
+that revokes it from front desk loses it. The `SegmentedControl` renders nothing at all when
+there is only one segment, which on this app is the normal artist case rather than an edge
+case. Badges count **open** work only; a badge that counted finished tasks would never go
+down.
+
+Rows make the two kinds visibly different rather than flattening them:
+
+- **Personal** — a checkbox (gold when done, struck-through title, row dimmed). Optimistic
+  toggle, reconciled against the server's returned row, reverted on failure so a tick that
+  did not happen never persists on screen.
+- **Delegated** — a clock glyph in the checkbox's place, no completion offered. `canComplete`
+  is load-bearing: the PATCH is assignee-only, so offering the control there would guarantee
+  a 404 on tap.
+- **System** — a gold marker, the task type as an eyebrow, and a dismiss `×`. Optimistically
+  removed and restored on failure, because a dismissal that silently failed would look done
+  until the next poll brought it back unexplained.
+
+**Overdue is red**, which is what red is reserved for. It is an instant comparison against
+"now" — not a calendar-day question — so unlike the Schedule tab it correctly needs no studio
+timezone, matching how the web derives it.
+
+A system task's `deepLink` is a **web** path. Only `Appointment` and `Conversation` have a
+mobile screen behind them today, so only those rows are tappable; the rest carry "Open on the
+web to action this" rather than being tappable and dead. An unrecognised task type de-snakes
+into a readable label rather than vanishing, so a source added server-side appears as itself.
+
+## Part 2 — Inquiries tab
+
+Read-only. The route family is chosen by role; nothing is re-filtered client-side.
+
+`scope=all` on the artist route is load-bearing rather than a detail: without it the route
+returns **only** `ARTIST_ASSIGNED` — the review inbox — which as a whole "Inquiries" tab would
+look like most of an artist's pipeline had disappeared.
+
+**Open / closed rather than a status filter**, deliberately. The staff route accepts repeated
+`status` params and the artist route accepts none, so a status filter would work for one role
+and silently do nothing for the other. Open/closed is derivable from data both routes return,
+so it behaves identically for everyone.
+
+The two responses are genuinely different projections, not one a subset of the other, so each
+is mapped explicitly onto the row's own shared shape rather than the row being typed against
+either. Status labels and tones mirror the web's `StatusPill` exactly — and red is reached
+**only** by `CLOSED_LOST`, with `COLD_LEAD` staying neutral, which web's own comments require.
+
+### Choices made in the absence of the spec
+
+- Read-only, no detail screen — consistent with how Schedule shipped before its detail screen
+  followed in its own session. Rows are deliberately **not** tappable rather than tappable and
+  dead.
+- No transition buttons. Every one is separately permissioned and several belong to
+  multi-step flows (estimate, scheduling, deposit) that have no mobile equivalent.
+- No search, despite the staff route supporting `q` — it would work for staff and do nothing
+  for artists, the same asymmetry that ruled out the status filter.
+
+## Part 3 — verification
+
+From a clean tree and a fresh `npm ci`: `apps/web` built in 15.32s exit 0; `apps/api` exit 0;
+`tsc --noEmit` clean in `apps/mobile` and `packages/shared-types`;
+`expo export --platform ios` 1140 modules, no errors. Dev bundle: manifest HTTP 200 reporting
+`sdkVersion = 54.0.0`, bundle HTTP 200 at 6,828,950 bytes, React `19.1.0` once and `19.2.7`
+**zero** times, with the segment logic, the artist `scope=all` route and the web-only task
+copy all present.
+
+**Logic checked directly**, against the API's real permission defaults:
+
+- Segments: OWNER and FRONT_DESK → `MINE, DELEGATED, QUEUE`; ARTIST → `MINE` only. An artist
+  granted `tasks.viewQueue` → `MINE, QUEUE`; a front desk with it revoked → `MINE, DELEGATED`.
+- Overdue across five cases, including the boundary (due exactly now → not overdue) and a
+  completed-but-past-due task (not overdue).
+- Badge counts ignore completed work; `null` data yields 0 rather than throwing.
+- System task routing: `Appointment` → `/appointment/[id]`, `Conversation` →
+  `/conversation/[id]`, `LiabilityWaiver` / `Inquiry` / an invented future type → no route,
+  row not tappable.
+- Every one of the eleven `InquiryStatus` values has a label and a tone, an unknown value
+  de-snakes to neutral, and `danger` is reached by `CLOSED_LOST` alone.
+
+**Request construction**, `fetch` intercepted so nothing left the machine — 12 requests
+captured, **0 sent**. Confirmed: completing sends a timestamp and reopening sends `null`;
+dismiss posts the `dismissalKey`, not the `entityId`; the artist route carries `scope=all`;
+and hostile ids (`a/../b?x=1&y=2 z`) are URL-encoded in all four path positions.
+
+**Rendered and looked at**, via a temporary preview route since neither tab is reachable
+without a session. It earned its place again: **the system row nested the dismiss `Pressable`
+inside the row's own `Pressable`** — invalid HTML on web, and ambiguous touch handling on
+native where the outer target can swallow or double-fire with the inner one. They are siblings
+now, and the console is clean. The render also confirmed the overdue pill in red, the
+struck-through completed row, the clock glyph on a delegated row, and the status tones.
+
+### What is NOT verified
+
+Neither tab has been rendered against real data. No task has been completed or dismissed, and
+no real inquiry list has been drawn. The segment rule has never run against a real artist
+account — which is the check that would actually confirm an artist sees one segment rather
+than three empty ones.
+
+### Owner walkthrough
+
+1. **Tasks** should show three segments (MINE / DELEGATED / QUEUE) as OWNER, with counts.
+2. **Tick something on MINE.** It should strike through and drop into a DONE section; tick it
+   again to reopen. Compare against the web Tasks page.
+3. **DELEGATED rows must have no checkbox** — a clock glyph instead. That is not a styling
+   choice; the API would 404.
+4. **QUEUE** — dismiss one with the `×`. It should vanish and stay gone on refresh. Items with
+   a mobile destination (appointments, conversations) should open it; the rest should say so
+   rather than doing nothing.
+5. **An overdue task must read red.** Nothing else on the screen should.
+6. **The check worth doing: log in as an ARTIST.** Tasks should show **one** segment with no
+   control at all, and Inquiries should show only work assigned to them, with the subtitle
+   "Assigned to you".
+7. **Inquiries** — compare the open list against the web for the same account, and confirm
+   OPEN/CLOSED splits sensibly. A guest-studio inquiry should show its studio pin.
+
+## Commits
+
+Branch **`mobile/session5`**, pushed, **not merged**:
+
+- `904b45e` — `mobile: tasks + inquiries tabs`
+- (this REPORT.md entry)
+
+## Open
+
+- **The phone gate**, now covering the full v1 tab set: login, Conversations, Schedule +
+  appointment detail, Tasks, Inquiries.
+- **Five branches remain unmerged** (`mobile/session2` → `mobile/session5`), each stacked on
+  the last. `mobile/session5` contains all of them; merging it merges the lot.
+- **No inquiry detail screen**, and no transitions. The natural next session, mirroring how
+  appointment detail followed Schedule.
+- **No task creation.** `POST /tasks/personal` is wired in `src/lib/tasks.ts` and unused —
+  deliberately, since a create form needs a date picker and an assignee picker that do not
+  exist yet.
+- **System tasks with no mobile destination** (waivers, inquiries, deposit forms, flash
+  requests) can only be dismissed from the phone. They shrink as more screens land.
+- **`GET /appointments/:id` still returns everything to any role** — session 4's finding,
+  unchanged, and now with the inquiries routes as a worked example of the fix.
+- **No app icon or splash art.** Still Expo placeholders.
