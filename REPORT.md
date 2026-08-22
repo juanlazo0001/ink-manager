@@ -20238,3 +20238,282 @@ actually references.
 
 Nothing outstanding on the Edition track. The email to Twilio has not been drafted or
 sent — that was never started, and is not implied by this entry.
+
+# Mobile Session 1 — Expo scaffold + auth (`apps/mobile`)
+
+New app, `apps/mobile`: an Expo / React Native client that logs a staff user in against the
+existing production API. Nothing outside `apps/mobile` changed except the root
+`package-lock.json`. `apps/api`, `apps/web`, `packages/` and `schema.prisma` are untouched, as
+the brief required — and no API or CORS change turned out to be needed, because React Native's
+`fetch` is not subject to browser CORS.
+
+## Part 0 — what the investigation actually found
+
+Every item below was read out of the code or verified live, not assumed.
+
+**1. Root workspaces / npm.** `package.json` declares `"workspaces": ["apps/*", "packages/*"]`,
+so `apps/mobile` is picked up with no root change at all. npm **10.2.4**, Node **v24.18.0**.
+That npm version matters — see the hoisting problem below.
+
+**2. The login endpoint.** `apps/api/src/routes/auth.ts`, mounted with a bare
+`app.use(authRouter)` (no prefix), so the path is **`POST /login`**, not `/auth/login` — even
+though every *other* route in that same file is `/auth/*`.
+
+- Request: `{ email, password }`.
+- Success response: **`{ token }` and nothing else.** There is no user object, no name, no
+  studio. Anything the UI wants to show about the logged-in user is a second request.
+- JWT payload (`AuthPayload`, `apps/api/src/middleware/auth.ts`): `{ userId, studioId, role }`
+  plus `iat` added by `jsonwebtoken`. Signed with `expiresIn: "7d"`.
+- Distinct 401 branches worth knowing about, all checked *before* the password comparison:
+  a pending-invite account ("Check your email to activate your account."), an unverified
+  self-serve signup (`code: "email_not_verified"`), a deactivated account, and the generic
+  `"invalid credentials"`.
+
+**3. How the token is attached.** `apps/web/src/lib/api.ts` reads `localStorage` key
+`ink-manager-token` and sends `Authorization: Bearer <token>`. `requireAuth` parses exactly
+that. Note that `requireAuth` also does a live DB lookup on every request — `isActive`,
+`deletedAt`, and `passwordChangedAt` vs. the token's own `iat` — so a syntactically valid,
+unexpired JWT can still be rejected. That is why the mobile session restore revalidates
+against the API rather than trusting the token (see Part 2).
+
+**4. Production API base URL: `https://api.inkmanager.app`.** `apps/web/.env` only holds the
+local `http://localhost:4000`; the production value is injected at build time on Railway. Found
+it in prior REPORT.md entries and in `.claude/settings.local.json`'s recorded prod-preview build
+commands, then **confirmed live**: `POST https://api.inkmanager.app/login` with an empty body
+returns `400 {"error":"email and password are required"}`.
+
+**5. `packages/` is empty.** Confirmed — the directory exists and contains nothing. The
+workspace glob matches zero packages there.
+
+**6. Node v24.18.0** against Expo SDK **57** (latest stable; `expo@latest` = 57.0.15). Fine.
+
+Nothing in Part 0 contradicted the plan, but items 2 and 4 changed the implementation: the
+login response carries no user, so the app fetches `GET /users/me` (+ `GET /studios/:studioId`
+for the display name) straight after login.
+
+## Part 1 — scaffold
+
+`npx create-expo-app@latest apps/mobile --template default` → Expo SDK 57, **Expo Router**
+(the template default, so that is what was kept), TypeScript, `src/` layout with an `@/*` path
+alias. The template's demo tabs app, its example components, its Expo-branded assets and its
+MIT `LICENSE` were removed; the generated `AGENTS.md`/`CLAUDE.md` (which just say "read the
+SDK 57 docs") were kept as genuinely useful.
+
+`metro.config.js` is configured for the monorepo — repo root in `watchFolders`, both
+node_modules directories in `resolver.nodeModulesPaths` with app-local first, and
+`disableHierarchicalLookup` on so a hoisted copy can't be bundled alongside a nested one. The
+file carries comments explaining why each is needed.
+
+`app.json`: name **"Ink Manager"**, slug **`ink-manager`**, `userInterfaceStyle: "dark"`,
+scheme `inkmanager`, dark splash/adaptive-icon background (`#0e0b08`). Placeholder icon and
+splash from the template, as the brief allowed. All of it was read back off the running dev
+server's own manifest, not just off the file:
+`name = Ink Manager | slug = ink-manager | userInterfaceStyle = dark | scheme = inkmanager`.
+
+### Deviation 1 — React is 19.2.7, not the 19.2.3 the SDK pins
+
+The template pins `react`/`react-dom` at exactly `19.2.3`. The workspace root already resolves
+`19.2.7` for `apps/web`, so npm nested a *second* copy of React under `apps/mobile` — which
+React Native cannot tolerate. `react-native@0.86.2`'s own peer range is `^19.2.3`, so `19.2.7`
+satisfies it; matching the root leaves exactly one React in the tree.
+
+The cost is cosmetic and worth recording: `npx expo install --check` now reports
+`react@19.2.7 - expected version: 19.2.3` (and the same for `react-dom`). That warning is
+expected and should **not** be "fixed" by downgrading — doing so re-creates the duplicate-React
+problem.
+
+### Deviation 2 — `experiments.typedRoutes` is off, and `expo start --web` does not work
+
+Not a preference. A real dependency-hoisting conflict, traced to its root:
+
+- `expo-router` depends on `react-is@^19.1.0`.
+- The workspace root already resolves **`react-is@16.13.1`**, pulled in through `apps/web`'s
+  dependency tree.
+- npm therefore cannot hoist `react-is@19` and places it at `apps/mobile/node_modules/react-is`
+  — and, to keep that copy visible, places **`expo-router` itself** at
+  `apps/mobile/node_modules/expo-router` rather than at the root.
+- `@expo/router-server` *does* hoist to the root, and reaches for `expo-router` with a plain
+  Node `require`, which cannot see into `apps/mobile/node_modules`. Two separate crashes come
+  out of this: `expo start` dies on startup with
+  `Cannot find module 'expo-router/_ctx-shared'` (typed-route generation), and
+  `expo start --web` serves a 500 with `Cannot find module 'expo-router/internal/routing'`
+  (the SSR route manifest).
+
+Turning `typedRoutes` off removes the first crash entirely. **Metro is unaffected either way** —
+its resolution goes through `resolver.nodeModulesPaths`, which lists both directories — so the
+native bundle, which is the actual target, builds and serves normally. The only losses are
+route-string autocompletion and the web target.
+
+Two fixes were tried and rejected:
+
+- Declaring `expo-router` (and its companions `@expo/ui`, `expo-glass-effect`, `expo-symbols`,
+  `@expo/metro-runtime`) as direct `apps/mobile` dependencies — no effect on placement.
+- Declaring `expo-router` in the **root** `package.json` to force it up — fails with `ERESOLVE`,
+  because its peers (`react-native` et al.) only exist at the workspace level.
+
+The real fix is getting `react-is@19` to the workspace root, which means changing `apps/web`'s
+dependency tree — explicitly out of scope for this session, and not worth a root `overrides`
+entry that would silently move `apps/web` from `react-is@16` to `19`. **Left as an open item**
+(see below). The full chain is written up in `apps/mobile/README.md` so the next session doesn't
+have to re-derive it.
+
+### Root lockfile impact
+
+`package-lock.json` is the only file changed outside `apps/mobile`. Comparing resolved versions
+package-by-package against the pre-session lockfile: **547 packages added, 0 removed, and
+exactly 6 changed** — `baseline-browser-mapping`, `browserslist`, `caniuse-lite`,
+`electron-to-chromium`, `node-releases`, `update-browserslist-db`, all semver-compatible patch
+bumps of browserslist data. Nothing `apps/web` or `apps/api` depends on moved.
+
+## Part 2 — auth
+
+Files (all under `apps/mobile/`):
+
+| File | Role |
+| --- | --- |
+| `src/lib/api.ts` | fetch wrapper, base URL, `ApiError` |
+| `src/lib/tokenStorage.ts` | `saveToken` / `getToken` / `clearToken` over expo-secure-store |
+| `src/lib/loginError.ts` | maps a thrown error to a message a person can act on |
+| `src/context/auth.ts` | context, types, `useAuth()` |
+| `src/context/AuthContext.tsx` | `AuthProvider` — login, logout, launch restore |
+| `src/app/_layout.tsx` | splash gating + `Stack.Protected` route guards |
+| `src/app/login.tsx` | login screen |
+| `src/app/index.tsx` | placeholder home (name, role, studio, logout) |
+| `src/constants/theme.ts` | the handful of colors this session needs |
+| `metro.config.js`, `app.json`, `README.md`, `package.json`, `tsconfig.json` | scaffold |
+
+**Base URL.** `EXPO_PUBLIC_API_URL`, defaulting to `https://api.inkmanager.app`. The fallback is
+production deliberately: a phone running Expo Go cannot reach the dev machine's `localhost`, so
+defaulting to localhost would mean every unconfigured run fails. Pointing at a local API is the
+opt-in case (set the var to the dev machine's LAN IP). `EXPO_PUBLIC_*` vars are inlined at
+**build** time, so changing it needs a dev-server restart, not just a reload.
+
+**Token storage.** `expo-secure-store` (iOS Keychain / Android Keystore), not AsyncStorage — the
+JWT is a 7-day bearer credential. Reads and deletes swallow keystore errors (a failed read must
+degrade to "logged out", never crash the launch); the write deliberately does not, because
+silently failing to persist would look like a login that forgets itself.
+
+**Session restore does not decode the JWT.** `apps/web` reads `userId`/`studioId`/`role` straight
+out of the token payload. The mobile client instead calls `GET /users/me`. Two reasons, both
+already written down as standing rules in this repo: a token's studio claims go stale for the
+token's full 7-day life, and `requireAuth` re-validates the account (deactivation, password
+change, deletion) on every request — so a 401 from `/users/me` is the *authoritative* "this
+token is dead," where an `exp` check is only a guess. The studio's display name comes from a
+second call, `GET /studios/:studioId`; that one is allowed to fail without failing the login,
+since a missing studio name is a degraded display, not a broken session.
+
+**What a failed restore does with the token** is a deliberate split: a `401` that genuinely came
+from the API drops the stored token, so the next launch doesn't repeat a doomed request.
+Anything else — offline, a 5xx, Railway's edge answering mid-deploy — **keeps** it. The user
+sees the login screen this launch, but a working connection later restores them without
+retyping a password.
+
+**Routing.** `Stack.Protected guard={...}` rather than an imperative redirect: the route a
+session isn't entitled to is never registered at all, so no deep link or stale back-stack entry
+can land on it. The splash screen is held across the SecureStore read and the revalidation, so a
+returning user goes splash → home with no login screen flashing past.
+
+**Styling** is minimal, as briefed, but the values are lifted verbatim from `apps/web`'s own
+canonical `editorial-gold` token block in `index.css` (`--color-bg #0e0b08`,
+`--color-accent-button #d5a05c`, `--color-input-bg #0f0e0d`, and so on) rather than invented,
+so the two clients don't drift before the real design pass starts. Red appears only as error
+text, per the standing rule.
+
+### The failure path, verified live rather than asserted
+
+The login error mapping was pulled out of the screen into `src/lib/loginError.ts` specifically
+so it is a pure function with no React Native imports and can be driven directly from Node.
+The **real** `api.ts` and `loginError.ts` modules were then run against the live production API
+and against deliberately broken hosts:
+
+| Case | Response | `status` / `fromApi` | Message shown |
+| --- | --- | --- | --- |
+| Wrong password (production) | `401 {"error":"invalid credentials"}` | 401 / true | "Email or password is incorrect." |
+| Missing fields (production) | `400 {"error":"email and password are required"}` | 400 / true | API message, passed through |
+| Unreachable service (nonexistent `*.up.railway.app`) | Railway edge `404`, no `error` field | 404 / **false** | "Can't reach Ink Manager right now. Try again in a moment." |
+| DNS failure / offline | `fetch` rejects | 0 / **false** | "Can't reach Ink Manager right now. Try again in a moment." |
+
+The last two are the ones that matter. `apps/web`'s `ApiError.fromApi` discriminator was carried
+over rather than reinvented precisely so an unreachable API can never be reported to a user as a
+rejected password — the same conflation that took the public intake page down (see the
+2026-08-21 entry above). Only the generic `"invalid credentials"` is rewritten; every other 401
+this route can return is already a real sentence (deactivated account, pending invite,
+unverified email) and is shown as-is.
+
+## Part 3 — verification
+
+Per the repo's "trusting a build" rule, everything below was run from a **clean state**:
+working tree clean apart from two untracked files that predate this session
+(`marketing/package-lock.json`, `public/desktop/screenshots/ink-manager-portal-restyle-v3.html`,
+both left untouched), then `rm -rf node_modules apps/mobile/node_modules` and a fresh `npm ci`.
+
+- `npx tsc --noEmit` in `apps/mobile` — **clean** (exit 0).
+- `npx expo export --platform ios` — **1113 modules bundled, no errors**, 2.4 MB Hermes bytecode.
+- `npx expo start` — starts clean, no crash, `Waiting on http://localhost:8099`.
+- The **actual dev bundle Expo Go fetches** was pulled over HTTP, via the URL from the dev
+  server's own manifest (`.../expo-router/entry.bundle?platform=ios&dev=true&...`):
+  **HTTP 200, 5,640,146 bytes**. Grepping it confirms `api.inkmanager.app` and the
+  "Email or password is incorrect." string are both really in the shipped bundle.
+- **Regression check on the rest of the monorepo, from the same clean `npm ci`:**
+  `apps/web` `npm run build` (`tsc -b && vite build`) — **built in 10.72s, exit 0**;
+  `apps/api` `npm run build` (`tsc`) — **exit 0**. Adding the workspace broke neither.
+
+Not verified, and stated plainly: **nobody has logged in from a real phone yet.** The success
+path (`POST /login` → 200 → `/users/me` → `/studios/:id` → home screen) has not been exercised
+end to end, because that needs a real staff credential and a device. Every *failure* path has
+been exercised against production. `expo start --web` could not be used as a substitute — see
+Deviation 2.
+
+### Owner walkthrough (PowerShell, iPhone + Expo Go)
+
+Install **Expo Go** from the App Store first. Then, from the repo root:
+
+```powershell
+npm install
+cd apps\mobile
+npx expo start
+```
+
+A QR code appears in the terminal. On the iPhone, open the **Camera** app, point it at the QR
+code, and tap the banner — that hands off to Expo Go. (Expo Go's own in-app scanner works too.)
+The phone and the PC must be on the same Wi-Fi network; if the phone can't connect, restart with
+`npx expo start --tunnel`, which routes around the network instead of relying on the LAN.
+
+The login screen shows the API host it is pointed at, in small text at the bottom — it should
+read **`api.inkmanager.app`**.
+
+**Which API this hits: production.** `https://api.inkmanager.app` — the same database and the
+same accounts as the live web app. Log in with a real existing staff account (owner, front desk,
+or artist). A successful login stores the token in the iPhone Keychain, so force-quitting and
+reopening the app goes straight back to the home screen without asking again. "Log out" clears
+it.
+
+This is a live production login, so ordinary care applies: a wrong password is just a rejected
+login, but everything typed goes to the real system.
+
+To point a build at a local API instead, create `apps\mobile\.env.local` containing
+`EXPO_PUBLIC_API_URL=http://<your-PC-LAN-IP>:4000` and restart `npx expo start`. It must be the
+LAN IP, not `localhost` — a phone cannot reach the PC's loopback — and the API has to be
+listening on it.
+
+## Commits
+
+Both committed and **pushed to `origin/main`**:
+
+- `e39bd26` — `mobile: expo scaffold`
+- `9512456` — `mobile: auth (login, secure token storage, session restore)`
+
+## Open
+
+- **Nobody has logged in from a phone.** The success path is unverified. That is the first thing
+  the next session (or the owner, via the walkthrough above) should do.
+- **`typedRoutes` and the web target are off** because `apps/web` pins `react-is@16.13.1` at the
+  workspace root while `expo-router` needs `^19.1.0`. Worth fixing the next time `apps/web`'s
+  dependencies are being touched anyway — not worth a risky root `overrides` on its own. Both
+  the reason and the diagnosis are recorded in `apps/mobile/README.md`.
+- **`expo install --check` will keep reporting `react@19.2.7 - expected version: 19.2.3`.** That
+  is deliberate (Deviation 1). Downgrading to satisfy it re-introduces a duplicate React.
+- **No design-system work was done**, per the brief — the Editorial Gold pass is a later session.
+  The colors used here are already the real web tokens, so that pass extends this rather than
+  replacing it.
+- **No app icon or splash art.** Still the Expo placeholder assets.
