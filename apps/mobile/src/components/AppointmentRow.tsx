@@ -1,6 +1,6 @@
 import type { AppointmentListItem } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
   appointmentBadge,
@@ -23,9 +23,12 @@ const TONE_COLORS: Record<AppointmentTone, string> = {
 export function AppointmentRow({
   appointment,
   timeZone,
+  onPress,
 }: {
   appointment: AppointmentListItem;
   timeZone: string;
+  /** Omitted where the row is presentational (the design preview). */
+  onPress?: () => void;
 }) {
   const badge = appointmentBadge(appointment);
   const dimmed = isDimmed(appointment);
@@ -34,7 +37,13 @@ export function AppointmentRow({
   const minutes = durationMinutes(appointment.startTime, appointment.endTime);
 
   return (
-    <View style={[styles.row, dimmed && styles.dimmed]}>
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      accessibilityRole={onPress ? 'button' : undefined}
+      accessibilityLabel={`${clientName(appointment)}, ${studioTimeOfDay(appointment.startTime, timeZone)}, ${badge.label}`}
+      style={({ pressed }) => [styles.row, dimmed && styles.dimmed, pressed && onPress && styles.pressed]}
+    >
       <View style={styles.timeColumn}>
         <Text style={styles.startTime}>{studioTimeOfDay(appointment.startTime, timeZone)}</Text>
         <Text style={styles.duration}>{formatDuration(minutes)}</Text>
@@ -80,7 +89,7 @@ export function AppointmentRow({
           ) : null}
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -94,6 +103,7 @@ const styles = StyleSheet.create({
   // Cancelled and no-show sessions stay listed — they are part of what
   // happened that day — but recede.
   dimmed: { opacity: 0.45 },
+  pressed: { backgroundColor: colors.surface },
 
   timeColumn: { width: 52, alignItems: 'flex-end', gap: 2, paddingTop: 1 },
   startTime: { ...type.heading, fontSize: 16, lineHeight: 20, color: colors.fg },

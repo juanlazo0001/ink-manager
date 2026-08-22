@@ -38,7 +38,13 @@ export function fetchThread(
   // immediately older than `cursor`, returned oldest-first. Passing no
   // cursor gets the newest page.
   const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
-  return apiFetch<ConversationThreadResponse>(`/conversations/${conversationId}/messages${query}`, { token, signal });
+  // Path segments are encoded for the same reason the cursor is -- an id
+  // is data. Real ids are cuids and survive either way; the encoding is
+  // free and removes the class.
+  return apiFetch<ConversationThreadResponse>(
+    `/conversations/${encodeURIComponent(conversationId)}/messages${query}`,
+    { token, signal },
+  );
 }
 
 export function fetchIntegrationStatus(token: string, signal?: AbortSignal): Promise<IntegrationStatusResponse> {
@@ -52,7 +58,7 @@ export function fetchIntegrationStatus(token: string, signal?: AbortSignal): Pro
  */
 export async function markConversationRead(token: string, conversationId: string): Promise<void> {
   try {
-    await apiFetch<null>(`/conversations/${conversationId}/read`, { method: 'POST', token });
+    await apiFetch<null>(`/conversations/${encodeURIComponent(conversationId)}/read`, { method: 'POST', token });
   } catch {
     // Intentionally silent.
   }
@@ -83,7 +89,7 @@ export function sendMessage(token: string, conversationId: string, options: Send
     ...(options.direction ? { direction: options.direction } : {}),
   };
 
-  return apiFetch<Message>(`/conversations/${conversationId}/messages`, {
+  return apiFetch<Message>(`/conversations/${encodeURIComponent(conversationId)}/messages`, {
     method: 'POST',
     token,
     body: JSON.stringify(payload),

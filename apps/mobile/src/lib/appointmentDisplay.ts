@@ -25,7 +25,15 @@ export interface AppointmentBadge {
   tone: AppointmentTone;
 }
 
-export function appointmentBadge(appointment: AppointmentListItem): AppointmentBadge {
+/**
+ * Takes only the three fields the decision actually depends on, rather
+ * than a whole `AppointmentListItem` -- the detail response carries the
+ * same three under a different overall shape, and both screens must
+ * derive the badge identically.
+ */
+export type BadgeInput = Pick<AppointmentListItem, 'status' | 'checkedOutAt' | 'liabilityWaiver'>;
+
+export function appointmentBadge(appointment: BadgeInput): AppointmentBadge {
   switch (appointment.status) {
     case 'CANCELLED':
       return { label: 'Cancelled', tone: 'alert' };
@@ -48,7 +56,7 @@ export function appointmentBadge(appointment: AppointmentListItem): AppointmentB
 }
 
 /** A cancelled or no-show session is history, not schedule — drawn muted. */
-export function isDimmed(appointment: AppointmentListItem): boolean {
+export function isDimmed(appointment: Pick<AppointmentListItem, 'status'>): boolean {
   return appointment.status === 'CANCELLED' || appointment.status === 'NO_SHOW';
 }
 

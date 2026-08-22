@@ -1,4 +1,4 @@
-import type { AppointmentListItem, StudioSettingsResponse } from '@ink-manager/shared-types';
+import type { AppointmentDetail, AppointmentListItem, StudioSettingsResponse } from '@ink-manager/shared-types';
 
 import { apiFetch } from './api';
 
@@ -51,4 +51,29 @@ export function fetchAppointments(
  */
 export function fetchStudioSettings(token: string, signal?: AbortSignal): Promise<StudioSettingsResponse> {
   return apiFetch<StudioSettingsResponse>('/studio-settings', { token, signal });
+}
+
+/**
+ * `GET /appointments/:id`.
+ *
+ * Permission is evaluated at the APPOINTMENT's own studio, not the
+ * caller's home one -- a guest artist's view rights follow the record.
+ * Two distinct failures come back and mean different things:
+ *
+ *   404 -- no such appointment, OR it belongs to a studio the caller has
+ *          no membership at. Deliberately indistinguishable, so the route
+ *          cannot be used to probe for records.
+ *   403 -- the caller is a member of that studio but lacks
+ *          `appointments.view` there.
+ */
+export function fetchAppointment(
+  token: string,
+  appointmentId: string,
+  signal?: AbortSignal,
+): Promise<AppointmentDetail> {
+  // Encoded, not interpolated raw: an id is data, and data in a path
+  // segment has to be escaped. Real ids are cuids and would survive
+  // either way, which is exactly why this is easy to get wrong once and
+  // never notice.
+  return apiFetch<AppointmentDetail>(`/appointments/${encodeURIComponent(appointmentId)}`, { token, signal });
 }

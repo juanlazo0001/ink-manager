@@ -1,5 +1,5 @@
 import type { AppointmentListItem } from '@ink-manager/shared-types';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -39,6 +39,7 @@ const UPCOMING_DAYS = 30;
 type Mode = 'day' | 'upcoming';
 
 export default function ScheduleScreen() {
+  const router = useRouter();
   const { session } = useAuth();
   const token = session?.token ?? null;
   const { timeZone, ready: timeZoneReady, usingFallback } = useStudioTimeZone();
@@ -193,7 +194,15 @@ export default function ScheduleScreen() {
         <SectionList
           sections={sections}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <AppointmentRow appointment={item} timeZone={timeZone} />}
+          renderItem={({ item }) => (
+            <AppointmentRow
+              appointment={item}
+              timeZone={timeZone}
+              // Object form, not an interpolated string: typed routes
+              // describe a dynamic route by its literal `[id]` pathname.
+              onPress={() => router.push({ pathname: '/appointment/[id]', params: { id: item.id } })}
+            />
+          )}
           renderSectionHeader={({ section }) =>
             // The Day mode already names the day above the list, so a
             // section header there would just repeat it.
