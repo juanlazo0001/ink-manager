@@ -1,3 +1,4 @@
+import type { LoginRequest, LoginResponse } from '@ink-manager/shared-types';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { ApiError, apiFetch } from '@/lib/api';
@@ -84,9 +85,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // The API's only response on success is `{ token }` -- no user object
     // -- so the profile is fetched separately, the same way a restore does
     // it. Both paths therefore produce an identical Session.
-    const { token } = await apiFetch<{ token: string }>('/login', {
+    const payload: LoginRequest = { email, password };
+    const { token } = await apiFetch<LoginResponse>('/login', {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify(payload),
     });
 
     const loaded = await loadSession(token);

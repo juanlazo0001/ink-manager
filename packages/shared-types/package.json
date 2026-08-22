@@ -1,0 +1,17 @@
+{
+  "name": "@ink-manager/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Types shared between the Ink Manager clients and the API's HTTP surface. Types only -- no runtime code, no dependencies.",
+  "types": "./src/index.ts",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.2"
+  }
+}

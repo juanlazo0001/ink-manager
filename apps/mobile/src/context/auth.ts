@@ -1,25 +1,15 @@
+import type { MeResponse, StudioResponse } from '@ink-manager/shared-types';
 import { createContext, use } from 'react';
 
 /**
- * The subset of GET /users/me this session needs. The real response is
- * much larger (permissions, artist profile, wizard eligibility) -- typed
- * narrowly on purpose, so a later session widening it has to do so
- * deliberately rather than inheriting a stale copy of the web app's
- * UserProfile interface.
+ * The profile and studio shapes now come from @ink-manager/shared-types
+ * rather than being restated here -- both are the API's own response
+ * shapes, and a second hand-maintained copy is exactly the thing that
+ * drifts. Re-exported under the names the app already used so nothing
+ * downstream had to change.
  */
-export interface Profile {
-  id: string;
-  email: string;
-  name: string | null;
-  role: string;
-  studioId: string;
-}
-
-/** The subset of GET /studios/:studioId this session needs. */
-export interface Studio {
-  id: string;
-  name: string;
-}
+export type Profile = MeResponse;
+export type Studio = StudioResponse;
 
 export interface Session {
   token: string;
