@@ -8,8 +8,8 @@ import { ConversationRow } from '@/components/ConversationRow';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
-import { ApiError, isTransientApiFailure } from '@/lib/api';
 import { fetchConversations } from '@/lib/conversations';
+import { screenErrorMessage } from '@/lib/screenError';
 import { colors, space } from '@/theme';
 
 /**
@@ -24,16 +24,6 @@ import { colors, space } from '@/theme';
  * session; see REPORT.md.
  */
 const LIST_POLL_MS = 30_000;
-
-function listErrorMessage(err: unknown): string {
-  if (isTransientApiFailure(err)) {
-    return "Couldn't reach the studio. Pull to try again.";
-  }
-  if (err instanceof ApiError && err.status === 403) {
-    return 'Your role does not have access to messages.';
-  }
-  return err instanceof ApiError ? err.message : 'Something went wrong loading messages.';
-}
 
 export default function ConversationsScreen() {
   const router = useRouter();
@@ -65,7 +55,7 @@ export default function ConversationsScreen() {
         // already on screen and still perfectly readable -- only surface
         // the error when there is nothing to show.
         if (mode === 'poll' && items !== null) return;
-        setError(listErrorMessage(err));
+        setError(screenErrorMessage(err, 'messages'));
       } finally {
         if (seq === requestRef.current && mode === 'refresh') setRefreshing(false);
       }

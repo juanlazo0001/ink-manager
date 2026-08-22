@@ -2,6 +2,7 @@ import type { LoginRequest, LoginResponse } from '@ink-manager/shared-types';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { ApiError, apiFetch } from '@/lib/api';
+import { clearStudioTimeZoneCache } from '@/hooks/useStudioTimeZone';
 import { clearToken, getToken, saveToken } from '@/lib/tokenStorage';
 
 import { AuthContext, type AuthStatus, type Profile, type Session, type Studio } from './auth';
@@ -104,6 +105,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await clearToken();
+    // Studio-scoped caches must not survive into the next session -- the
+    // next person to sign in on this phone may well be at a different
+    // studio, on a different clock.
+    clearStudioTimeZoneCache();
     setSession(null);
     setStatus('signedOut');
   }, []);

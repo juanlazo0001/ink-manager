@@ -24,7 +24,8 @@ import { MessageBubble } from '@/components/MessageBubble';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
-import { ApiError, isTransientApiFailure } from '@/lib/api';
+import { ApiError } from '@/lib/api';
+import { screenErrorMessage } from '@/lib/screenError';
 import { fetchIntegrationStatus, fetchThread, markConversationRead, sendMessage } from '@/lib/conversations';
 import { buildThreadRows, type DisplayMessage } from '@/lib/threadRows';
 import { colors, hairline, space, type } from '@/theme';
@@ -33,14 +34,15 @@ import { colors, hairline, space, type } from '@/theme';
 const THREAD_POLL_MS = 30_000;
 
 function threadErrorMessage(err: unknown): string {
-  if (isTransientApiFailure(err)) return "Couldn't reach the studio.";
-  if (err instanceof ApiError && err.status === 404) {
+  if (err instanceof ApiError && err.fromApi && err.status === 404) {
     // The API answers 404 for both "no such thread" and "not yours to
     // see" — deliberately, so it can't be used to probe for threads. The
-    // copy has to cover both without guessing which.
+    // copy has to cover both without guessing which. Guarded on fromApi
+    // so Railway's edge 404 never lands here; that is a transient
+    // failure, and screenErrorMessage says so.
     return 'This conversation is not available to you.';
   }
-  return err instanceof ApiError ? err.message : 'Something went wrong loading this conversation.';
+  return screenErrorMessage(err, 'this conversation');
 }
 
 export default function ConversationScreen() {

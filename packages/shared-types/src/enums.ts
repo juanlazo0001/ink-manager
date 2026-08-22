@@ -87,3 +87,33 @@ export const InquiryStatus = {
   COLD_LEAD: 'COLD_LEAD',
 } as const;
 export type InquiryStatus = (typeof InquiryStatus)[keyof typeof InquiryStatus];
+
+/** `AppointmentStatus`. */
+export const AppointmentStatus = {
+  REQUESTED: 'REQUESTED',
+  CONFIRMED: 'CONFIRMED',
+  COMPLETED: 'COMPLETED',
+  CANCELLED: 'CANCELLED',
+  NO_SHOW: 'NO_SHOW',
+} as const;
+export type AppointmentStatus = (typeof AppointmentStatus)[keyof typeof AppointmentStatus];
+
+/**
+ * `AppointmentType`. A consultation is the same Appointment record as a
+ * tattoo session -- it reuses the calendar, availability and conflict
+ * logic -- and differs only in skipping the gift-card requirement and
+ * closing out via "mark complete" rather than full financial checkout.
+ */
+export const AppointmentType = {
+  TATTOO_SESSION: 'TATTOO_SESSION',
+  CONSULTATION: 'CONSULTATION',
+} as const;
+export type AppointmentType = (typeof AppointmentType)[keyof typeof AppointmentType];
+
+/** `LiabilityWaiverStatus`, as it appears on an appointment's waiver summary. */
+export const WaiverStatus = {
+  PENDING: 'PENDING',
+  SIGNED: 'SIGNED',
+  VERIFIED: 'VERIFIED',
+} as const;
+export type WaiverStatus = (typeof WaiverStatus)[keyof typeof WaiverStatus];
