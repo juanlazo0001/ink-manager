@@ -20517,3 +20517,255 @@ Both committed and **pushed to `origin/main`**:
   The colors used here are already the real web tokens, so that pass extends this rather than
   replacing it.
 - **No app icon or splash art.** Still the Expo placeholder assets.
+
+# Mobile Session 1B — re-pin `apps/mobile` to Expo SDK 54 (Expo Go compatibility)
+
+Branch **`mobile/sdk54`**, pushed to origin. **Not merged to main** — the owner merges once
+the phone gate passes.
+
+Session 1 scaffolded `apps/mobile` on Expo SDK 57. The App Store build of Expo Go supports
+**SDK 54** (Apple has not approved Expo's newer Expo Go submissions), so that app cannot be
+opened on a real iPhone at all, and a custom dev client (`eas build` / `eas go`) needs a paid
+Apple Developer account this project does not have yet. Owner confirmed his Expo Go reports
+SDK 54. This session re-scaffolds at 54 and ports the session-1 code.
+
+`apps/api`, `apps/web`, `packages/` and `schema.prisma` are untouched, and no root
+`overrides` or other dependency-resolution change was applied.
+
+## Part 0 — investigation
+
+### 1. What SDK 54 pins
+
+Read from `expo@54.0.37`'s own `bundledNativeModules.json` and
+`expo-template-default@54.0.63`, not from memory:
+
+| | SDK 54 | (SDK 57, for contrast) |
+| --- | --- | --- |
+| react | **19.1.0** | 19.2.3 |
+| react-dom | **19.1.0** | 19.2.3 |
+| react-native | **0.81.5** | 0.86.2 |
+| expo-router | ~6.0.24 | ~57.0.15 |
+| expo-secure-store | ~15.0.8 | ~57.0.1 |
+| expo-splash-screen | ~31.0.13 | ~57.0.7 |
+| typescript (dev) | ~5.9.2 | ~6.0.3 |
+
+`react-native@0.81.5`'s own peer range is `react: ^19.1.0`.
+
+### 2. Where React resolves, and the containment strategy — decided before scaffolding
+
+The root already resolves `react@19.2.7` (from `apps/web`'s `^19.2.7`). RN 0.81.5's peer
+range would *permit* that, and session 1 took exactly this shortcut on SDK 57 — pin mobile's
+React to whatever the root has, so only one copy exists. **That was rejected this time.**
+react-native 0.81.5 ships a renderer generated against React 19.1.0, and this session's whole
+purpose is a build that actually runs on a phone; matching the SDK's own pin is the only
+combination Expo tests. So mobile pins `19.1.0` and accepts that npm must nest it.
+
+That nesting is what creates the hazard. The predicted layout, and what actually happened,
+match exactly:
+
+```
+<root>/node_modules/react          19.2.7   (apps/web)
+<root>/node_modules/react-native   0.81.5   <- hoisted: nothing else in the workspace uses it
+apps/mobile/node_modules/react     19.1.0   <- nested: conflicts with the root
+```
+
+Ordinary Node resolution from inside the **root's** react-native walks up and finds React
+**19.2.7**, while application code in `apps/mobile` finds **19.1.0**. Two Reacts in one
+bundle — hooks dispatch through the wrong internals, and nothing in the build reports it.
+
+**Containment strategy chosen up front:** a `resolver.resolveRequest` hook in
+`metro.config.js` that re-resolves `react` and `react-dom` (and their subpath imports —
+`react/jsx-runtime`, `react/compiler-runtime`) against `apps/mobile/node_modules` only,
+whoever the caller is. Plus the usual `watchFolders` (repo root) and `nodeModulesPaths`
+(app-local first, then root).
+
+Deliberately **not** `resolver.disableHierarchicalLookup = true`, which is the more common
+monorepo incantation and is what session 1 used. It was tried first here and broke the build
+outright: `expo-router` keeps `@expo/metro-runtime` in its own nested `node_modules`, which a
+global lookup ban makes invisible —
+
+```
+Unable to resolve module @expo/metro-runtime from
+apps\mobile\node_modules\expo-router\entry-classic.js
+```
+
+Pinning only the two packages that must be singletons leaves normal nested resolution intact
+for everything else.
+
+**This was measured, not argued.** The dev bundle Metro actually serves was fetched over HTTP
+and grepped for React's own version constant (`exports.version = "19.1.x"`), which differs
+between the two copies:
+
+| Metro config | `19.1.0` in bundle | `19.2.7` in bundle |
+| --- | --- | --- |
+| watchFolders + nodeModulesPaths only | 1 | **1** ← two Reacts |
+| + the `resolveRequest` pin | 1 | **0** |
+
+### 3. What in the session-1 code needed adjusting for SDK 54
+
+**Nothing.** Every file under `src/` is byte-identical to session 1 — `git` reports no change
+to any of them. The three things that could plausibly have broken were checked against the
+installed packages rather than assumed:
+
+- `Stack.Protected` (used by `src/app/_layout.tsx` for route guarding) — present in
+  `expo-router@6.0.24`, same `{ guard: boolean }` signature.
+- `expo-secure-store@15.0.8` — `getItemAsync` / `setItemAsync` / `deleteItemAsync` unchanged.
+- React 19.1.0 supports both `use()` and context-as-provider (`<AuthContext value={...}>`),
+  which `src/context/` relies on.
+
+`src/lib/api.ts` and `src/lib/loginError.ts` were never SDK-coupled — no Expo or React Native
+imports at all.
+
+## Part 1 — re-scaffold
+
+`npx create-expo-app@latest apps/mobile --template expo-template-default@54.0.63`, demo tabs
+app stripped, session-1 `src/` tree copied back in, `tsconfig` paths pointed at `./src/*`
+(the SDK 54 template defaults to a flat `app/` at the project root; `src/app` is supported and
+Expo detects it — "Using src/app as the root directory for Expo Router").
+
+`app.json` identity is unchanged from session 1: name **"Ink Manager"**, slug
+**`ink-manager`**, `userInterfaceStyle: "dark"`, scheme `inkmanager`, `#0e0b08` splash and
+adaptive-icon background. Read back off the running dev server's manifest, not just the file:
+`sdkVersion = 54.0.0 | name = Ink Manager | slug = ink-manager | uiStyle = dark`.
+
+### Second workaround, found the hard way: the expo-router Babel plugin
+
+After the React pin was in place the bundle still failed:
+
+```
+SyntaxError: node_modules\expo-router\_ctx.ios.js:
+  Invalid call at line 2: process.env.EXPO_ROUTER_APP_ROOT
+  First argument of `require.context` should be a string denoting the directory to require.
+```
+
+Traced to source rather than worked around blindly. `babel-preset-expo` adds the plugin that
+inlines `EXPO_ROUTER_APP_ROOT` only when a bare `require.resolve('expo-router')` succeeds —
+and that resolve runs **from the preset's own directory** (`hasModule` in
+`babel-preset-expo/build/common.js`, called at `build/index.js:163`).
+
+Because React must nest under `apps/mobile`, npm drags `expo-router` down with it, while
+`babel-preset-expo` hoists to the repo root. Node resolution from
+`<root>/node_modules/babel-preset-expo/` never looks inside `apps/mobile/node_modules`, so the
+preset concludes expo-router isn't installed and **silently** skips the plugin.
+
+This is the same *shape* of failure as session 1's `typedRoutes` problem — a root-hoisted tool
+reaching for a workspace-nested package through plain Node resolution — with a different
+victim.
+
+`apps/mobile/babel.config.js` adds the plugin back. It is conditional: it first checks whether
+the preset can already see expo-router, and adds nothing if so, so the shim removes itself the
+moment a future install hoists differently. Three fixes were considered and rejected first:
+declaring `babel-preset-expo` as a direct `apps/mobile` dependency (npm dedupes it back to the
+root, since the version is identical), forcing `expo-router` to the root via the root
+`package.json` (explicitly out of scope), and pinning a deliberately mismatched preset version
+to force nesting (two copies of the preset, worse than the shim).
+
+### Better than SDK 57 in two respects
+
+- **`experiments.typedRoutes` is back ON.** Session 1 had to disable it because
+  `expo-router@57` depends on `react-is@^19.1.0` while the root resolves `react-is@16.13.1`
+  via `apps/web`. `expo-router@6.0.24` has no `react-is` dependency at all, so that entire
+  failure mode is gone. Confirmed: `.expo/types/router.d.ts` is generated.
+- **`npx expo install --check` is clean** — "Dependencies are up to date". Session 1
+  permanently reported `react@19.2.7 - expected version: 19.2.3`, because it had deviated
+  from the SDK's pin. Nothing deviates now. (It does print
+  `Skipped checking expo-router dependencies: expo-router/doctor.js not found`, a benign
+  symptom of the same nesting — the CLI looking for expo-router at the root.)
+
+### A wrong turn worth recording: do not regenerate the lockfile
+
+Mid-session, `npm install` left stale SDK 57 entries at the root (`expo@57.0.15`,
+`react-native@0.86.2`) that `npm prune` would not remove. Deleting `package-lock.json` and
+letting npm re-resolve did clear them — and re-resolved **the entire monorepo**: 208 packages
+changed, 107 removed, including `@prisma/client` 7.8.0 → 7.9.1, `prisma` 7.8.0 → 7.9.1,
+`stripe` 22.3.2 → 22.5.0, `twilio` 6.0.2 → 6.1.0, `vite` 8.1.4 → 8.2.2, all of `@tiptap/*`,
+and the root `typescript` from 6.0.3 down to 5.9.3. It also flipped the React placement, so
+`apps/web` got the nested copy.
+
+That is precisely the "no changes to root dependency resolution" line, so it was reverted. The
+working method: restore `package-lock.json` to the **pre-mobile baseline** (`d88e4fb`, before
+session 1) and let `npm install` add the SDK 54 tree incrementally on top.
+
+**Resulting root lockfile delta versus `d88e4fb`: 671 added, 0 removed, 9 changed** — three
+`@babel/*` (7.29.7 → 7.29.8) and the same six browserslist-data patch bumps session 1 saw.
+Nothing `apps/web` or `apps/api` resolves differently. Root `react` stays 19.2.7, root
+`typescript` stays 6.0.3, root `react-is` stays 16.13.1.
+
+## Part 2 — verification
+
+Everything below ran from a clean state: working tree clean apart from the two untracked files
+that predate all of this work (`marketing/package-lock.json`,
+`public/desktop/screenshots/ink-manager-portal-restyle-v3.html`), then
+`rm -rf node_modules apps/*/node_modules` and a fresh **`npm ci`**.
+
+1. **`apps/web` and `apps/api` still build, unchanged** — `apps/web` `npm run build`
+   (`tsc -b && vite build`) built in 10.78s, exit 0; `apps/api` `npm run build` (`tsc`) exit 0.
+2. **`npx tsc --noEmit` in `apps/mobile`** — clean, exit 0.
+3. **`npx expo export --platform ios`** — 1017 modules bundled, no errors.
+4. **Dev server + the real bundle Expo Go fetches**, pulled over HTTP via the URL in the dev
+   server's own manifest:
+   - manifest **HTTP 200**, and it reports **`sdkVersion = 54.0.0`**, `name = Ink Manager`,
+     `slug = ink-manager`, `userInterfaceStyle = dark`
+   - bundle **HTTP 200, 6,294,786 bytes**
+   - `api.inkmanager.app` present in the served bundle
+   - React `19.1.0` present **once**, React `19.2.7` present **zero** times
+5. **Login error paths, re-run against the ported modules** (the real `src/lib/api.ts` and
+   `src/lib/loginError.ts` driven from Node, against the live production API and against
+   deliberately broken hosts) — identical to session 1:
+
+| Case | Response | `status` / `fromApi` | Message shown |
+| --- | --- | --- | --- |
+| Wrong password (production) | `401 {"error":"invalid credentials"}` | 401 / true | "Email or password is incorrect." |
+| Missing fields (production) | `400 {"error":"email and password are required"}` | 400 / true | API message, passed through |
+| Unreachable service (nonexistent `*.up.railway.app`) | Railway edge `404`, no `error` field | 404 / **false** | "Can't reach Ink Manager right now. Try again in a moment." |
+| DNS failure / offline | `fetch` rejects | 0 / **false** | "Can't reach Ink Manager right now. Try again in a moment." |
+
+Still not verified, and still the point of the whole exercise: **nobody has logged in from a
+phone.** The success path (`POST /login` → `/users/me` → `/studios/:id` → home screen) needs a
+real staff credential and a device. What changed this session is that the app can now *be*
+opened on one.
+
+### Owner walkthrough (PowerShell, iPhone + Expo Go) — unchanged
+
+```powershell
+npm install
+cd apps\mobile
+npx expo start
+```
+
+Scan the QR code with the iPhone **Camera** app and tap the banner; that hands off to Expo Go.
+Phone and PC must be on the same Wi-Fi — if the phone can't connect, restart with
+`npx expo start --tunnel`. Expo Go should no longer complain about an unsupported SDK.
+
+The login screen shows the API host in small text at the bottom; it should read
+**`api.inkmanager.app`**.
+
+**This hits production** — the same database and accounts as the live web app. Log in with a
+real staff account (owner, front desk, or artist). The token is stored in the iPhone Keychain,
+so force-quitting and reopening returns straight to the home screen. "Log out" clears it.
+
+To point at a local API instead, create `apps\mobile\.env.local` with
+`EXPO_PUBLIC_API_URL=http://<your-PC-LAN-IP>:4000` and restart. It must be the LAN IP, not
+`localhost`.
+
+## Commits
+
+Branch **`mobile/sdk54`**, pushed to origin, **deliberately not merged to main**:
+
+- `4c37c2e` — `mobile: re-pin to Expo SDK 54 for Expo Go compatibility`
+- (this REPORT.md entry, committed after Part 2)
+
+## Open
+
+- **The phone gate.** Nobody has logged in from an iPhone yet. That is the gate for merging
+  this branch, and it is the owner's to run.
+- **Revisit the SDK pin** when either Apple approves a newer Expo Go, or the project gets an
+  Apple Developer account and can ship a dev client. Until then the pin, the React version,
+  and both workaround files are load-bearing — a standing rule now says so in CLAUDE.md, with
+  the full reasoning in `apps/mobile/README.md`.
+- **Both monorepo workarounds are hoisting-dependent** and would evaporate if
+  `apps/web` and `apps/mobile` ever converged on one React. The Babel shim already
+  self-disables in that case; the Metro pin would become a no-op rather than removing itself.
+- **No design-system work**, per the original brief — the Editorial Gold pass is a later
+  session. The colors in `src/constants/theme.ts` are already the real web tokens.
+- **No app icon or splash art.** Still Expo placeholder assets (SDK 54's, now).
