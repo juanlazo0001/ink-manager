@@ -21101,3 +21101,293 @@ Branch **`mobile/session2`**, all pushed to origin, **not merged**:
   (`router.push({ pathname: '/conversation/[id]', params: { id } })`); an interpolated template
   string is correctly rejected.
 - **No app icon or splash art.** Still Expo placeholders.
+
+# Mobile Session 3 — Schedule tab (day view + upcoming)
+
+Branch **`mobile/session3`** (off `mobile/session2`, which is still unmerged), pushed to
+origin. **Not merged to main** — same phone gate as the previous two sessions.
+
+The brief was one line, so the constraints from sessions 1–2 were carried forward as the
+obvious reading: `apps/api`, `apps/web`, `schema.prisma` and root dependency resolution are
+untouched; `apps/api` was read-only reference. No root change was needed at all this session
+— only `apps/mobile` and `packages/shared-types` changed, and the lockfile did not move.
+
+## Part 0 — investigation
+
+### `GET /appointments`
+
+Behind `requirePermission("appointments.view")`, which is on by default for FRONT_DESK and
+ARTIST and unconditional for OWNER — but configurable, so a 403 is a real state a client has
+to handle.
+
+Two things about it shaped everything downstream:
+
+**The range filter is an OVERLAP, not a containment.** The route matches
+`startTime < end AND endTime > start`. A session that began the previous evening and runs
+into the requested window comes back. So a returned appointment is *not* guaranteed to start
+inside the range — which means grouping by day must key off each appointment's own
+`startTime`, never off the window that was asked for.
+
+**There is no pagination.** The route caps at 500 results when a valid `start`+`end` pair is
+supplied and 100 when it is not, ordered `startTime` ascending. Sending only one half of the
+range is silently ignored and drops you to the 100 cap.
+
+Response per row: appointment scalars (`startTime`, `endTime`, `status`, `appointmentType`,
+`depositPaid`, `checkedOutAt`, `archivedAt`) plus shaped relations — `artist {id, name,
+avatarUrl}` (name already collapsed to `user.name ?? user.email`), `client {id, firstName,
+lastName}`, `inquiry {id, label}` (description pre-truncated to 60 chars), and
+`liabilityWaiver {status}`. Archived appointments are excluded.
+
+### Role scoping
+
+An **ARTIST** caller has `artistId` forced to their own id server-side regardless of what is
+sent, and the query spans every studio they *currently* belong to — home plus active guest
+memberships, and pointedly not ones whose membership has ended. Separately, any caller who
+also happens to have an Artist profile (a solo owner-artist, say) gets their guest-studio
+bookings blended in. As with conversations, none of that is reproducible client-side, so the
+app renders what the route returns and adds no filter.
+
+### Timezone — the part that mattered most
+
+`StudioSettings.timezone` (IANA, defaulting to `America/New_York`, never null) is exposed by
+`GET /studio-settings`, which OWNER, FRONT_DESK and ARTIST can all read.
+
+What `apps/web`'s Calendar actually does is worth recording, because mobile deliberately
+diverges from it: the current-time indicator line is studio-timezone-aware (it re-derives
+wall-clock parts through `Intl` precisely to avoid react-big-calendar's browser-local
+getters), but **the fetch range is not** — `rangeFor` uses `dayjs(date).startOf('day')`,
+which is the *browser's* midnight. The file's own comments acknowledge the mismatch.
+
+The repo's standing rules are unambiguous that a day view is the studio-timezone case, and
+this is the bug class flagged as having recurred independently several times. So mobile
+answers both questions in the studio's zone.
+
+### Statuses
+
+`AppointmentStatus` = REQUESTED / CONFIRMED / COMPLETED / CANCELLED / NO_SHOW.
+`AppointmentType` = TATTOO_SESSION / CONSULTATION (the same record, differing only in skipping
+the gift-card requirement and closing out via "mark complete"). `LiabilityWaiverStatus` =
+PENDING / SIGNED / VERIFIED. The web colours calendar events per-artist from a hash of the
+artist id (`apps/web/src/lib/artistColors.ts`), with a dotted border for REQUESTED and a
+dashed one for CONSULTATION.
+
+## Part 1 — `packages/shared-types` additions
+
+`src/appointments.ts` plus three enums. The comments carry the two contracts a client will
+otherwise get wrong: the overlap semantics of `start`/`end`, and that `timezone` is the zone
+every scheduling question must be answered in.
+
+## Part 2 — `src/lib/studioTime.ts`
+
+`apps/api/src/lib/studioTime.ts`'s primitives, ported rather than reinvented so both sides
+compute the same answers: `civilDateKey`, `localMinutesSinceMidnight`, `localDayOfWeek`,
+`zonedTimeToUtc` (with the same two-pass DST offset correction). Added on top:
+
+- `studioDayRange(dateKey, tz)` → the half-open instant range for one civil day, which is
+  what the `start`/`end` params are built from. It derives the next day's key by adding 26
+  hours and re-deriving the civil date, rather than by arithmetic on the parts, so it stays
+  correct on DST days.
+- `shiftDateKey`, `todayKey`, `relativeDayLabel`, `formatDateKey` — all operating on
+  `"YYYY-MM-DD"` strings, never `Date` objects, because a date picker built out of `Date`
+  plus local getters is exactly how one ends up a day off.
+- `resolveStudioTimeZone`, which falls back to the device zone if a runtime rejects the IANA
+  id. Falling back visibly beats throwing inside a formatter and taking the tab down.
+
+**No local `Date` getter is used anywhere in the file.**
+
+Consumed through `useStudioTimeZone`, a hook with a module-level cache — a studio's timezone
+changes about never, and folding it into `AuthContext` would have put a third request in
+front of the splash screen for something only this tab needs. It is cleared on logout, since
+the next person to sign in on that phone may be at a different studio on a different clock.
+
+### The two-timezone test
+
+Run as the standing rules require — pinned `now`, studio zone deliberately different from the
+machine. The dev box is `America/New_York`.
+
+At `2026-08-22T05:30:00.000Z`:
+
+| zone | studio "today" | wall clock | label for `2026-08-22` |
+| --- | --- | --- | --- |
+| America/New_York | 2026-08-22 | 01:30 | Today |
+| America/Chicago | 2026-08-22 | 00:30 | Today |
+| America/Los_Angeles | **2026-08-21** | 22:30 | **Tomorrow** |
+| Pacific/Honolulu | **2026-08-21** | 19:30 | **Tomorrow** |
+
+The machine's own local getters say `2026-08-22`. Los Angeles disagrees, and the helpers
+follow Los Angeles — which is the whole proof.
+
+The concrete failure it prevents: a 9pm Los Angeles session on Aug 21 is
+`2026-08-22T04:00:00.000Z` — the 22nd in UTC *and* on this dev box. `civilDateKey` files it
+under `2026-08-21`, and it falls inside that day's LA range. A naive `.slice(0, 10)` on the
+ISO string would have put it on the wrong day.
+
+Also confirmed: DST days come out **23h** (2026-03-08) and **25h** (2026-11-01) rather than a
+hardcoded 24; `shiftDateKey` handles month, year and DST boundaries; the same civil date
+produces genuinely different fetch windows per zone (`04:00Z` for New York vs `07:00Z` for
+Los Angeles).
+
+## Part 3 — the screens
+
+**Day mode** — a horizontally scrolling date strip (7 back, 21 forward, centred on the
+selection) where every entry is a studio civil-date key. Days with work carry a dot; today is
+gold when it is not the selection. Below it, that day's sessions.
+
+**Upcoming mode** — the next 30 days grouped by studio day with `Today` / `Tomorrow` /
+date headers. Bounded on purpose: with a 500-result cap and no pagination, an open-ended
+"everything from now" would truncate at an arbitrary point rather than at a date someone
+chose. Both modes share one fetch window, so toggling does not refetch.
+
+**Rows** carry a derived badge rather than the raw status, because the raw status hides the
+two states staff act on:
+
+| condition | badge | tone |
+| --- | --- | --- |
+| CONFIRMED, waiver PENDING | Waiver pending | accent |
+| CONFIRMED otherwise | Confirmed | neutral |
+| REQUESTED | Requested | accent |
+| COMPLETED, no `checkedOutAt` | Needs checkout | accent |
+| COMPLETED, checked out | Checked out | neutral |
+| CANCELLED / NO_SHOW | Cancelled / No show | alert, row dimmed |
+
+That is exactly why the list route returns `liabilityWaiver.status` and `checkedOutAt` at
+all. Red appears only on the cancelled and no-show rows.
+
+Each row has a per-artist colour spine using the same hash and palette as the web calendar,
+and a dashed gold pill on consultations. The header names the studio's timezone whenever it
+differs from the phone's, so a travelling artist is never quietly reading someone else's
+clock. Nothing renders until the real timezone has arrived — showing dates on the device's
+clock and then silently correcting them would be worse than a brief spinner.
+
+Pull-to-refresh and a 30s poll while focused, matching Conversations; a failed background
+poll does not clear a schedule already on screen.
+
+### A cross-cutting fix, found while verifying
+
+A `401` mid-session — an expired or revoked token, which the API can return at any moment
+since it re-validates the account on every request — rendered as a bare **"Unauthorized"**
+with nothing the person holding the phone could act on. It was equally wrong on the
+Conversations screens from session 2, so it was fixed in one place rather than only on the
+new screen: `src/lib/screenError.ts` now answers the same four failures identically
+everywhere. Transient is checked first, so an edge `401` is never mistaken for a dead
+session:
+
+| failure | message |
+| --- | --- |
+| 401 from the API | "Your session has expired. Log out from the account screen, then sign in again." |
+| 403 from the API | "Your role does not have access to {subject}." |
+| other 4xx from the API | the API's own message, which is already written for humans |
+| 5xx, edge 404/401, offline | "Couldn't reach the studio. Pull to try again." |
+
+The conversation thread keeps its own 404 case (the API answers 404 for both "no such thread"
+and "not yours to see", deliberately), now guarded on `fromApi` so Railway's edge 404 cannot
+land there.
+
+## Part 4 — verification
+
+From a clean tree and a fresh `npm ci`:
+
+- **`apps/web`** build — 9.91s, exit 0. **`apps/api`** build — exit 0. Neither is affected.
+- **`tsc --noEmit`** clean in `apps/mobile` and `packages/shared-types`.
+- **`expo export --platform ios`** — 1108 modules, no errors.
+- **Dev bundle**: manifest HTTP 200 reporting `sdkVersion = 54.0.0`, `name = Ink Manager`,
+  dark; bundle HTTP 200, 6,613,431 bytes; React `19.1.0` once and `19.2.7` **zero** times
+  (session 1B's Metro pin still holds); the studio-time module, the Schedule copy and the new
+  session-expired copy all present.
+
+**Rendered and looked at, not just bundled.** `react-native-web` cannot reach the tab behind
+the auth guard without a credential, so the Schedule components were rendered on a temporary
+route against fixture data, screenshotted at phone width, then the route was deleted. That
+was worth doing twice over: **the first render crashed** — `colorForArtistId` received
+`undefined` — which turned out to be a bug in the fixture (a raw spread whose `artist`
+*string* clobbered the artist *object*), not in the app. The second render came out correct:
+Fraunces headline, Jura labels, gold selection and day-markers, per-artist spines in two
+different colours, all five badge states, the dashed consultation pill, a dimmed cancelled
+row with the only red on the screen, and the in-voice empty state.
+
+**Logic verified directly rather than by eye:**
+
+- Badge derivation over all nine status/waiver/checkout combinations.
+- Grouping: an evening Los Angeles session whose UTC date is the *next* day groups under the
+  studio day it started; a session crossing midnight appears once, on the day it began, not
+  twice (a schedule listing the same session on two days reads as a double booking); grouping
+  preserves the API's order and does not merge non-adjacent days.
+- `colorForArtistId` compared against `apps/web`'s original over **5,006 ids — zero
+  mismatches**, with an even spread across the eight-colour palette.
+- `screenErrorMessage` over all eight failure shapes.
+
+**Request construction**, with `fetch` intercepted so nothing left the machine:
+
+```
+GET /appointments?start=2026-08-22T07%3A00%3A00.000Z&end=2026-08-23T07%3A00%3A00.000Z   (LA day)
+GET /appointments?start=2026-08-22T04%3A00%3A00.000Z&end=2026-08-23T04%3A00%3A00.000Z   (NY, same date)
+GET /appointments?start=…T07%3A00…&end=2026-09-22T07%3A00…                              (upcoming, 30d)
+GET /appointments                                                                        (no range)
+GET /appointments                                                (only `start` given -> correctly omitted)
+GET /appointments?start=…&end=…&artistId=art_1
+GET /studio-settings
+```
+
+**Error mapping against the live production API**: `/appointments` (ranged and unranged) and
+`/studio-settings` with a junk token all return `401 fromApi=true`, non-transient; against a
+non-existent Railway host all three return `404 fromApi=false`, transient.
+
+### What is NOT verified
+
+The Schedule tab has never been rendered against a real studio's appointments. Every helper,
+request shape and error mapping is checked, the components render correctly against fixtures,
+and the bundle builds and serves — but no real booking has been displayed. That needs a staff
+credential and a device.
+
+### Owner walkthrough — what to check
+
+Start as before (`npm install`, `cd apps\mobile`, `npx expo start`, scan with Expo Go).
+
+1. **Schedule is the first tab.** It should open on Day mode showing today.
+2. **The header subtitle.** If it names a city ("Times in Los Angeles"), the studio's timezone
+   differs from the phone's and the app is deliberately showing the studio's clock. If your
+   phone and studio are in the same zone it shows nothing, which is also correct. If it says
+   "Studio timezone unavailable", the settings lookup failed and times are on the phone's
+   clock — worth reporting.
+3. **Compare a day against the web calendar** for the same account. Same sessions, same
+   times, same order. This is the check that matters most.
+4. **The date strip** — scroll it, tap other days, confirm dots appear only on days that have
+   work, and that TODAY returns you.
+5. **Badges** — a session with an unsigned waiver should read WAIVER PENDING, a finished one
+   that was never checked out NEEDS CHECKOUT, and a cancelled one should be dimmed and red.
+6. **Upcoming mode** — grouped by day with Today / Tomorrow headers, 30 days ahead.
+7. **A late-evening session**, if one exists, is the timezone check: it must appear on the day
+   it starts in the *studio's* time, not the next day.
+8. **Pull to refresh**, and airplane-mode it to confirm the error state says "Couldn't reach
+   the studio" rather than blanking a schedule already on screen.
+
+## Commits
+
+Branch **`mobile/session3`**, pushed, **not merged**:
+
+- `15d6a18` — `mobile: schedule tab (day view + upcoming)`
+- (this REPORT.md entry)
+
+## Open
+
+- **The phone gate**, now covering Schedule as well as Conversations and login.
+- **No appointment detail screen.** Rows are not tappable. `GET /appointments/:id` returns a
+  great deal more (project context, planned session, photos, waiver, checkout state, notes)
+  and deserves its own screen rather than being crammed into a row.
+- **Read-only.** No create, reschedule, cancel, check-out or status change. Several of those
+  are separately permissioned (`appointments.create`, `appointments.reschedule`,
+  `appointments.checkout`), so a future session should gate on the caller's permissions
+  rather than on role.
+- **`businessHours` is typed but unused.** It would let the day view shade closed hours or
+  mark a closed day, which is what the web calendar uses it for.
+- **Upcoming is capped at 30 days** by the route's 500-result ceiling and lack of pagination.
+  A studio busy enough to exceed 500 sessions in 30 days would silently lose the tail; if that
+  ever becomes real, the fix belongs in the API.
+- **`apps/web`'s calendar range is still browser-local.** Mobile is now the correct one of the
+  two. Worth aligning the web when its calendar is next touched — noted here rather than
+  changed, since `apps/web` was out of scope.
+- **`colorForArtistId` is duplicated** between `apps/web` and `apps/mobile` (proved identical,
+  but by copy). It is the only piece of shared *behaviour* so far — `shared-types` is
+  types-only by design. If a second one appears, that is the moment for a small shared
+  runtime package, not before.
+- **No app icon or splash art.** Still Expo placeholders.
