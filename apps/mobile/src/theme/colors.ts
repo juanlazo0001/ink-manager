@@ -72,6 +72,32 @@ export const colors = {
 } as const;
 
 /**
+ * Status tones, from the web's own `--color-*` set. These carry MEANING,
+ * not decoration -- `warning` is "someone must act", `danger` is
+ * genuinely lost, `hold` is paused. Red only ever arrives here by asking
+ * for `danger`, which keeps the palette rule intact even though this map
+ * makes eight colours available.
+ */
+export const tones = {
+  /** --color-success */
+  success: '#5f9e6e',
+  /** --color-info */
+  info: '#96aad6',
+  /** --color-warning */
+  warning: '#d9a441',
+  /** --color-danger -- the readable-as-text red */
+  danger: '#e08272',
+  /** --color-neutral */
+  neutral: '#9b927f',
+  /** --color-progress */
+  progress: '#c1a6de',
+  /** --color-highlight */
+  highlight: '#e0995a',
+  /** --color-hold */
+  hold: '#8fa3c2',
+} as const;
+
+/**
  * Per-channel dot colours, matching the web's `CHANNEL_DOT_CLASSES`.
  *
  * Instagram is a brand gradient on the web; flattened to its mid-stop here
