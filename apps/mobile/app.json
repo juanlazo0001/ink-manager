@@ -8,6 +8,7 @@
     "scheme": "inkmanager",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0e0b08",
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
     },
@@ -17,6 +18,7 @@
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
+      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -29,14 +31,18 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0e0b08",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0e0b08",
+          "dark": {
+            "backgroundColor": "#0e0b08"
+          }
         }
       ]
     ],
     "experiments": {
-      "typedRoutes": false,
+      "typedRoutes": true,
       "reactCompiler": true
     }
   }

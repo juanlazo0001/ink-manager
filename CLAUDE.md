@@ -123,6 +123,20 @@ Concise operating rules, not a project history — see REPORT.md for history.
   sized/clipped to that ancestor's box, not the viewport. Portal full-viewport fixed layers
   (background photo/wash, etc.) to `document.body` when they might end up nested inside one.
 
+## Mobile app (`apps/mobile`)
+
+- **`apps/mobile` is intentionally pinned to Expo SDK 54 for Expo Go compatibility — do not
+  upgrade the Expo SDK, or "fix" a version mismatch that `expo install --check` reports,
+  without reading `apps/mobile/README.md` first.** The App Store build of Expo Go supports
+  SDK 54, and that is currently the only way this app can be opened on a real iPhone (a
+  custom dev client needs a paid Apple Developer account the project doesn't have yet).
+  A newer SDK produces an app the owner's phone physically cannot open.
+- The React version (`19.1.0`, matching what SDK 54's `react-native@0.81.5` was built
+  against) and the `metro.config.js` / `babel.config.js` workarounds are load-bearing for
+  the same reason — the workspace root holds a different React for `apps/web`, and without
+  those two files the bundle either ships two Reacts or fails to build at all. Both files
+  carry the full explanation inline.
+
 ## Views
 
 - List and Kanban are VIEWS of the same entities — every capability available from one must be
