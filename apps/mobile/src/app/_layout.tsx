@@ -3,32 +3,35 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider } from '@/context/AuthContext';
 import { useAuth } from '@/context/auth';
-import { Colors } from '@/constants/theme';
+import { colors, useAppFonts } from '@/theme';
 
-// Held open across the SecureStore read + the /users/me revalidation it
-// triggers, so a returning user goes splash -> home with no login screen
-// flashing past in between.
+// Held open across the SecureStore read, the /users/me revalidation it
+// triggers, AND the font load, so a returning user goes splash -> app with
+// neither a login screen nor a flash of system-font type in between.
 SplashScreen.preventAutoHideAsync();
 
 function RootNavigator() {
   const { status } = useAuth();
+  const fontsReady = useAppFonts();
+  const ready = status !== 'restoring' && fontsReady;
 
   useEffect(() => {
-    if (status !== 'restoring') {
+    if (ready) {
       SplashScreen.hideAsync();
     }
-  }, [status]);
+  }, [ready]);
 
   // The splash is still up at this point; this only matters if hiding it
-  // races ahead of the first navigator render, and a bare dark screen
-  // reads better than a flash of the wrong route.
-  if (status === 'restoring') {
+  // races ahead of the first render. A bare dark screen beats a flash of
+  // the wrong route or of the wrong typeface.
+  if (!ready) {
     return (
-      <View style={styles.restoring}>
-        <ActivityIndicator color={Colors.accent} />
+      <View style={styles.booting}>
+        <ActivityIndicator color={colors.accent} />
       </View>
     );
   }
@@ -38,9 +41,10 @@ function RootNavigator() {
   // there is no window in which a deep link or a stale back-stack entry
   // can land on one.
   return (
-    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
+    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
       <Stack.Protected guard={status === 'signedIn'}>
-        <Stack.Screen name="index" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="account" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
       </Stack.Protected>
       <Stack.Protected guard={status === 'signedOut'}>
         <Stack.Screen name="login" />
@@ -51,18 +55,20 @@ function RootNavigator() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <StatusBar style="light" />
-      <RootNavigator />
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <StatusBar style="light" />
+        <RootNavigator />
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  restoring: {
+  booting: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: Colors.background,
+    backgroundColor: colors.bg,
   },
 });

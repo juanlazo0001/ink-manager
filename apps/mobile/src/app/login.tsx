@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import {
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,10 +10,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Colors, Radius, Spacing } from '@/constants/theme';
+import { Eyebrow, GoldButton } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { API_URL } from '@/lib/api';
 import { loginErrorMessage } from '@/lib/loginError';
+import { colors, hairline, radius, space, type } from '@/theme';
 
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -23,6 +22,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [focused, setFocused] = useState<'email' | 'password' | null>(null);
 
   const canSubmit = email.trim().length > 0 && password.length > 0 && !submitting;
 
@@ -43,28 +43,24 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.screen}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <ScrollView
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-        >
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.header}>
-            <Text style={styles.title}>Ink Manager</Text>
-            <Text style={styles.subtitle}>Sign in to your studio</Text>
+            <Eyebrow style={styles.eyebrow}>Ink Manager</Eyebrow>
+            <Text style={styles.title}>Sign in{'\n'}to your studio</Text>
           </View>
 
           <View style={styles.form}>
             <View style={styles.field}>
-              <Text style={styles.label}>Email</Text>
+              <Eyebrow>Email</Eyebrow>
               <TextInput
-                style={styles.input}
+                style={[styles.input, focused === 'email' && styles.inputFocused]}
                 value={email}
                 onChangeText={setEmail}
+                onFocus={() => setFocused('email')}
+                onBlur={() => setFocused(null)}
                 placeholder="you@studio.com"
-                placeholderTextColor={Colors.textMuted}
+                placeholderTextColor={colors.fgMuted}
                 autoCapitalize="none"
                 autoCorrect={false}
                 autoComplete="email"
@@ -76,13 +72,15 @@ export default function LoginScreen() {
             </View>
 
             <View style={styles.field}>
-              <Text style={styles.label}>Password</Text>
+              <Eyebrow>Password</Eyebrow>
               <TextInput
-                style={styles.input}
+                style={[styles.input, focused === 'password' && styles.inputFocused]}
                 value={password}
                 onChangeText={setPassword}
+                onFocus={() => setFocused('password')}
+                onBlur={() => setFocused(null)}
                 placeholder="••••••••"
-                placeholderTextColor={Colors.textMuted}
+                placeholderTextColor={colors.fgMuted}
                 secureTextEntry
                 autoCapitalize="none"
                 autoComplete="current-password"
@@ -93,32 +91,22 @@ export default function LoginScreen() {
             </View>
 
             {error ? (
-              <Text style={styles.error} accessibilityRole="alert">
-                {error}
-              </Text>
+              // Red, and only here: a rejected sign-in is exactly the
+              // punctuation case the palette reserves it for.
+              <View style={styles.errorRow}>
+                <View style={styles.errorRule} />
+                <Text style={styles.error} accessibilityRole="alert">
+                  {error}
+                </Text>
+              </View>
             ) : null}
 
-            <Pressable
-              style={({ pressed }) => [
-                styles.button,
-                !canSubmit && styles.buttonDisabled,
-                pressed && canSubmit && styles.buttonPressed,
-              ]}
-              onPress={onSubmit}
-              disabled={!canSubmit}
-              accessibilityRole="button"
-            >
-              {submitting ? (
-                <ActivityIndicator color={Colors.accentText} />
-              ) : (
-                <Text style={styles.buttonLabel}>Sign in</Text>
-              )}
-            </Pressable>
+            <GoldButton label="Sign in" onPress={onSubmit} disabled={!canSubmit} busy={submitting} />
           </View>
 
           {/* Which API this build talks to is otherwise invisible on a
-              phone, and getting it wrong is the single most likely reason
-              a login "mysteriously" fails during testing. */}
+              phone, and getting it wrong is the most likely reason a login
+              "mysteriously" fails during testing. */}
           <Text style={styles.apiHint}>{API_URL.replace(/^https?:\/\//, '')}</Text>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -127,69 +115,34 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: Colors.background },
+  screen: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
   content: {
     flexGrow: 1,
     justifyContent: 'center',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.six,
-    gap: Spacing.six,
+    paddingHorizontal: space.xl,
+    paddingVertical: space.xxxl,
+    gap: space.xxxl,
   },
-  header: { gap: Spacing.two },
-  title: {
-    color: Colors.text,
-    fontSize: 32,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-  },
-  subtitle: {
-    color: Colors.textMuted,
-    fontSize: 15,
-  },
-  form: { gap: Spacing.three },
-  field: { gap: Spacing.two },
-  label: {
-    color: Colors.textSecondary,
-    fontSize: 13,
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-  },
+  header: { gap: space.md },
+  eyebrow: { color: colors.accent },
+  title: { ...type.display, fontSize: 34, lineHeight: 40, color: colors.fg },
+  form: { gap: space.lg },
+  field: { gap: space.sm },
   input: {
-    backgroundColor: Colors.inputBackground,
-    borderWidth: 1,
-    borderColor: Colors.inputBorder,
-    borderRadius: Radius.input,
-    color: Colors.text,
+    backgroundColor: colors.inputBg,
+    borderWidth: hairline,
+    borderColor: colors.inputBorder,
+    borderRadius: radius.input,
+    color: colors.fg,
+    ...type.body,
     fontSize: 16,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.three,
+    paddingHorizontal: space.md,
+    paddingVertical: space.md,
   },
-  error: {
-    color: Colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  button: {
-    backgroundColor: Colors.accentButton,
-    borderRadius: Radius.button,
-    paddingVertical: Spacing.three,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 52,
-    marginTop: Spacing.one,
-  },
-  buttonPressed: { opacity: 0.85 },
-  buttonDisabled: { opacity: 0.4 },
-  buttonLabel: {
-    color: Colors.accentText,
-    fontSize: 16,
-    fontWeight: '600',
-    letterSpacing: 0.3,
-  },
-  apiHint: {
-    color: Colors.textMuted,
-    fontSize: 12,
-    textAlign: 'center',
-  },
+  inputFocused: { borderColor: colors.accent },
+  errorRow: { flexDirection: 'row', gap: space.md, alignItems: 'stretch' },
+  errorRule: { width: 2, backgroundColor: colors.dangerStrong, borderRadius: 1 },
+  error: { ...type.small, color: colors.danger, flex: 1 },
+  apiHint: { ...type.meta, color: colors.fgMuted, textAlign: 'center' },
 });
