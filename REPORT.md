@@ -20769,3 +20769,335 @@ Branch **`mobile/sdk54`**, pushed to origin, **deliberately not merged to main**
 - **No design-system work**, per the original brief — the Editorial Gold pass is a later
   session. The colors in `src/constants/theme.ts` are already the real web tokens.
 - **No app icon or splash art.** Still Expo placeholder assets (SDK 54's, now).
+
+# Mobile Session 2 — shared types, app shell, Conversations
+
+Branch **`mobile/session2`** (off `mobile/sdk54`), pushed to origin. **Not merged to main** —
+the owner merges after the phone gate.
+
+Three things landed: `packages/shared-types` (the first occupant of `packages/`), the
+Editorial Gold design tokens plus the four-tab shell, and Conversations as the first screen
+that does real work. `apps/api` and `apps/web` source, `schema.prisma`, and root dependency
+resolution are all untouched.
+
+## Part 0 — investigation
+
+### 1. The conversations API surface
+
+All under `apps/api/src/routes/conversations.ts`, behind `requireAuth` **and**
+`requireRole(OWNER, FRONT_DESK, ARTIST)` at the router level — a CUSTOMER is rejected
+outright before any route runs.
+
+**`GET /conversations`** — and the first surprise: **there is no pagination.** It returns a
+plain array of every visible, non-archived thread, already sorted `lastMessageAt` desc.
+Optional filters (`type`, `entityType`, `artistId`, `search`, `archived`) all AND together;
+`?archived=true` switches to showing *only* archived threads rather than adding them. Each
+row carries `counterpart`, `primaryInquiry`, a `lastMessage` preview
+(`body`/`channel`/`direction`/`createdAt`) and the requester's own `unreadCount`.
+
+`counterpart` is resolved per-request and depends on who is asking — worth knowing before
+rendering it. A CLIENT thread names the client. A STAFF thread names the other staff member,
+*except* when the artist who owns the thread is the viewer, in which case it names the
+**studio** (they were otherwise shown as messaging themselves — reported as confusing). A
+GROUP thread names everyone but the viewer, comma-joined, or `"Just you"`.
+
+**`GET /conversations/:id/messages`** — cursor pagination, `MESSAGES_PAGE_SIZE = 30`, walking
+**backwards**: a page is the 30 messages immediately older than `cursor`, returned
+oldest-first, so a caller prepends. `nextCursor === null` is the top of the thread. The
+response is not just messages: it also returns the thread header, `reads` (empty for CLIENT
+threads — no logged-in counterpart to have read anything), resolved `tags`, and
+`callerPermissions`, which is evaluated at **the thread's own studio**, not the caller's home
+one.
+
+**`POST /conversations/:id/messages`** — 201 with the created `Message`. The important part:
+
+- On **STAFF/GROUP** threads, `channel`/`direction` are *rejected* — the API forces
+  `IN_APP`/`OUTBOUND` and 400s anything else.
+- On **CLIENT** threads both are *required*.
+- And an `OUTBOUND` `SMS` or `EMAIL` on a CLIENT thread is **a real send to a real person** —
+  Twilio or Gmail — when the studio has that integration `CONNECTED` and the caller holds
+  `conversations.sendLive`. Everything else falls through to a log-only path. That single
+  fact shaped the whole composer design (see Part 3).
+
+Also used: `POST /conversations/:id/read` (204), and `GET /integrations/status`, which is
+open to all three staff roles and reports `{sms, email, instagram, facebook}` connectivity.
+
+Enums: `ConversationType` = CLIENT/STAFF/GROUP. `MessageChannel` = IN_APP, SMS, EMAIL,
+INSTAGRAM, FACEBOOK, PHONE, OTHER. `MessageDirection` = INBOUND/OUTBOUND.
+
+### 2. How ARTIST visibility works — and why the app must not reproduce it
+
+`lib/conversations.ts`'s `visibleConversationWhere` builds **one clause group per studio the
+caller can reach**, each evaluated with that studio's own role and that studio's own
+permission flags. Within a group:
+
+- Client threads appear only if `conversations.viewClientThreads` is granted for that role at
+  that studio.
+- Staff threads appear only if `conversations.viewStaffThreads` is granted — **and for an
+  ARTIST that is additionally narrowed, unconditionally, to their own 1:1 thread plus GROUP
+  threads they are a participant of.** The narrowing holds no matter how the permission is
+  set; the flag only decides whether the clause is included at all.
+- If no studio grants either, the query is deliberately made to match nothing rather than
+  falling back to an unfiltered studio list.
+
+So the answer to "does an artist see all studio conversations" is: **it depends on that
+studio's permission matrix, and never fully.** That is not something a client can honestly
+recompute — it needs the DB. The mobile app therefore renders exactly what the list returns
+and adds no filter of its own. (This also lines up with the standing rule about never
+trusting an ARTIST token's studio claims: the API resolves real membership per request.)
+
+### 3. How the web orders and groups the list
+
+`orderBy: { lastMessageAt: 'desc' }` server-side — the web does not re-sort. Unread is the
+per-user `unreadCount` on each row. No grouping. The web polls the list every 30s and an open
+thread every 15s. Inside a thread it groups by calendar day (`Today` / `Yesterday` / full
+date) and collapses "bursts" — consecutive same-side messages inside one minute — under a
+single meta row. Mobile matches all of that, including the burst rule.
+
+### 4. WebSocket — investigated, and deliberately skipped
+
+The API does push over Socket.IO, but the event is **not** a new-message event. Every mutation
+emits a single generic `invalidate` carrying **React Query cache keys**
+(`emitInvalidation` → `keysFor`); for a message that is
+`[["conversations"], ["conversation-thread", id], ["conversation-context", id]]`. There is no
+payload — the client is expected to refetch through the normal REST path.
+
+Consuming that from React Native is technically fine (socket.io-client works there), but it
+would mean importing the web app's query-key vocabulary into a client that has no React Query
+at all, and building a key→refetch mapping by hand, to gain something a 30s poll already
+covers. **Decision: poll.** Pull-to-refresh everywhere, a 30s interval on the list (while
+focused) and on the open thread, plus a refetch when the list regains focus. Live sockets
+become their own session. Noted as an open item.
+
+### 5. Fonts
+
+`apps/web/src/index.css` loads, via `@fontsource`:
+
+| Family | Role (CSS var) | Weights |
+| --- | --- | --- |
+| Fraunces | `--font-display` | 400, 400-italic, 500, 500-italic, 600 |
+| Jura | `--font-jura` | 500, 600, 700 |
+| Outfit | `--font-sans` | 300, 400, 500 |
+
+(It also loads Inter 400/500/600/700, which is the *other* theme's sans — not part of
+editorial-gold.)
+
+## Part 1 — `packages/shared-types`
+
+**No root `package.json` change was needed.** The workspaces array already globs
+`packages/*` alongside `apps/*` — checked before assuming, as the brief asked.
+
+Types only: no runtime logic, no dependencies, no build step. `main` and `types` both point at
+`src/index.ts`, so Metro bundles the TypeScript source directly — the one shape that needs no
+Metro configuration beyond the repo-root `watchFolders` already in place. The only runtime
+values are frozen `as const` objects standing in for Prisma enums (`MessageChannel.SMS`
+rather than a bare string); TypeScript `enum` is avoided because it emits non-erasable code.
+
+Shapes were derived by reading `routes/conversations.ts`, `routes/auth.ts`, `routes/users.ts`
+and `schema.prisma` — not by copying `apps/web`'s local interfaces. The comments carry the
+contracts a client has to respect: no pagination on the list, backwards cursor pagination on
+the thread, and the channel/direction asymmetry between thread types.
+
+**Verified in a real bundle, not just `tsc`.** Type-only imports are erased, so the first
+export proved nothing — module count was unchanged at 1017. A probe importing an actual
+runtime value (`CLIENT_CHANNELS`) moved it to **1022**, exactly the five shared-types modules,
+and the served dev bundle contained the `packages/shared-types` module paths and the enum
+values. Probe then removed; the final bundle still shows 4 `packages/shared-types` module
+paths, now via the real code.
+
+`apps/web` is **not** migrated to this package, per the brief. `packages/shared-types/README.md`
+records that as its own future task and says why it is not a mobile session's business.
+
+## Part 2 — design tokens + shell
+
+`src/theme/` — Editorial Gold copied **verbatim** from the web's own
+`:root[data-theme="editorial-gold"]` block, each token naming the CSS custom property it came
+from. Red is split exactly as the web splits it: `danger` (#e08272) is the only tint that
+clears the 4.5:1 text floor and is the only one anything readable may use; `dangerStrong`
+(#c2402f) is fills, borders and icons only. Neither is available as decoration — gold carries
+every emphasis and data role, including unread counts.
+
+Fonts load through `@expo-google-fonts/*` and are referenced by **full face name**
+(`Outfit_500Medium`), never family + `fontWeight`, which silently renders regular on Android.
+The splash screen is now held across the font load *as well as* the session restore, so there
+is no flash of system type; a font that fails to download falls back rather than pinning the
+app on the splash forever.
+
+**Deviation:** Fraunces 400-italic and 500-italic are not loaded. Nothing uses italic display
+type yet and each face is a real TTF in the bundle — one import to add back.
+
+Shell: bottom tabs — Schedule, Messages, Tasks, Inquiries. Messages lives in `index.tsx` so
+the app *opens* on it while still appearing second in the bar (tab order follows the declared
+`<Tabs.Screen>` order). The other three are written in the app's own voice rather than a
+default placeholder string. Session 1's home screen became `src/app/account.tsx`, reached from
+the header avatar rather than a fifth tab. Login was restyled on the new tokens.
+
+**A measured fix along the way:** importing `{ Feather } from '@expo/vector-icons'` pulls
+*every* icon family's TTF into the bundle. Switching to `@expo/vector-icons/Feather` took font
+assets from **51 to 33** and modules from **1143 to 1089**.
+
+**Verified visually.** `react-native-web` works on SDK 54 (it did not on the SDK 57 attempt),
+so the app was rendered in a browser at phone width. The login screen came up correctly, all
+nine faces registered with `expo-font`, and computed styles confirmed the real tokens —
+accent `rgb(201, 154, 91)` = `#c99a5b`, muted `rgb(155, 146, 127)` = `#9b927f`, headline in
+Fraunces, eyebrow and labels in Jura, hint in Outfit.
+
+## Part 3 — Conversations
+
+**List** — counterpart name, last-message preview (prefixed `You: ` when outbound), relative
+stamp, channel chip in the web's own per-channel colours, and an unread badge in **gold**
+(an unread count is data, not an alarm). Pull-to-refresh, 30s poll while focused, refetch on
+focus. A failed background poll deliberately does **not** clear a list that is already on
+screen and still perfectly readable — the error state only appears when there is nothing to
+show.
+
+**Thread** — inverted `FlatList` so `onEndReached` is the natural "load older", paging
+backwards through the API's cursor. Day separators and same-minute bursts match the web.
+
+Which **side** a message sits on differs by thread type and is the easiest thing here to get
+backwards: CLIENT threads use `direction` (OUTBOUND is the studio), while STAFF/GROUP threads
+are *all* OUTBOUND by API rule, so those must use authorship instead — using `direction`
+there would render an internal thread as a monologue. That logic, plus the separator and burst
+rules, is extracted to `src/lib/threadRows.ts` as a pure function specifically so it could be
+checked rather than eyeballed.
+
+**Composer** — STAFF/GROUP threads hide the channel control entirely rather than showing it
+disabled, because the API forces IN_APP/OUTBOUND there. CLIENT threads must supply both, so
+there is a picker, defaulting the way the web does: the thread's last channel (IN_APP mapped
+to INSTAGRAM), else SMS, falling back to PHONE when the integration is not connected.
+
+The strip above the input always states, in plain words, what the send will actually do —
+"Sends for real over SMS" vs "Logged to the thread as Phone" vs "Logging what they said on…"
+— derived from the thread's own `callerPermissions` (`conversations.sendLive`) and live
+integration status. This is the one piece of design that is genuinely mobile-specific
+reasoning rather than a port: on a connected studio an OUTBOUND SMS is a real text to a real
+client, and on a phone, with a thumb, that must never be a surprise.
+
+**Optimistic send** keeps the message visible and marked. Pending dims it; failure gives it a
+red edge and a "Not sent — tap to retry" affordance that reuses the body already on the row,
+so nothing has to be retyped. A failed message is never silently dropped, and a poll landing
+mid-send cannot wipe it (local rows are tracked separately from server rows).
+
+Empty and error states share one `StateMessage` shape so they read as the same product. Red
+appears in exactly two places on these screens: a failed send, and an error state's eyebrow.
+
+## Part 4 — verification
+
+From a clean tree (only the two untracked files that predate all of this work) and a fresh
+`npm ci`:
+
+- **`apps/web`** `npm run build` — built in 13.45s, exit 0. **`apps/api`** `npm run build` —
+  exit 0. Neither is affected by the new workspace.
+- **`tsc --noEmit`** clean in both `apps/mobile` and `packages/shared-types`.
+- **`expo export --platform ios`** — 1100 modules, no errors.
+- **Dev server + the real bundle Expo Go fetches**: manifest HTTP 200 reporting
+  `sdkVersion = 54.0.0`, `name = Ink Manager`, `slug = ink-manager`, `userInterfaceStyle = dark`;
+  bundle HTTP 200, 6,545,441 bytes. Inside it: React `19.1.0` once and `19.2.7` **zero** times
+  (the session-1B Metro pin still holds), the `packages/shared-types` module paths, the
+  production API URL, and the composer's live-send copy.
+
+**Row-building logic**, driven directly over CLIENT / STAFF / GROUP / burst / empty cases:
+inverted order is newest-first; each day separator lands after its day's oldest message so it
+renders above it; a two-message same-minute burst carries one meta row on the newer message;
+a GROUP thread labels only the first message of a colleague's run; `isOwnSide` flips on
+`direction` for CLIENT and on authorship for STAFF.
+
+**Request construction and error mapping**, against the live production API:
+
+| Call | Result |
+| --- | --- |
+| `GET /conversations` (junk token) | 401, `fromApi=true`, non-transient |
+| `GET /conversations/:id/messages` (junk token) | 401, `fromApi=true`, non-transient |
+| `GET /integrations/status` (junk token) | 401, `fromApi=true`, non-transient |
+| `POST /conversations/:id/read` (junk token) | resolves without throwing, by design |
+
+Those all reject at the auth middleware, which proves the error mapping but not the URLs or
+payloads. So request construction was verified separately by **intercepting `fetch`**, which
+means nothing left the machine:
+
+```
+GET  /conversations
+GET  /conversations/cnv_123/messages
+GET  /conversations/cnv_123/messages?cursor=msg_abc%2B%2F%3D%3F%26     (cursor URL-encoded)
+POST /conversations/cnv_staff/messages   {"body":"internal note"}       (no channel/direction)
+POST /conversations/cnv_client/messages  {"body":"…","channel":"PHONE","direction":"OUTBOUND"}
+POST /conversations/cnv_client/messages  {"body":"…","channel":"SMS","direction":"OUTBOUND"}
+POST /conversations/cnv_client/messages  {"body":"…","channel":"PHONE","direction":"INBOUND"}
+```
+
+8 requests captured, **0 sent to the network**. Per the brief, no message was posted to any
+real conversation: **the live send is deferred to the owner's phone gate.**
+
+### What is NOT verified
+
+The conversation screens have never been rendered against real data. Every request shape,
+every error mapping and all the row logic have been checked, and the bundle builds and serves
+— but no list has been drawn from a real studio's threads, and nothing has been sent. That
+needs a staff credential and a device, which is the gate below.
+
+### Owner walkthrough — what to check on the phone
+
+```powershell
+npm install
+cd apps\mobile
+npx expo start
+```
+
+Scan the QR with the iPhone Camera app → Expo Go. Same Wi-Fi, or `npx expo start --tunnel`.
+
+1. **Login** — the screen should be near-black with a Fraunces headline and a gold SIGN IN
+   button, and read `api.inkmanager.app` at the bottom. **This is production.**
+2. **It should open on Messages**, second tab, with Schedule to its left.
+3. **The list** — do the threads match what the web shows for the same account, in the same
+   order (most recent first)? Are unread threads showing a gold badge? Pull down to refresh.
+4. **The other three tabs** — Schedule, Tasks, Inquiries should each show an in-voice
+   "coming soon" panel, not a default placeholder.
+5. **Avatar, top right** → account screen with role, email, the API host, and Log out. Log out
+   and back in to confirm the session restores.
+6. **Open a thread.** Check the sides look right — on a client thread the studio's messages
+   sit right, on a team thread *your* messages sit right. Scroll up to pull older history in
+   (30 at a time). Check day separators say Today / Yesterday / a date.
+7. **The composer strip, before typing anything.** On a **team** thread there should be no
+   channel control at all. On a **client** thread it should state what will happen — and this
+   is the one to read carefully: if it says **"Sends for real over SMS"**, the next message
+   genuinely texts that client. Tap the strip to change channel; **PHONE is always log-only**
+   and is the safe choice for a first test.
+8. **Send a test message on a TEAM thread first** (internal, IN_APP, nothing leaves the
+   studio). Confirm it appears immediately, dims while sending, then settles.
+9. **Failure path** — turn on airplane mode and send. The message must stay visible with a red
+   edge and "Not sent — tap to retry", never vanish. Turn Wi-Fi back on and tap it.
+10. Only then, if wanted, a real client send — deliberately, on a thread where that is
+    appropriate.
+
+## Commits
+
+Branch **`mobile/session2`**, all pushed to origin, **not merged**:
+
+- `9b00f63` — `mobile: shared-types package`
+- `068ebd9` — `mobile: design tokens + tab shell`
+- `63d1ca7` — `mobile: conversations`
+- (this REPORT.md entry)
+
+## Open
+
+- **The phone gate**, now covering Conversations as well as login. Nothing in this session has
+  been seen against real data.
+- **Live sockets** — deferred with reasons (Part 0.4). Whoever picks it up needs the
+  `invalidate` event's key vocabulary, not a message payload; the honest options are to adopt
+  React Query on mobile or to map keys to refetches by hand.
+- **Poll interval differs from web on the thread**: mobile polls an open thread every 30s
+  where the web uses 15s, per this session's brief. A phone on cellular is the reason;
+  revisit if it feels stale in use.
+- **Attachments are display-only.** A message with attachments shows "N attachments"; there is
+  no viewer and no upload. The API supports both.
+- **Not built, and deliberately**: reactions, quoted replies, message editing, tags/context,
+  archive/unarchive, `+ New chat`, search, and the `@mention`-upgrades-a-thread-to-a-group
+  flow. All exist in the API and on the web.
+- **`apps/web` still has its own copies** of these types. Migration is its own task.
+- **An expo-router quirk worth knowing**: the typed-routes generator lists non-route modules
+  (`/../theme/colors`, `/../../../../packages/shared-types/src/enums`) in the `Href` union. It
+  only widens the union, so it is harmless — but it means a navigation typo may not be caught.
+  Navigating to a dynamic route must use the object form
+  (`router.push({ pathname: '/conversation/[id]', params: { id } })`); an interpolated template
+  string is correctly rejected.
+- **No app icon or splash art.** Still Expo placeholders.
