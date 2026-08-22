@@ -21620,3 +21620,187 @@ Branch **`mobile/session4`**, pushed, **not merged**:
 - **`apps/web`'s calendar range is still browser-local** (session 3's finding), and
   `colorForArtistId` is still duplicated between the two clients. Both unchanged.
 - **No app icon or splash art.** Still Expo placeholders.
+
+# Mobile Session 4B — login visual parity
+
+Branch **`mobile/session4b`** (off `mobile/session4`, still unmerged), pushed to origin.
+**Not merged to main.** Scope was the mobile login screen only; `apps/api` and `apps/web`
+source are untouched, and no other mobile screen changed. Assets were copied out of
+`apps/web`, which the brief expected.
+
+The single most useful thing this session did was stop porting from the source alone and
+put the two screens side by side: production `web.inkmanager.app/login` and the mobile
+build, same viewport, same browser. That comparison found three real mistakes a code-only
+port had already made and would not have caught.
+
+## Part 0 — investigation
+
+| thing | where it lives | what it is |
+| --- | --- | --- |
+| background photo | `apps/web/src/assets/login-background-no-artist.png` | 1672×941, **2,172,358 bytes** |
+| wordmark | `apps/web/public/branding/logo-white-512.png` | 3590×1339 PNG with alpha, rendered `h-24` (96px), `w-auto` |
+| scrim | `.hero-shade` | two stacked gradients, both `rgba(12,10,8,α)` — only alpha ramps |
+| card | `.login-panel-surface` | `#100f0ed6` fill, `1px rgba(201,154,91,.1)`, radius 10px, `backdrop-filter: blur(16px)` |
+| inputs | `.login-input` | `#0f0e0d` on `1px #252322`, radius **5px** (web's own literal, not `--radius-card`), focus → gold border + 1px ring |
+| line-work | `.rings` | **not an asset** — three CSS circles, 520/780/1060px, `1px rgba(201,154,91, .18/.12/.07)`, centred 50%/47% |
+| button | `.btn-gold-gradient` | `#dda65d → #c9924e` on a 100deg ramp, a white→dark sheen over it, `1px rgba(215,164,94,.34)`, text `#0e0d0b` |
+
+**One correction to the brief's premise, worth stating plainly:** the web *login* button is
+**not** `.btn-gold-gradient`. It is `.login-button`, a flat `--color-accent-button`
+(`#d5a05c`). `.btn-gold-gradient` is the artist-public-page token. The brief asked for the
+gradient explicitly, so that is what was built — but it means mobile's button is now slightly
+*richer* than web's login button rather than identical to it. Deliberate, and the one place
+mobile leads rather than follows.
+
+**Forgot-password flow.** Web route `/forgot-password`, rendered inside the same
+`AuthLayout` (not a separate page), posting to `POST /auth/forgot-password`. That endpoint
+deliberately returns the same response whether or not the address matched an account — it is
+built not to be an email-enumeration oracle — so there is nothing account-specific for a
+native screen to show. The reset link itself arrives by email and lands on
+`/reset-password/:token` on the web regardless. Confirmed live:
+`https://web.inkmanager.app/forgot-password` → **HTTP 200**. It is an ordinary responsive web
+page and works fine in a phone browser.
+
+## Part 1 — the rebuild
+
+### Assets shipped
+
+| file | size | from |
+| --- | --- | --- |
+| `apps/mobile/assets/login/background.jpg` | **334,096 B (326 KB)** | the 2.07 MB PNG, re-encoded JPEG q90 |
+| `apps/mobile/assets/login/wordmark.png` | **52,261 B (51 KB)** | the 3590×1339 master, resized to 1201×448 |
+
+Both are under the 500 KB flag; the background is an **85% reduction**. Two decisions behind
+those numbers. The background was kept at its native 1672×941 rather than exported larger —
+that is all the detail the source has, and a phone renders it `cover`, so an upscale would
+have been pure bytes. The wordmark was cut to 448px tall because 96pt at @3x needs 288px;
+shipping the 3590px master would have been ~90 KB for pixels nothing can display.
+
+### Ported exactly
+
+Every value lives in `src/theme/colors.ts` under a `login` export, each naming the CSS custom
+property it came from — kept apart from the app palette because the web login is deliberately
+locked to Editorial Gold regardless of a studio's preset, and that "fixed platform identity"
+belongs to one screen, not the app.
+
+The **rings** turned out to be the pleasant surprise: pure CSS circles, so they port *exactly*
+rather than approximately, and the brief's "skip rather than approximate badly" escape hatch
+was not needed for the geometry.
+
+### Deliberately not ported
+
+- **The rings' motion.** On web they carry a spring rotate/scale keyed to the auth mode, plus
+  two dots orbiting on CSS keyframes. The mode change does not exist here (forgot-password
+  opens in the browser), and the repo's own design rules single out animation combined with
+  `backdrop-filter` as having caused real on-device frame drops invisible in desktop dev
+  tools — animating a layer directly behind the card is exactly that. The static composition
+  is intact; only the movement is missing.
+- **The card's blur.** Same design rule, plus `--color-card-glass` is ~84% opaque anyway
+  (`#100f0e` at `d6`), so very little of the photograph reads through it on web either. A
+  translucent fill over the photo gets the same result at no cost.
+
+### The button
+
+`.btn-gold-gradient` via `expo-linear-gradient`, two stacked layers in the same order as the
+CSS. The angle needed a real conversion rather than a guess: CSS measures `100deg` clockwise
+from "to top", so the direction is `(sin 100°, −cos 100°) ≈ (0.98, 0.17)`, which becomes RN's
+fractional `start {0, 0.415} → end {1, 0.585}` — a left-to-right ramp across a 0.17-of-height
+drop, not a flat horizontal one.
+
+### Forgot password
+
+Opens the existing public page in an in-app browser sheet (`expo-web-browser`,
+`PAGE_SHEET`), so dismissing it returns straight to login. The URL is derived from the API
+base rather than hardcoded, so a non-production build opens its own stack:
+
+| API base | opens |
+| --- | --- |
+| `https://api.inkmanager.app` | `https://web.inkmanager.app/forgot-password` |
+| `https://api.inkmanager.app/` | same (trailing slash handled) |
+| `https://staging-api.inkmanager.app` | unchanged host — falls through rather than guessing |
+| `http://192.168.1.50:4000` | unchanged host |
+
+Extracted to `src/lib/forgotPassword.ts` as a pure function rather than left inside the
+screen, so it could actually be exercised — the same reason `loginError.ts` and
+`threadRows.ts` live where they do.
+
+## Part 2 — verification
+
+### The side-by-side, and what it caught
+
+Rendered the mobile build and production web at 430×932 in the same browser and compared.
+Three genuine mistakes, none of which reading the source had revealed:
+
+1. **The wordmark belongs *inside* the card.** On web it is the first child of
+   `.login-panel-surface`. I had it floating above, which changed the whole composition.
+2. **The rings must render at their literal 520/780/1060 sizes and overflow the viewport.**
+   I had scaled them to the phone's width, "so the composition holds" — which did the exact
+   opposite: it turned the wide arcs sweeping off both edges into three small circles sitting
+   behind the card. Web overflows them on a narrow viewport too, and that overflow *is* the
+   composition.
+3. **The button must never sit disabled.** Web's is always live (its form's own `required`
+   validates on submit), and my disabled-until-both-fields-filled state left the gold sitting
+   at 50% opacity at rest — reading as exactly the "flat muted gold" this session existed to
+   fix. Empty fields now get the same inline error treatment as a rejected sign-in.
+
+Also matched in passing: `max-w-sm` is 384px (I had 380), and the gap under the password
+field is `mb-6` plus the button's own `margin-top: 1em` ≈ 36px (I had 28).
+
+### Remaining intentional differences from web
+
+- **The gradient button**, as above — web's login button is flat.
+- **No ring motion or orbit dots.** Web shows a gold dot tracking the inner ring; mobile's
+  rings are still.
+- **The API-host footer line** (`api.inkmanager.app`) is mobile-only and stays — it is the
+  fastest way to tell which stack a test build is pointed at.
+- **Empty-field validation** shows an inline message where web defers to the browser's own
+  `required` bubble.
+
+### Sizes
+
+- 430×932 (large iPhone) — card centred, arcs sweeping both edges, everything on screen.
+- 375×667 (**iPhone SE**) — compact treatment engages below 700pt: smaller wordmark, tighter
+  vertical padding. Nothing clipped, footer still visible.
+- 375×400 (a **keyboard-shrunk** SE, measured rather than eyeballed) — with the password
+  field scrolled into view, password sits at 176–223, SIGN IN at 276–294 and FORGOT PASSWORD
+  at 327–340, all inside the 400pt viewport, with the content still scrollable. Nothing is
+  trapped under the keyboard.
+
+### Build
+
+From a clean tree and a fresh `npm ci`: `apps/web` built in 10.23s exit 0; `apps/api` exit 0;
+`tsc --noEmit` clean in `apps/mobile` and `packages/shared-types`; `expo export --platform
+ios` 1132 modules, no errors. Dev bundle: manifest HTTP 200 reporting `sdkVersion = 54.0.0`,
+bundle HTTP 200 at 6,750,111 bytes, React `19.1.0` once and `19.2.7` **zero** times, with the
+login assets, the gradient stops and the forgot-password logic all present.
+
+Lockfile delta: **3 packages added** (`expo-image`, `expo-linear-gradient`,
+`expo-web-browser`, all via `expo install` so they match SDK 54), **0 changed, 0 removed**.
+`expo-web-browser` added its own config plugin to `app.json`.
+
+## Commits
+
+Branch **`mobile/session4b`**, pushed, **not merged**:
+
+- `e50da62` — `mobile: login visual parity with the web sign-in page`
+- (this REPORT.md entry)
+
+## Open
+
+- **The phone gate.** Everything here was judged in a desktop browser at phone dimensions;
+  the photograph's compression, the gradient's smoothness on an OLED panel and the real
+  keyboard's behaviour have not been seen on a device.
+- **Ring motion** is the one piece of the web composition genuinely missing. If it is wanted,
+  `react-native-reanimated` is already a dependency — but it should be tested on a real
+  phone before shipping, per the standing rule about animation near translucent layers.
+- **A dev build's forgot-password link will 404.** The `api.` → `web.` swap has nothing to do
+  on `http://192.168.1.50:4000`, so it opens port 4000, where the API lives — the web dev
+  server is on 5173. Harmless (it fails visibly rather than opening the wrong studio's site)
+  but worth an `EXPO_PUBLIC_WEB_URL` override if local testing of that link ever matters.
+- **No native reset flow**, by design this session.
+- **The background photo is one fixed image.** Web has a second variant
+  (`login-background.jpg`, with an artist in frame) that mobile does not use.
+- **Only the login screen was touched.** The rest of the app still uses the app-wide palette;
+  a wider Editorial Gold pass over the authenticated screens is a separate piece of work.
+- **No app icon or splash art.** Still Expo placeholders — and now conspicuously so, given
+  the login screen has real brand assets.
