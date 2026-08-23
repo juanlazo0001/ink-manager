@@ -23103,3 +23103,164 @@ don't have permission to edit this.", "CHAT", "Flash Gallery", "Notifications", 
   and how that feels is a device question.
 - **Whether `GET /nav-counts` is fast enough to poll at 60s** alongside the screens' own 30s
   polls, on cellular.
+
+# Mobile session G — nav refinements + inquiries list upgrade
+
+Branch `mobile/session-g` off `main` (`8fa88bc`), three commits, all pushed, **unmerged** — the
+owner gates F and G together on device.
+
+Pre-flight passed: `a411faa` and `c564b21` both reachable from `origin/main`. Worked in a
+dedicated worktree, per the convention.
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `432b982` | `mobile: nav refinements` |
+| 2 | `cc160a9` | `mobile: inquiries thumbnails + projects toggle` |
+| 3 | *(this)* | REPORT.md |
+
+## Icon mapping
+
+**Web has no icon library.** Every glyph in `apps/web/src/components/icons.tsx` is hand-drawn
+inline SVG on a `0 0 20 20` viewBox with `fill="none" stroke="currentColor" strokeWidth="1.5"`.
+So the brief's "same library if it exists for RN" had no answer, and "the visually identical
+equivalent" would have meant Feather look-alikes that are *close but not the same* — Feather's
+`grid` has no corner radius, its `message-square` has no tail, its `check-square` uses a
+different tick geometry.
+
+These are the **same paths**, copied coordinate-for-coordinate into `react-native-svg`. Not an
+approximation of web's icons; web's icons.
+
+| Destination | Web component | Geometry | Mobile |
+| --- | --- | --- | --- |
+| Home | `DashboardIcon` | four `rect rx=1.5` | `DashboardIcon` |
+| Inquiries | `DocumentIcon` | `M5.5 2.5h6l3 3v12…` + two rules | `DocumentIcon` |
+| Chat | `MessageIcon` | `M3 4.5h14…` bubble with tail | `MessageIcon` |
+| Schedule | `AppointmentsIcon` | calendar `rect` + rule + two ticks | `AppointmentsIcon` |
+| Tasks | `TasksIcon` | `rect rx=2` + `polyline 6.5 10 8.5 12 13.5 7` | `TasksIcon` |
+| Bell | `BellIcon` | `M5 8a5 5 0 0 1 10 0…` + clapper | `BellIcon` |
+| Avatar chevron | `ChevronDownIcon` | `polyline 5.5 8 10 12.5 14.5 8` | `ChevronDownIcon` |
+| Flash Gallery | `PhotoIcon` | frame + circle + mountain path | `PhotoIcon` |
+| Profile | `ClientsIcon` (single figure) | circle + shoulders | `PersonIcon` |
+| Settings | `SettingsIcon` | three rules + three dots | `SettingsIcon` |
+| Log out | `LogoutIcon` | door + arrow | `LogoutIcon` |
+
+`react-native-svg@15.12.1` is the exact version Expo SDK 54 bundles
+(`expo/bundledNativeModules.json`), which also means **it ships inside Expo Go** — no custom dev
+client, so the SDK 54 pin holds. Lockfile delta: **144 insertions, 0 removals, 0 version
+changes** — a pure addition of that package and its 12 CSS-parsing dependencies, nothing
+re-resolved.
+
+Feather stays for glyphs web has no counterpart for (form controls, row chevrons, flash
+affordances). This module covers navigation, which is the one place the two clients sit side by
+side and a look-alike reads as two different products.
+
+Confirmed in the shipped bundle, not assumed — `M5.5 2.5h6l3 3v12`, `M3 4.5h14a1 1 0 0 1 1 1v8`
+and `M5 8a5 5 0 0 1 10 0c0 3.5` are all present.
+
+## The top bar's left side is empty, and that is web's hierarchy
+
+The brief asked to investigate rather than assume. Web's top bar is
+`fixed right-4 z-30 flex items-center gap-2` and **nothing else** — it has no left-hand region at
+all. The studio name lives in the **sidebar's** header, never in the bar.
+
+With the hamburger removed there is no sidebar on mobile either, so the studio name sits at the
+top of the account menu, which is the nearest counterpart to web's sidebar header. Nothing goes
+on the left.
+
+## Toggle semantics found
+
+**No API work needed, and nothing to flag as missing.** Web's artist page loads
+`GET /inquiries/assigned-to-me?scope=all` **once** and splits it by status client-side — exactly
+the call mobile already makes. The staff page does the same against `GET /inquiries`.
+
+| Tab | Web source | Statuses |
+| --- | --- | --- |
+| **Inquiries** | `INQUIRY_TAB_COLUMNS.flatMap(c => c.statuses)` | `CANDIDACY_REVIEW`, `NEW`, `ARTIST_ASSIGNED`, `AWAITING_CLIENT_RESPONSE`, `BUDGET_NEGOTIATION`, `DEPOSIT_PENDING`, `FLASH_PENDING_APPROVAL`, `FLASH_PAYMENT_PENDING`, `CLOSED_LOST`, `COLD_LEAD`, `TRANSFERRED` |
+| **Projects** | `PROJECT_TAB_COLUMNS` = `PROJECTS_TAB_STATUSES` | `SCHEDULING`, `WAITLISTED`, `CONFIRMED`, `ON_HOLD` |
+
+Labels are web's own words: "Inquiries" and "Projects".
+
+Two placements that are easy to get backwards, and web's comments are explicit about both:
+
+- **`DEPOSIT_PENDING` and both `FLASH_*` statuses are INQUIRIES**, not Projects — they are leads
+  awaiting a payment, not converted projects.
+- **`ON_HOLD` is PROJECTS**, not Inactive — it is only ever reached from a converted project (the
+  API's own `PROJECT_STATUSES`-scoped `POST /:id/hold`), and a pause is not a terminal state.
+
+All fifteen `InquiryStatus` values are assigned across the two tabs, so nothing can fall through.
+Typed as a total `Record<InquiryStatus, InquiryTab>` for that reason: a new status in
+`schema.prisma` becomes a compile error rather than an inquiry that belongs to neither tab and
+disappears from both lists.
+
+**Artist scoping**: web's `MyInquiries` uses the same `?scope=all` fetch and the same buckets as
+the staff page — there is no artist-specific variant of the toggle to mirror. What differs is
+the *route* (`assigned-to-me`, scoped server-side to their own work), which mobile already used.
+
+**Projects ordering** is web's: soonest upcoming session first, via `findNextSession` — the
+earliest session with no `checkedOutAt`, since sessions arrive `startTime`-ascending. Undated
+projects sort last but stay visible. `ArtistInquiryListItem` gains `sessions`, which that route
+has always returned and which no client had needed declared until now.
+
+## Thumbnails
+
+The first **reference** image, 56pt square at the app's usual tile radius, through `expo-image`.
+Reference images are what the *client* sent as the idea for the piece, so the first is the
+closest thing a list row has to "what is this about". Placement photos are deliberately **not** a
+fallback — a photo of an arm is not a picture of the work, and showing one where a reference
+belongs would misrepresent the row.
+
+A missing image gets a real placeholder rather than a collapsed row, so the list does not jump
+between two layouts as it scrolls. The **staff** list projection returns no images at all, so
+that screen passes null and every row falls back — the row does not assume every caller can
+supply one.
+
+## Two bugs found by looking at it
+
+- **Every row on the artist's list read UNASSIGNED.** The row treated a null `artistName` as
+  "nobody is assigned", while the artist screen passed null to mean "don't mention it". Those
+  inquiries *are* assigned — to the person reading the screen. `artistName` is tri-state now: a
+  name, `null` for genuinely unassigned, `undefined` to omit the line. Pre-existing since session
+  5; the new row layout made it impossible to miss.
+- **The segmented control rendered as two circles.** A horizontal `ScrollView` in a flex column
+  takes all the height offered, its content container stretched the segments to fill it, and
+  `radius.pill` (999) did the rest. `flexGrow: 0` plus `alignItems: 'center'`. Latent since the
+  control was written — it only surfaced now that this screen has two segments again.
+
+## Deviations
+
+1. **Open/Closed is gone**, replaced by web's Inquiries/Projects. That was the instruction, and
+   the old split was mobile's own invention.
+2. **`PersonIcon` has no exact web counterpart** — web's account menu entry for Profile carries
+   no icon at all, and its `ClientsIcon` draws two figures. This is that icon's single-figure
+   half, at the same stroke weight and viewBox. The only glyph in the set that is not a
+   coordinate-for-coordinate copy.
+3. **`react-native-svg` added to `apps/mobile`.** A dependency addition, not a root-resolution
+   change: zero existing versions moved.
+
+## Standard bar, from a clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, exit 0 — 1352 packages in 1m; `package-lock.json` unchanged |
+| `packages/shared-types` typecheck | clean — `enums.generated.ts matches schema.prisma` |
+| `apps/api` `tsc` | clean, exit 0 |
+| `apps/web` `tsc -b` + `vite build` | clean, built in 11.40s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `apps/mobile` `expo export --platform ios` | clean — 3,382,522 byte bundle |
+| expo / react / react-native / svg | **54.0.37 / 19.1.0 / 0.81.5 / 15.12.1** — pin intact |
+| React singleton in the shipped bundle | 19.1.0 once, **19.2.7 absent** |
+
+Nine node processes holding the repo (my own Expo/Metro parents and their jest-workers) were
+stopped before `npm ci`. Same lesson as session E: killing a listener does not kill the parent
+that respawns it.
+
+## Still not verified
+
+**Nothing has run on a phone.** Carried forward from F, and now also:
+
+- **`react-native-svg` on device.** It is bundled in Expo Go, so it should load — but "should
+  load" is an argument, not a launch. This is the first native module this app has added beyond
+  what the scaffold shipped with, and it is the single highest-value thing to check first.
+- **Thumbnail decode cost while scrolling.** Every row now decodes a remote Cloudinary image;
+  `expo-image` caches, but a long list on cellular is a device question.
+- **Whether the raised chat button's overhang is tappable** — unchanged from F.
