@@ -23454,3 +23454,204 @@ Nine node processes holding the repo were stopped before `npm ci`.
   cellular; five 52pt remote images now load above the fold.
 - **`react-native-svg` on device**, carried forward from G and still the highest-value first
   check.
+
+# Mobile session H2 — chat completions (avatar fix, attachments, frequent row)
+
+Branch `mobile/session-h2`, cut from `main` (`35063d7`), dedicated worktree, pushed. **Session H
+was already merged**, so this branches off `main` rather than off `mobile/session-h`; `main`
+carries H's commits identically (`ecdbc6c` is an ancestor) plus the CLAUDE.md handoff rule.
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `df4030d` | `mobile: staff avatars, chat attachments, frequent row` |
+| 2 | *(this)* | REPORT.md |
+
+## Part 1 — the staff avatar bug
+
+### What the API returns (evidence, not inference)
+
+`GET /conversations?type=STAFF` against dev, as an OWNER viewing an artist's thread:
+
+```
+HTTP 200
+type=STAFF  name=Dev Artist One  avatarUrl=data-url len=12047
+```
+
+So the payload is **correct and non-null**. `COUNTERPART_SELECT` includes `staffUser.avatarUrl`,
+the list query spreads it, and `toCounterpart` returns it for the STAFF branch.
+
+### Where web reads it
+
+The **same field**. `ProgressRingAvatar` takes `conversation.counterpart?.avatarUrl`
+(`ConversationsPanel.tsx:1437`) straight into an `<img src>`. There is a
+`conversations-staff-roster` query in that file, but it is used only to list staff who have **no**
+thread yet, for "+ New Chat" (`rosterWithoutThread`, line 1052) — it never enriches an existing
+row. No second store, no different source.
+
+### Relative or absolute? **Neither.**
+
+`User.avatarUrl` is not a link at all. It is a **base64 `data:` URI stored inline on the row** —
+`apps/api/src/lib/images.ts`: *"base64 data URLs stored directly on the row rather than adding file
+storage infra for small profile/branding images"*, enforced on write by `validateImageDataUrl`,
+which rejects anything not beginning `data:image/`. Every stored avatar on dev is one:
+
+```
+shape counts: { 'data-url': 3 }   (2 AVIF, 1 JPEG; 11k–19k characters)
+```
+
+So the brief's step 2 does not apply: there is no origin to resolve against, and "verify the fixed
+URL fetches 200" is not a meaningful check — the bytes are inline, not fetchable. Reported as a
+corrected premise rather than worked around.
+
+### Root cause
+
+**expo-image cannot load a `data:` URI on iOS.**
+
+It hands the source to SDWebImage (`ImageView.swift`: `imageManager.loadImage(with: source.uri…)`).
+The only loaders expo-image registers are Blurhash, Thumbhash and PhotoLibraryAsset
+(`ImageModule.swift` `registerLoaders`), so everything else falls through to SDWebImage's default
+NSURLSession downloader — which does not implement the `data:` scheme. The load fails, `onError`
+fires, and session H's fallback does exactly what it was built to do: draw initials.
+
+The one upstream mention of data URIs is a **crash** fix ("[iOS] Fixed an issue where data URIs
+caused crashes on iOS16+"), matching the `.path()` EXC_BREAKPOINT comment still in
+`maybeRenderLocalAsset`. It stopped the crash; it did not make them render.
+
+A browser's `<img>` decodes `data:` natively — which is the whole reason web shows the photo and
+mobile does not, from an identical payload.
+
+### Fix
+
+Renderer chosen by scheme in `Avatar`: `data:` goes to **React Native's own `Image`**, whose
+`RCTDataRequestHandler.canHandleRequest` matches the `data` scheme explicitly; `http(s)` stays on
+expo-image, which is worth keeping for caching and transition on the sources it can actually fetch.
+
+**Why session H's preview missed it:** that fixture used Cloudinary `https://` URLs. SDWebImage
+downloads those perfectly. The bug only exists for the shape production actually serves.
+
+### Initials
+
+Web takes the first letter of each of the **first two** words; mobile took **first and last**.
+Hence "Black Hive Ink and Arts" → `BA` on the phone, `BH` in the browser. `initialsOf` is now web's
+rule verbatim. Proven in the preview: `Black Hive Ink and Arts = BH (web: BH)`.
+
+## Part 2 — attachments
+
+### The API already supports them — no gap
+
+`SendMessageRequest` carries `attachments?: string[]` (Cloudinary URLs), `Message.attachments` is
+`Json?`, and the route requires **body OR a non-empty attachments array**
+(`conversations.ts:795`). Validation is `isStringArray` only.
+
+**Web can send them too** — the brief wondered whether it could; it does, at
+`ConversationsPanel.tsx:2345`, uploading through `uploadImageToCloudinary` →
+**`/uploads/signature`**. Mobile reuses that same endpoint. No new API surface.
+
+### Proven end-to-end against dev
+
+| Step | Result |
+| --- | --- |
+| `GET /uploads/signature` | **200** — folder `ink-manager/inquiries` |
+| `POST` to Cloudinary `image/upload` | **200** — `secure_url` returned |
+| `POST /conversations/:id/messages` with `body:""` + `attachments:[url]` | **201** — attachments persisted, empty body accepted |
+
+Ran against a labelled `[SESSION-H2 FIXTURE]` staff thread on **dev**, which — along with its
+message — was **deleted afterwards** (`deleted messages=1 conversations=1`, presence re-checked:
+false). One 85-byte test PNG remains in the dev Cloudinary `inquiries` folder; there is no delete
+path for it in this app and it was not worth inventing one.
+
+### What was built
+
+- **Composer**: a paperclip control opening a sheet — *Photo library* / *Take photo* — in the same
+  idiom as the existing channel sheet. Camera included because expo-image-picker returns the same
+  asset shape from both, so it cost almost nothing.
+- **Uploads start on pick, not on send**, so a failure surfaces while the person can still act on
+  it. Progress is real: `XMLHttpRequest`, because RN's `fetch` exposes no upload progress.
+- **Per-thumbnail state**: determinate progress bar, red edge + tap-to-retry on failure (retry
+  re-uploads the same file, no re-picking), and remove — which **aborts** an in-flight request.
+- **Send** enables on a caption *or* a finished image, mirroring the API's own rule; it stays
+  disabled while anything is uploading, since the URL does not exist yet.
+- **Bubbles** render images inline (one large, several tiled), tap → the existing viewer.
+  Non-image attachments keep the paperclip note, because inbound ones arrive from SMS/Email and are
+  not guaranteed to be images.
+
+### API gap worth recording
+
+`GET /conversations` projects `lastMessage` as body/channel/direction/createdAt — **no
+attachments** (confirmed live: `attachments field present: False`). So neither client can truly
+know. Web infers it: `{body || '📷 Image'}`. Mobile now does the same, drawn with the Feather glyph
+the rest of the app uses instead of the emoji. This is the second field missing from that same
+projection — the `author` gap from session H is the other. **One combined API change (author +
+attachments on `lastMessage`) would let both clients stop guessing.**
+
+## Part 3 — frequent row, amended
+
+Reconciled in place, not duplicated: the CLIENT-only filter is gone (any type, per the owner's
+decision), the strip hides below **3** threads, and unread now reads twice — the gold ring plus a
+dot, since a gold-ish photo can swallow the ring. `firstName` cuts at the first comma, so a GROUP
+thread reads "Ana", not "Ana,".
+
+## Also fixed: PhotoViewer opened the wrong page
+
+Caught while verifying the image bubbles — tapping image **2 of 3** opened image **1**, counter
+"1 / 3".
+
+`PhotoViewer` **never unmounts**: every call site renders it permanently and toggles `visible`, so
+`useState(initialIndex)` captured the first value forever. `contentOffset` did not save it either —
+react-native-web ignores it, and the ScrollView does not remount on a `visible` change. Now the
+index re-syncs on open and the pager is scrolled explicitly.
+
+**This was latent in the flash gallery and the inquiry screen**, which use the identical
+always-mounted pattern — opening the third flash piece had the same wrong counter. Fixed for all
+three.
+
+Proven after the fix: counter `2 / 3`, `scrollLeft` 414 on a 414pt viewport — exactly one page.
+
+## Verification
+
+414pt renders in `apps/mobile/parity-audit/`: `h2-01` avatars + frequent strip + rows, `h2-02` tray
++ inline-image bubbles + composer, `h2-03` the attach sheet, `h2-04` the viewer on image 2 of 3.
+
+The harness rendered every component against **real data URIs pulled from the dev database**, not
+invented URLs — the specific gap that let this bug through session H. DOM evidence for the routing:
+
+| Avatar source | Renderer | Decoded |
+| --- | --- | --- |
+| `data:image/jpeg` (19,227 chars) | RN Image (`backgroundImage` + `img`) | `naturalWidth` **400** |
+| `data:image/avif` (12,047 chars) | RN Image | `naturalWidth` **250** |
+| `https://…cloudinary…` | expo-image (`img`, no background) | `naturalWidth` **400** |
+| `null` / 404 | initials | — |
+
+`naturalWidth > 0` is the real proof: the bytes decoded, not merely an element that exists.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean — `package-lock.json` unchanged |
+| `packages/shared-types` typecheck | clean — enums match `schema.prisma` |
+| `apps/api` `tsc` | clean, exit 0 |
+| `apps/web` `tsc -b` + `vite build` | clean, 14.84s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `apps/mobile` `expo export --platform ios` | clean — 3.41 MB |
+| expo / react / react-native / svg / image-picker | **54.0.37 / 19.1.0 / 0.81.5 / 15.12.1 / 17.0.11** |
+| React singleton in bundle | 19.1.0 once, 19.2.7 absent |
+| Bundle content | `Photo library`, `Take photo`, `Tap a failed image`, `Frequent` present |
+| Preview harness leaked into bundle? | **no** — harness text and the embedded dev avatar both absent |
+
+Twenty node processes this session started were stopped; none remain.
+
+## Still not verified
+
+**Nothing has run on a phone.** Specific to this session:
+
+- **The avatar fix itself.** The routing is proven, and RN's `data:` support is in its source, but
+  a browser cannot exercise SDWebImage. This is the one change most worth checking first — it is
+  the reported bug.
+- **AVIF through RN's Image on iOS.** Two dev avatars are AVIF; iOS decodes AVIF from 16+, but this
+  was not exercised natively. Real user uploads are whatever they upload — web does no conversion —
+  so JPEG/PNG is the common case and AVIF appears to be a dev-fixture artifact.
+- **Camera capture and the permission prompts**, which a browser cannot show at all.
+- **Upload progress on a real connection** — the preview renders a fixed 45% rather than a live
+  transfer.
+- **`react-native-svg` on device**, still carried forward from G.
