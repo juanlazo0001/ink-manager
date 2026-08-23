@@ -87,3 +87,20 @@ export const WaiverStatus = {
   VERIFIED: 'VERIFIED',
 } as const;
 export type WaiverStatus = (typeof WaiverStatus)[keyof typeof WaiverStatus];
+
+
+export const FlashReviewMode = {
+  ARTIST: 'ARTIST',
+  STUDIO: 'STUDIO',
+  NONE: 'NONE',
+} as const;
+export type FlashReviewMode = (typeof FlashReviewMode)[keyof typeof FlashReviewMode];
+
+
+export const FlashPieceStatus = {
+  AVAILABLE: 'AVAILABLE',
+  PENDING_APPROVAL: 'PENDING_APPROVAL',
+  BOOKED: 'BOOKED',
+  RETIRED: 'RETIRED',
+} as const;
+export type FlashPieceStatus = (typeof FlashPieceStatus)[keyof typeof FlashPieceStatus];

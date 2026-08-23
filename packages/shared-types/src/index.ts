@@ -4,3 +4,4 @@ export * from './conversations';
 export * from './appointments';
 export * from './tasks';
 export * from './inquiries';
+export * from './artists';

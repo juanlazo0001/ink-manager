@@ -13,18 +13,26 @@ import { colors, hairline, radius, space, type } from '@/theme';
 
 function FieldShell({
   label,
+  hideLabel,
   hint,
   error,
   children,
 }: {
   label: string;
+  /**
+   * Suppresses the VISIBLE label only — the control keeps its
+   * accessibility label either way. For the case where the enclosing
+   * section heading already says the same word, and printing it twice
+   * reads like a mistake.
+   */
+  hideLabel?: boolean;
   hint?: string;
   error?: string;
   children: ReactNode;
 }) {
   return (
     <View style={styles.field}>
-      <Text style={styles.label}>{label.toUpperCase()}</Text>
+      {hideLabel ? null : <Text style={styles.label}>{label.toUpperCase()}</Text>}
       {children}
       {error ? (
         <Text style={styles.error} accessibilityRole="alert">
@@ -39,6 +47,7 @@ function FieldShell({
 
 export function TextField({
   label,
+  hideLabel,
   value,
   onChange,
   placeholder,
@@ -51,6 +60,7 @@ export function TextField({
   prefix,
 }: {
   label: string;
+  hideLabel?: boolean;
   value: string;
   onChange: (next: string) => void;
   placeholder?: string;
@@ -65,7 +75,7 @@ export function TextField({
 }) {
   const [focused, setFocused] = useState(false);
   return (
-    <FieldShell label={label} hint={hint} error={error}>
+    <FieldShell label={label} hideLabel={hideLabel} hint={hint} error={error}>
       <View
         style={[
           styles.inputRow,
@@ -134,12 +144,14 @@ export function SwitchField({
 /** Removable chips plus a free-text add — web's specialties control. */
 export function ChipsField({
   label,
+  hideLabel,
   values,
   onChange,
   placeholder,
   hint,
 }: {
   label: string;
+  hideLabel?: boolean;
   values: string[];
   onChange: (next: string[]) => void;
   placeholder?: string;
@@ -160,7 +172,7 @@ export function ChipsField({
   }
 
   return (
-    <FieldShell label={label} hint={hint}>
+    <FieldShell label={label} hideLabel={hideLabel} hint={hint}>
       {values.length > 0 ? (
         <View style={styles.chips}>
           {values.map((v) => (
@@ -207,19 +219,21 @@ export function ChipsField({
 /** A checkbox list — web's Services Offered. */
 export function CheckListField({
   label,
+  hideLabel,
   options,
   selected,
   onChange,
   hint,
 }: {
   label: string;
+  hideLabel?: boolean;
   options: { id: string; label: string }[];
   selected: string[];
   onChange: (next: string[]) => void;
   hint?: string;
 }) {
   return (
-    <FieldShell label={label} hint={hint}>
+    <FieldShell label={label} hideLabel={hideLabel} hint={hint}>
       <View style={styles.checkList}>
         {options.length === 0 ? <Text style={styles.hint}>Your studio has no services set up yet.</Text> : null}
         {options.map((option) => {

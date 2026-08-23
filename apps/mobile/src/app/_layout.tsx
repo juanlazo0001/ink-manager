@@ -48,6 +48,12 @@ function RootNavigator() {
         <Stack.Screen name="appointment/[id]" />
         <Stack.Screen name="inquiry/[id]" />
         <Stack.Screen name="account" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
+        {/* Pushed, not presented as a modal like `account` above: the
+            editor has an unsaved-changes guard, and a modal's swipe-down
+            dismissal is a second way off the screen that the guard on a
+            card presentation does not cover as reliably. */}
+        <Stack.Screen name="profile" />
+        <Stack.Screen name="profile-edit" />
       </Stack.Protected>
       <Stack.Protected guard={status === 'signedOut'}>
         <Stack.Screen name="login" />

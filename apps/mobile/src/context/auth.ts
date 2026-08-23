@@ -33,6 +33,15 @@ export interface AuthContextValue {
   session: Session | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /**
+   * Replaces the cached profile after a write that changed it.
+   *
+   * `PATCH /users/me` returns the updated user, so the alternative would
+   * be re-fetching what the API just handed back. Without this, changing
+   * a name or avatar would leave every header on the phone showing the
+   * old one until the next launch.
+   */
+  applyProfile: (profile: Profile) => void;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

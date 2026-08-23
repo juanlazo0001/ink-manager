@@ -103,6 +103,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus('signedIn');
   }, []);
 
+  const applyProfile = useCallback((profile: Profile) => {
+    setSession((current) => (current ? { ...current, profile } : current));
+  }, []);
+
   const logout = useCallback(async () => {
     await clearToken();
     // Studio-scoped caches must not survive into the next session -- the
@@ -113,5 +117,5 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus('signedOut');
   }, []);
 
-  return <AuthContext value={{ status, session, login, logout }}>{children}</AuthContext>;
+  return <AuthContext value={{ status, session, login, logout, applyProfile }}>{children}</AuthContext>;
 }

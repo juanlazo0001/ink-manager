@@ -34,10 +34,10 @@ export interface ApiErrorBody {
 /**
  * `GET /users/me` — the subset the mobile client consumes.
  *
- * The real response is considerably larger (artist profile, memberships,
- * onboarding-wizard eligibility, `isSoloStudio`…). Narrowed on purpose:
- * a client that wants more should widen this deliberately, rather than
- * inherit a stale copy of the web app's own `UserProfile`.
+ * The real response is larger still (onboarding-wizard eligibility, guest
+ * memberships…). Narrowed on purpose: a client that wants more should
+ * widen this deliberately, rather than inherit a stale copy of the web
+ * app's own `UserProfile`.
  */
 export interface MeResponse {
   id: string;
@@ -54,6 +54,33 @@ export interface MeResponse {
    * artist — prefer that one when deciding what a thread allows.
    */
   permissions: string[];
+  /**
+   * Present only for a user who HAS an artist profile. That is not the
+   * same question as `role === 'ARTIST'`: a solo studio's first account is
+   * commonly an OWNER with an artist profile attached, and it needs the
+   * artist surfaces exactly as much as a role-ARTIST one does. Key off
+   * this field, never off the role.
+   */
+  artist?: {
+    /** The id every `/artists/:id` call needs. There is no other source. */
+    id: string;
+    bio: string | null;
+    specialties: string[];
+    allowsClientSelfScheduling: boolean;
+    profileSetupCompletedAt: string | null;
+    publicSlug: string | null;
+    publishedAt: string | null;
+    /** The active HOME row only, and only its delegation flag. */
+    memberships: { allowsStudioProfileEdits: boolean }[];
+  } | null;
+  /**
+   * This artist is the only OWNER/FRONT_DESK at their studio, so settings
+   * a studio would normally control for them (client self-scheduling) are
+   * theirs to set directly. Computed server-side; never infer it.
+   */
+  isSoloStudioArtist?: boolean;
+  /** The studio has exactly one person in it, whatever their role. */
+  isSoloStudio?: boolean;
 }
 
 /** `GET /studios/:studioId` — the subset the mobile client consumes. */

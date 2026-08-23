@@ -2,11 +2,14 @@ import { useRouter } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import Feather from '@expo/vector-icons/Feather';
+import { Pressable } from 'react-native';
+
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, Eyebrow, QuietButton } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { API_URL } from '@/lib/api';
-import { colors, hairline, space, type } from '@/theme';
+import { colors, hairline, radius, space, type } from '@/theme';
 
 /**
  * Roles arrive as enum values (OWNER, FRONT_DESK, ARTIST, CUSTOMER).
@@ -59,6 +62,24 @@ export default function AccountScreen() {
           <Row label="Connected to" value={API_URL.replace(/^https?:\/\//, '')} />
         </Card>
 
+        {/* Only for an account that actually HAS an artist profile —
+            which is not the same question as role === 'ARTIST'. A solo
+            studio's first account is commonly an OWNER with one attached,
+            and a FRONT_DESK account has none at all. */}
+        {profile.artist ? (
+          <Pressable
+            onPress={() => router.push('/profile')}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.link, pressed && styles.pressed]}
+          >
+            <View style={styles.linkText}>
+              <Text style={styles.linkTitle}>Artist profile</Text>
+              <Text style={styles.linkBody}>Bio, rates, specialties, schedule and portfolio.</Text>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.fgMuted} />
+          </Pressable>
+        ) : null}
+
         <View style={styles.spacer} />
 
         <QuietButton label="Log out" onPress={logout} />
@@ -78,5 +99,20 @@ const styles = StyleSheet.create({
   row: { paddingVertical: space.md, gap: space.xs },
   rowValue: { ...type.body, color: colors.fg },
   divider: { height: hairline, backgroundColor: colors.borderSoft },
+  link: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    backgroundColor: colors.surface,
+    borderWidth: hairline,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.lg,
+  },
+  linkText: { flex: 1, gap: 2 },
+  linkTitle: { ...type.body, color: colors.fg },
+  linkBody: { ...type.meta, color: colors.fgMuted },
+  pressed: { opacity: 0.6 },
   spacer: { flex: 1 },
 });

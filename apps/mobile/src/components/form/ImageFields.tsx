@@ -128,6 +128,7 @@ export function AvatarField({
  */
 export function ImageGridField({
   label,
+  hideLabel,
   hint,
   token,
   purpose,
@@ -136,6 +137,8 @@ export function ImageGridField({
   max,
 }: {
   label: string;
+  /** Visible label only; the add button keeps its accessibility label. */
+  hideLabel?: boolean;
   hint?: string;
   token: string;
   purpose: UploadPurpose;
@@ -170,7 +173,7 @@ export function ImageGridField({
 
   return (
     <View style={styles.gridBlock}>
-      <Text style={styles.avatarLabel}>{label.toUpperCase()}</Text>
+      {hideLabel ? null : <Text style={styles.avatarLabel}>{label.toUpperCase()}</Text>}
       {hint ? <Text style={styles.hint}>{hint}</Text> : null}
 
       <View style={styles.grid}>

@@ -26,6 +26,8 @@ export {
   AppointmentStatus,
   AppointmentType,
   WaiverStatus,
+  FlashReviewMode,
+  FlashPieceStatus,
 } from './enums.generated';
 
 import { MessageChannel } from './enums.generated';

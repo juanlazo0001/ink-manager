@@ -44,6 +44,8 @@ const WANTED = [
   { prisma: 'AppointmentStatus' },
   { prisma: 'AppointmentType' },
   { prisma: 'LiabilityWaiverStatus', as: 'WaiverStatus' },
+  { prisma: 'FlashReviewMode' },
+  { prisma: 'FlashPieceStatus' },
 ];
 
 function parseEnum(schema, name) {
