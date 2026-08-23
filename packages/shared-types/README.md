@@ -12,6 +12,36 @@ The only runtime *values* here are frozen `as const` objects standing in for Pri
 (`MessageChannel.SMS` rather than a bare `'SMS'`). TypeScript `enum` is avoided on purpose:
 it emits real code and is not erasable.
 
+## Enums are generated, not written
+
+`src/enums.generated.ts` is produced from `apps/api/prisma/schema.prisma` by
+`scripts/generate-enums.mjs`. **Never edit it by hand.**
+
+```bash
+npm run generate:enums --workspace=packages/shared-types   # regenerate
+npm run typecheck      --workspace=packages/shared-types   # regenerate in memory, fail on drift
+```
+
+The drift check is part of `typecheck`, so the verification every session already runs will
+fail if the schema gains a value this package has not picked up.
+
+**Why codegen rather than importing Prisma's own generated types.** Two reasons, both
+disqualifying on their own:
+
+1. `apps/api/generated/` is **gitignored** — it exists only after `prisma generate` runs on
+   `apps/api`'s postinstall. A fresh clone would fail to typecheck this package before install.
+2. This package is deliberately dependency-free, and `apps/mobile` bundles its **source**
+   through Metro. Pointing it into `apps/api` couples the mobile bundle's resolution graph to
+   the API's, which is the exact thing this package exists to prevent.
+
+`schema.prisma` is committed and is the real source of truth, so parsing it needs no Prisma
+runtime and no build ordering.
+
+**This exists because hand-retyping failed.** `InquiryStatus` was read by eye and shipped with
+11 of its 15 values — see `apps/mobile/PARITY-AUDIT.md`. Everything hand-written here now
+lives in `enums.ts` alongside the re-exports, and is limited to genuinely derived constants
+like `CLIENT_CHANNELS` (a deliberate subset, not an enum).
+
 ## Source of truth
 
 These types describe **what crosses the wire**, and were derived by reading

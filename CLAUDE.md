@@ -123,6 +123,17 @@ Concise operating rules, not a project history — see REPORT.md for history.
   sized/clipped to that ancestor's box, not the viewport. Portal full-viewport fixed layers
   (background photo/wash, etc.) to `document.body` when they might end up nested inside one.
 
+## Shared types
+
+- **`packages/shared-types` enums are DERIVED from `apps/api/prisma/schema.prisma`, never
+  hand-retyped** — see `packages/shared-types/README.md` for the mechanism. `src/enums.generated.ts`
+  is generated; editing it by hand is always wrong.
+- The reason is a real defect, not a style preference: `InquiryStatus` shipped to mobile with
+  11 of its 15 values because it was read by eye, which put transferred inquiries in the wrong
+  bucket and rendered two live statuses in the wrong colour. That package's own `typecheck`
+  script now re-derives from the schema and fails on drift, so the standard verification bar
+  catches it.
+
 ## Mobile app (`apps/mobile`)
 
 - **`apps/mobile` is intentionally pinned to Expo SDK 54 for Expo Go compatibility — do not

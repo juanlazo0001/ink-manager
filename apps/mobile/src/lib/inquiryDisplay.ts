@@ -1,19 +1,29 @@
-import type { InquiryStatus } from '@ink-manager/shared-types';
+import { InquiryStatus } from '@ink-manager/shared-types';
 
 /**
  * Status presentation, mirroring `apps/web/src/components/StatusPill.tsx`
- * so the same inquiry reads the same on both clients.
+ * and `apps/web/src/lib/format.ts` so the same inquiry reads the same on
+ * both clients.
  *
  * Tones carry meaning, not colour: `warning` is "someone needs to act",
  * `success` is "moving", `danger` is reserved for a genuinely lost
- * inquiry, and `hold`/`neutral` are the two flavours of paused. Web's own
+ * inquiry, `hold` is paused, `neutral` is out of the pipeline. Web's own
  * comments are explicit that red is punctuation here — CLOSED_LOST is a
  * deliberate staff action, while COLD_LEAD (the automated sweep's quieter
- * outcome) stays grey rather than reusing it.
+ * outcome) and TRANSFERRED both stay neutral rather than reusing it.
  */
 export type StatusTone = 'success' | 'info' | 'warning' | 'danger' | 'neutral' | 'progress' | 'highlight' | 'hold';
 
-const STATUS_TONES: Record<string, StatusTone> = {
+/**
+ * Every value of the generated `InquiryStatus`, keyed off the enum itself
+ * rather than string literals — so adding a status to schema.prisma turns
+ * this into a compile error rather than a silent `neutral`.
+ *
+ * Values copied from web's own `STATUS_TONE`. TRANSFERRED has no entry
+ * there and therefore takes web's `?? 'neutral'` fallback; it is written
+ * out explicitly here so the intent is visible rather than incidental.
+ */
+const STATUS_TONES: Record<InquiryStatus, StatusTone> = {
   CANDIDACY_REVIEW: 'warning',
   NEW: 'info',
   ARTIST_ASSIGNED: 'progress',
@@ -25,44 +35,58 @@ const STATUS_TONES: Record<string, StatusTone> = {
   CONFIRMED: 'success',
   CLOSED_LOST: 'danger',
   COLD_LEAD: 'neutral',
+  TRANSFERRED: 'neutral',
+  FLASH_PENDING_APPROVAL: 'warning',
+  FLASH_PAYMENT_PENDING: 'warning',
+  ON_HOLD: 'hold',
 };
 
 export function statusTone(status: string): StatusTone {
-  return STATUS_TONES[status] ?? 'neutral';
+  return STATUS_TONES[status as InquiryStatus] ?? 'neutral';
 }
-
-const STATUS_LABELS: Record<string, string> = {
-  CANDIDACY_REVIEW: 'Candidacy review',
-  NEW: 'New',
-  ARTIST_ASSIGNED: 'Artist assigned',
-  AWAITING_CLIENT_RESPONSE: 'Awaiting client',
-  BUDGET_NEGOTIATION: 'Budget',
-  DEPOSIT_PENDING: 'Deposit pending',
-  SCHEDULING: 'Scheduling',
-  WAITLISTED: 'Waitlisted',
-  CONFIRMED: 'Confirmed',
-  CLOSED_LOST: 'Closed lost',
-  COLD_LEAD: 'Cold lead',
-};
 
 /**
- * Unknown statuses de-snake rather than disappearing — a value added
- * server-side should show as itself, not vanish from mobile until someone
- * updates this map.
+ * Web's `formatStatus` exactly: lowercase, split on underscores,
+ * title-case each word.
+ *
+ * Derived rather than a lookup table on purpose. A label map is a second
+ * place to drift from the enum — which is the whole reason this file is
+ * being rewritten. `FLASH_PAYMENT_PENDING` becomes "Flash Payment
+ * Pending" without anyone maintaining an entry for it.
  */
 export function statusLabel(status: string): string {
-  return (
-    STATUS_LABELS[status] ??
-    status
-      .toLowerCase()
-      .replace(/_/g, ' ')
-      .replace(/^./, (c) => c.toUpperCase())
-  );
+  return status
+    .toLowerCase()
+    .split('_')
+    .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : word))
+    .join(' ');
 }
 
-/** Closed inquiries recede in a list — they are history, not pipeline. */
+/**
+ * Web's "Inactive" column: terminal, out-of-pipeline statuses.
+ *
+ * TRANSFERRED belongs here — web's own comment calls it "the same
+ * terminal, out-of-pipeline treatment as CLOSED_LOST/COLD_LEAD …
+ * regardless of whether the inquiry was still a lead or already a
+ * converted project when it transferred". Mobile omitted it before this
+ * session, which left transferred inquiries sitting in the OPEN segment.
+ *
+ * ON_HOLD is deliberately NOT here: it is paused, not finished, and web
+ * keeps it on the Projects board rather than in Inactive.
+ */
+const INACTIVE_STATUSES: InquiryStatus[] = [
+  InquiryStatus.CLOSED_LOST,
+  InquiryStatus.COLD_LEAD,
+  InquiryStatus.TRANSFERRED,
+];
+
 export function isClosedStatus(status: InquiryStatus | string): boolean {
-  return status === 'CLOSED_LOST' || status === 'COLD_LEAD';
+  return (INACTIVE_STATUSES as string[]).includes(status);
+}
+
+/** The two flash-sourced lead statuses, which web groups into their own column. */
+export function isFlashRequestStatus(status: InquiryStatus | string): boolean {
+  return status === InquiryStatus.FLASH_PENDING_APPROVAL || status === InquiryStatus.FLASH_PAYMENT_PENDING;
 }
 
 const CHANNEL_LABELS: Record<string, string> = {
@@ -76,13 +100,7 @@ const CHANNEL_LABELS: Record<string, string> = {
 };
 
 export function channelLabel(channel: string): string {
-  return (
-    CHANNEL_LABELS[channel] ??
-    channel
-      .toLowerCase()
-      .replace(/_/g, ' ')
-      .replace(/^./, (c) => c.toUpperCase())
-  );
+  return CHANNEL_LABELS[channel] ?? statusLabel(channel);
 }
 
 /** One line of client name, falling back rather than rendering blank. */
