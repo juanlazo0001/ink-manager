@@ -35,7 +35,12 @@ export function SegmentedControl<T extends string>({
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.strip}
+      // flexGrow 0 is load-bearing, not tidiness: a horizontal ScrollView
+      // in a flex column takes all the height on offer, its content
+      // container stretches the segments to fill it, and radius.pill (999)
+      // then renders them as circles rather than pills. Seen on screen.
+      style={styles.strip}
+      contentContainerStyle={styles.stripContent}
       accessibilityRole="tablist"
     >
       {segments.map((segment) => {
@@ -64,7 +69,16 @@ export function SegmentedControl<T extends string>({
 }
 
 const styles = StyleSheet.create({
-  strip: { paddingHorizontal: space.lg, paddingTop: space.md, gap: space.xs },
+  strip: { flexGrow: 0 },
+  stripContent: {
+    flexDirection: 'row',
+    // Centred rather than stretched, so a segment is only ever as tall as
+    // its own content.
+    alignItems: 'center',
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    gap: space.xs,
+  },
   segment: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -86,6 +86,16 @@ export interface ArtistInquiryListItem {
   assignedArtist: (InquiryArtistRef & { hourlyRateCents: number | null; flatRateCents: number | null }) | null;
   service: { id: string; name: string; pricingModel: string } | null;
   appointment: { id: string; startTime: string; endTime: string; status: string } | null;
+  /**
+   * The project's sessions, startTime-ascending. Present on this route all
+   * along -- the artist projection includes them in full (they are the
+   * artist's own working data) -- and simply not declared here until a
+   * client needed them.
+   *
+   * The Projects tab orders by the earliest session without a
+   * `checkedOutAt`: the next one the artist has to show up for.
+   */
+  sessions: { id: string; startTime: string; endTime: string; status: string; checkedOutAt: string | null }[];
   fromGuestStudio: FromGuestStudio;
 }
 

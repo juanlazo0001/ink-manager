@@ -1,4 +1,5 @@
 import Feather from '@expo/vector-icons/Feather';
+import { Image } from 'expo-image';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
@@ -29,8 +30,60 @@ export interface InquiryRowData {
   priceEstimateLow: number | null;
   priceEstimateHigh: number | null;
   client: { firstName: string; lastName: string } | null;
-  artistName: string | null;
+  /**
+   * Three states, not two:
+   *   a name    show it
+   *   null      genuinely unassigned — say so
+   *   undefined don't mention the artist at all
+   *
+   * The artist's own list is the third case. Every row there is theirs by
+   * construction, so naming them on each one is noise — but it was passing
+   * `null`, which made every row read UNASSIGNED. They are assigned; they
+   * are assigned to the person reading. Caught on screen.
+   */
+  artistName?: string | null;
   fromGuestStudio: { id: string; name: string } | null;
+  /**
+   * The first reference image, or null. Reference images are what the
+   * CLIENT sent as the idea for the piece, so the first is the closest
+   * thing a list row has to "what is this about".
+   *
+   * Only the ARTIST route returns these — the staff list projection has no
+   * images at all — so the staff screen leaves it null and the row falls
+   * back, rather than the row assuming every caller can supply one.
+   */
+  thumbnailUrl?: string | null;
+  /** The next session an artist has to show up for. Projects tab only. */
+  nextSessionAt?: string | null;
+}
+
+/**
+ * The row's reference thumbnail, or the placeholder that stands in for it.
+ *
+ * The placeholder is a real, deliberate state rather than a blank box: a
+ * great many inquiries arrive with no reference at all, and a row that
+ * collapsed to text when one was missing would make the list jump between
+ * two layouts as it scrolled.
+ */
+function Thumbnail({ url }: { url: string | null }) {
+  if (!url) {
+    return (
+      <View style={[styles.thumb, styles.thumbEmpty]}>
+        <Feather name="image" size={16} color={colors.fgMuted} />
+      </View>
+    );
+  }
+  return (
+    <Image
+      source={{ uri: url }}
+      style={styles.thumb}
+      contentFit="cover"
+      transition={140}
+      // The app's own ground behind a slow decode, never a white flash.
+      placeholderContentFit="cover"
+      accessible={false}
+    />
+  );
 }
 
 export function InquiryRow({ inquiry, onPress }: { inquiry: InquiryRowData; onPress?: () => void }) {
@@ -46,16 +99,22 @@ export function InquiryRow({ inquiry, onPress }: { inquiry: InquiryRowData; onPr
       accessibilityLabel={`${inquiryClientName(inquiry.client)}, ${statusLabel(inquiry.status)}`}
       style={({ pressed }) => [styles.row, closed && styles.closed, pressed && onPress && styles.pressed]}
     >
-      <View style={styles.header}>
-        <Text style={styles.client} numberOfLines={1}>
-          {inquiryClientName(inquiry.client)}
-        </Text>
-        <Text style={styles.stamp}>{relativeStamp(inquiry.updatedAt)}</Text>
-      </View>
+      <View style={styles.top}>
+        <Thumbnail url={inquiry.thumbnailUrl ?? null} />
 
-      <Text style={styles.description} numberOfLines={2}>
-        {inquiry.description}
-      </Text>
+        <View style={styles.topText}>
+          <View style={styles.header}>
+            <Text style={styles.client} numberOfLines={1}>
+              {inquiryClientName(inquiry.client)}
+            </Text>
+            <Text style={styles.stamp}>{relativeStamp(inquiry.updatedAt)}</Text>
+          </View>
+
+          <Text style={styles.description} numberOfLines={2}>
+            {inquiry.description}
+          </Text>
+        </View>
+      </View>
 
       <View style={styles.metaLine}>
         {/* Tone carries the meaning: warning = someone must act, danger =
@@ -71,7 +130,7 @@ export function InquiryRow({ inquiry, onPress }: { inquiry: InquiryRowData; onPr
       </View>
 
       <View style={styles.footerLine}>
-        {inquiry.artistName ? (
+        {inquiry.artistName === undefined ? null : inquiry.artistName ? (
           <Text style={styles.artist} numberOfLines={1}>
             {inquiry.artistName}
           </Text>
@@ -98,6 +157,16 @@ const styles = StyleSheet.create({
   closed: { opacity: 0.5 },
   pressed: { backgroundColor: colors.surface },
 
+  top: { flexDirection: 'row', gap: space.md },
+  topText: { flex: 1, gap: space.xs },
+  /* 56pt square, the same radius every other image tile in the app uses. */
+  thumb: { width: 56, height: 56, borderRadius: radius.input, backgroundColor: colors.surfaceInset },
+  thumbEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: hairline,
+    borderColor: colors.border,
+  },
   header: { flexDirection: 'row', alignItems: 'baseline', gap: space.sm },
   client: { ...type.heading, color: colors.fg, flex: 1 },
   stamp: { ...type.meta, color: colors.fgMuted },

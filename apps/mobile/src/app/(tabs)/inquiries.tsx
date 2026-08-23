@@ -10,27 +10,34 @@ import { SegmentedControl } from '@/components/SegmentedControl';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { fetchArtistInquiries, fetchStaffInquiries, usesArtistInquiryRoutes } from '@/lib/inquiries';
-import { isClosedStatus } from '@/lib/inquiryDisplay';
+import {
+  findNextSession,
+  INQUIRY_TABS,
+  inquiryThumbnail,
+  tabForStatus,
+  type InquiryTab,
+} from '@/lib/inquiryTabs';
 import { screenErrorMessage } from '@/lib/screenError';
 import { colors, hairline, space } from '@/theme';
 
 const POLL_MS = 30_000;
 
 /**
- * Open vs closed, not a status filter.
+ * Inquiries vs Projects — web's own toggle, replacing the Open/Closed
+ * split mobile had invented.
  *
- * Deliberately NOT a per-status filter set: the staff route accepts
- * repeated `status` params, but the artist route does not accept any, so
- * a status filter would work for one role and silently do nothing for the
- * other. Splitting on open/closed is derivable from data both routes
- * return, so it behaves identically for everyone.
+ * The buckets, the labels and the ordering all come from
+ * `apps/web/src/pages/Inquiries.tsx`; see `lib/inquiryTabs.ts` for the
+ * mapping and why DEPOSIT_PENDING sits on Inquiries while ON_HOLD sits on
+ * Projects.
+ *
+ * Still not a per-status filter, for the reason the old comment gave: the
+ * staff route accepts repeated `status` params and the artist route
+ * accepts none, so a status filter would work for one role and silently
+ * do nothing for the other. This split is derived from data both routes
+ * already return, so it behaves identically for everyone — which is also
+ * how web does it, one `?scope=all` fetch filtered client-side.
  */
-type InquiryView = 'open' | 'closed';
-
-const VIEWS = [
-  { key: 'open' as const, label: 'OPEN' },
-  { key: 'closed' as const, label: 'CLOSED' },
-];
 
 /** Both projections mapped onto the row's own shared shape. */
 function fromStaff(inquiry: StaffInquiryListItem): InquiryRowData {
@@ -47,6 +54,9 @@ function fromStaff(inquiry: StaffInquiryListItem): InquiryRowData {
       ? (inquiry.assignedArtist.user.name ?? inquiry.assignedArtist.user.email)
       : null,
     fromGuestStudio: inquiry.fromGuestStudio,
+    // The staff list projection returns no images at all, so there is
+    // nothing to show here and the row falls back to its placeholder.
+    thumbnailUrl: null,
   };
 }
 
@@ -63,8 +73,12 @@ function fromArtist(inquiry: ArtistInquiryListItem): InquiryRowData {
     priceEstimateLow: inquiry.priceEstimateLow,
     priceEstimateHigh: inquiry.priceEstimateHigh,
     client: inquiry.client,
-    artistName: null, // Every row is their own; naming them on each row is noise.
+    // Undefined, not null: every row here is theirs, so the artist line
+    // is omitted entirely rather than claiming UNASSIGNED.
+    artistName: undefined,
     fromGuestStudio: inquiry.fromGuestStudio,
+    thumbnailUrl: inquiryThumbnail(inquiry),
+    nextSessionAt: findNextSession(inquiry.sessions)?.startTime ?? null,
   };
 }
 
@@ -75,7 +89,7 @@ export default function InquiriesScreen() {
   const role = session?.profile.role ?? '';
   const isArtist = usesArtistInquiryRoutes(role);
 
-  const [view, setView] = useState<InquiryView>('open');
+  const [view, setView] = useState<InquiryTab>('inquiries');
   const [items, setItems] = useState<InquiryRowData[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -124,13 +138,23 @@ export default function InquiriesScreen() {
 
   const visible = useMemo(() => {
     if (!items) return [];
-    return items.filter((i) => (view === 'closed' ? isClosedStatus(i.status) : !isClosedStatus(i.status)));
+    const rows = items.filter((i) => tabForStatus(i.status) === view);
+    if (view !== 'projects') return rows;
+    // Web's Projects order: soonest upcoming session first, undated last
+    // but still visible. Applied here rather than in `rowsForTab` because
+    // this screen has already mapped both projections onto InquiryRowData.
+    return rows.slice().sort((a, b) => {
+      if (!a.nextSessionAt && !b.nextSessionAt) return 0;
+      if (!a.nextSessionAt) return 1;
+      if (!b.nextSessionAt) return -1;
+      return new Date(a.nextSessionAt).getTime() - new Date(b.nextSessionAt).getTime();
+    });
   }, [items, view]);
 
   const counts = useMemo(
     () => ({
-      open: items?.filter((i) => !isClosedStatus(i.status)).length ?? 0,
-      closed: items?.filter((i) => isClosedStatus(i.status)).length ?? 0,
+      inquiries: items?.filter((i) => tabForStatus(i.status) === 'inquiries').length ?? 0,
+      projects: items?.filter((i) => tabForStatus(i.status) === 'projects').length ?? 0,
     }),
     [items],
   );
@@ -140,7 +164,7 @@ export default function InquiriesScreen() {
       <TopBar />
 
       <SegmentedControl
-        segments={VIEWS.map((v) => ({ ...v, count: counts[v.key] }))}
+        segments={INQUIRY_TABS.map((v) => ({ key: v.key, label: v.label.toUpperCase(), count: counts[v.key] }))}
         value={view}
         onChange={setView}
       />
@@ -185,15 +209,23 @@ export default function InquiriesScreen() {
                 body="Nothing has been lost — this is only what this device could fetch."
                 action={{ label: 'Try again', onPress: () => load('refresh') }}
               />
-            ) : view === 'closed' ? (
-              <StateMessage eyebrow="Nothing closed" title="No closed inquiries" body="Lost and cold leads collect here." />
+            ) : view === 'projects' ? (
+              <StateMessage
+                eyebrow="Nothing booked"
+                title="No projects yet"
+                body={
+                  isArtist
+                    ? 'An inquiry becomes a project once its deposit is paid and it is being scheduled.'
+                    : 'Inquiries move here once their deposit is paid and scheduling begins.'
+                }
+              />
             ) : (
               <StateMessage
                 eyebrow="Clear"
-                title="No open inquiries"
+                title="No inquiries"
                 body={
                   isArtist
-                    ? 'Projects assigned to you will appear here.'
+                    ? 'Work assigned to you will appear here.'
                     : 'New inquiries appear here as they come in.'
                 }
               />
