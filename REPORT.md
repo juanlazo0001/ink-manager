@@ -22665,3 +22665,194 @@ The Session E brief opens with: verify `mobile/session-bcd` is merged first, and
 and report**. It is not merged — `origin/main` is at `7bc17e8` and all five session-BCD commits
 are still ahead of it. No Session E work was begun: no branch, no Part 0 extraction, no code.
 The phone gate in the section above is what unblocks it.
+
+# Mobile session E — design language parity pass
+
+Branch `mobile/session-e` off `main` (`ceb4aff`), two commits, both pushed, **unmerged**.
+
+Pre-flight passed this time: `origin/main` is at `ceb4aff` and `mobile/session-bcd` is merged
+into it — zero commits ahead. (The first attempt at this session stopped here, as the brief
+instructs, because it was not.)
+
+## Commits
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `a52ad06` | `mobile: shared visual language layer` |
+| 2 | `695535c` | `mobile: design language applied app-wide` |
+
+Both on `origin/mobile/session-e`. No `apps/api` or `apps/web` source changed; no root dependency
+change (no package added at all this session — both italic Fraunces faces were already in the
+installed `@expo-google-fonts/fraunces`); Expo SDK still 54.0.37 with React 19.1.0 and
+React Native 0.81.5.
+
+## Part 0 — extracted values
+
+Every value below was read out of `apps/web`'s source, not matched by eye. The "where" column is
+the file and rule it came from.
+
+| # | Treatment | Where | Value |
+| --- | --- | --- | --- |
+| 1 | Background photo | `TopBar.tsx` + `index.css .app-bg-photo` | `app-bg-blurred-amber.jpg`, 640×397, 5.9 kB, **pre-blurred asset** — web's own comment says a live `filter: blur()` would recompute on every scroll/repaint. `position: fixed; inset: 0; object-fit: cover` |
+| 1 | Wash | `index.css .app-bg-wash` | `rgba(12, 10, 8, 0.45)`, z-index 1, **flat — explicitly not a vignette** (that shape belongs to Login, which has one focal point) |
+| 1 | Grain | `index.css body::after` | `opacity: 0.045`, z-index 95, 140×140 `feTurbulence fractalNoise`, `baseFrequency 0.9`, 2 octaves |
+| 2 | Eyebrow | `components/Eyebrow.tsx` | `font-jura text-[11px] font-semibold tracking-[0.34em] text-fg-muted uppercase`, `gap-3` |
+| 2 | Red ticks | same | `<span class="text-danger-strong text-[13px] tracking-normal" aria-hidden>+</span>` either side; `--color-danger-strong` = `#c2402f` |
+| 2 | Eyebrow meta | same | `text-fg-muted/70 text-[11px] font-normal normal-case tracking-normal` |
+| 2 | Date range | `Dashboard.tsx` | not a separate component — `<CardShell caption={`${start} – ${end}`}>`, rendered through the same Eyebrow. En dash |
+| 3 | Welcome name | `Dashboard.tsx` | `font-display text-[clamp(32px,4vw,44px)] font-normal leading-[1.05] tracking-[-0.015em]`, name in `<span class="text-accent-hover italic">` |
+| 3 | Section header | `index.css .sc` | `font-family: var(--font-display); font-weight: 500; font-variant: small-caps; text-transform: lowercase; letter-spacing: 0.06em`, used at `text-[20px]` |
+| 3 | Stat numeral | `Dashboard.tsx bigStatClass` | `font-display font-normal tracking-[-0.015em]`, `text-5xl` (xl) / `text-4xl` (lg) |
+| 3 | Cream chip | `Dashboard.tsx` | `bg-fg text-accent-fg font-display inline-block px-4 py-1 text-4xl italic shadow-lg shadow-black/30` |
+| 4 | Card surface | `index.css .card-surface` | radius `--radius-card` **10px**; background `--color-card-glass` `#100f0ed6`; border `--color-border-glass` `rgba(201,154,91,0.1)`; `backdrop-filter: blur(16px)` |
+| 4 | Card overlay + padding | `Dashboard.tsx CardShell` | `bg-gradient-to-b from-white/[0.012] to-transparent`, `p-6` |
+| 5 | Funnel bar | `components/HorizontalBarList.tsx` | row `gap-3`; label row `mb-1 text-xs`, label `text-fg-secondary`, value `font-medium text-fg`; track `h-3 bg-surface-inset` **square**; fill `h-full rounded-r bg-accent`; width `max((v/max)*100, v > 0 ? 3 : 0)`; `max = Math.max(...values, 1)` |
+| 5 | Value composition | `Dashboard.tsx` | `` `${s.count} (${formatPct(s.conversionFromReceived)})` `` — e.g. `19 (79.2%)`, `0 (—)` |
+| 6 | Avatar URL | `TopBar.tsx` | `profile.avatarUrl` from `GET /users/me` — **already on mobile's session; no new API call**. `h-9 w-9 rounded-full object-cover` |
+| 6 | Avatar fallback | same | `(profile?.name ?? user.role ?? 'U').slice(0, 1)` — **ONE letter**, `font-display text-sm text-accent-hover` on `bg-surface-raised` |
+
+Every colour token cited above already matched mobile's `colors.ts` exactly — it was ported
+verbatim in an earlier session, so nothing in the palette had to move.
+
+### 7 — other repeated signatures mobile lacked
+
+- **`.ornament`** (`index.css`) — a 15px block: a 1px `linear-gradient(90deg, transparent,
+  var(--color-border-strong), transparent)` rule at `top: 7px`, and an 8×8
+  `--color-danger-strong` square rotated 45° centred at `top: 3px`. Built.
+- **The grain overlay** — listed above. Built.
+- **The short red rule** above Lost / Cold Rate (`h-0.5 w-8 rounded-full bg-danger-strong`). Built.
+- **The designed empty state** — a light red em dash beside `font-display text-[15px] italic
+  text-fg-secondary`, instead of the bare `—` that `formatPct` would fall back to. Built.
+- **`.hex`** — a hexagon `clip-path`. **Not built**: nothing an artist sees uses it.
+- **The red chat FAB** — not applicable; Messages is a tab on mobile, not a floating panel.
+- **The sidebar's logo + ornament rail** — not applicable; mobile has a tab bar.
+
+## Deviations, and why
+
+Three, all deliberate, all documented in the code beside the value they affect.
+
+1. **The wash is 0.55, not web's 0.45.** The only extracted value changed, and it was measured
+   rather than judged. Web can afford the lighter scrim because its pages sit on an opaque
+   `bg-bg` and the photo shows only in the margins — no body text is ever over it. A phone has
+   no margins. Sampled against the **brightest pixel** of the composited photo+wash at 414pt:
+
+   | | 0.45 (web) | 0.55 (here) | web's opaque ground |
+   | --- | --- | --- | --- |
+   | `fg` | 11.65 | 12.70 | 16.68 |
+   | `fg-secondary` | 7.42 | — | 10.62 |
+   | `fg-muted` | **4.44** | **4.85** | 6.37 |
+   | `accent` | 5.38 | 5.88 | 7.72 |
+
+   `fg-muted` at 0.45 is 4.44:1 — under the 4.5:1 text floor in the worst case. That is a real
+   regression against web, not a taste question. 0.55 is the smallest round step that clears it,
+   and the photo is still plainly a photo (brightest pixel `rgb(44,38,32)` against `rgb(49,45,38)`).
+
+2. **No `backdrop-filter` on cards.** Every other value of `.card-surface` is reproduced, and the
+   translucency is real — `#100f0ed6` is 84% opaque, so the photo genuinely reads through, which
+   is the point of the treatment over a photo. The blur alone is left out: CLAUDE.md forbids
+   combining `backdrop-filter` with animation until it has been tested on a real phone, and a
+   screen of these scrolls. **Worth revisiting at the phone gate** — if it is smooth on device,
+   it is one line.
+
+3. **Section headers are uppercase, not true small-caps.** React Native has no
+   `font-variant: small-caps` it can rely on — the shipped Fraunces TTF carries no `smcp` table —
+   so `.sc` renders as uppercase Fraunces 500 one step down in size (17px vs 20px) with web's
+   0.06em tracking resolved against it. Same uniform run of capitals, built the only way the
+   platform allows.
+
+## Intentional differences that are NOT drift
+
+- **Page grounds are transparent on mobile, opaque on web.** Sixteen screens were painting
+  `colors.bg` over the photo. Web keeps its pages opaque and shows the treatment only in the
+  margins; a phone has no margins, so opaque would have meant the layer never appeared at all.
+  Cards, inputs, sheets, the tab bar and pressed states all stay opaque — only the ground opens.
+- **Native navigation.** A tab bar and pushed stack screens against web's sidebar + top bar. The
+  avatar corner is the circle alone, not web's name + role pill, which is a desktop affordance.
+- **Artist vs owner data scope.** Every dashboard figure is the caller's own work
+  (`scope: 'own'`), so "My Appointments" replaces "Artist Utilization" and the cross-artist list
+  never renders — which is what web does for an ARTIST too.
+- **Login untouched.** It already matched, and it keeps its own directional hero vignette, which
+  is a different treatment from the flat app wash on purpose.
+
+## What the dashboard rebuild actually removed
+
+The brief asked about the green figure specifically. **Green comes from a real web token** —
+`--color-success` (`#5f9e6e`, reference `--green`), used at `Dashboard.tsx:239` as
+`<span className="h-2 w-2 rounded-full bg-success" /> {n} Confirmed`. So it stays, as an 8px dot,
+which is the only form web ever gives it. What was invented here was the four-column
+Rate/Lost/Cold/Confirmed row and tinting a whole numeral green; both are gone. The card is now
+web's: red rule → cream chip (or the designed empty state) → caption → three dots.
+
+Deposits also split into web's two real cards — Deposit Conversion and Outstanding Gift Card
+Liability, both captioned "not affected by the date range above", both headlined by web's own
+figure rather than a count. Neither is reachable for an artist (`reports.viewFinancial` is false
+by default), which is why they had drifted unnoticed.
+
+## Found by rendering it, not by reading it
+
+React Navigation paints its **own** container background from the active theme —
+`rgb(242, 242, 242)` by default — underneath every screen and above anything rendered as a
+sibling of the navigator. No `contentStyle` or `sceneStyle` override reaches it, because it is
+not the screen's background. The photo stack was present and correctly sized the entire time and
+was simply being painted over. Diagnosed by walking the DOM for any near-white opaque element,
+and fixed with a transparent-background nav theme.
+
+## Screens swept
+
+Dashboard, Messages, Tasks, Inquiries, Schedule, appointment detail, inquiry detail,
+conversation, Profile, profile editor, Flash gallery, flash piece, Account — plus the shared
+chrome: `ScreenHeader`, `DetailSection`, `ProfileSection`, `ConversationRow`, `FormScreen`,
+`ImageFields`, `ComingSoon`, `ui.tsx`. Login deliberately untouched.
+
+`Eyebrow` and `Card` are re-exported from `ui.tsx` rather than moved, so all thirteen existing
+call sites picked up the new treatment without being rewritten. Five call sites that passed a
+colour through `style` were converted to the `tone` prop, since an eyebrow is now a row of three
+elements and a colour on the container would not have reached the text.
+
+## Standard bar
+
+| Check | Result |
+| --- | --- |
+| `packages/shared-types` typecheck (enum drift + tsc) | clean — `enums.generated.ts matches schema.prisma` |
+| `apps/api` `tsc` | clean, exit 0 |
+| `apps/web` `tsc -b` + `vite build` | clean, built in 10.59s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `apps/mobile` `expo export --platform ios` | clean, 3.1 MB bundle, 60 assets |
+| SDK pin | expo **54.0.37**, react **19.1.0**, react-native **0.81.5** — unchanged |
+| Working tree | clean except two untracked files that predate this session |
+| `package-lock.json` | **unchanged** — no dependency added or moved this session |
+
+**`npm ci` could not complete, and this is worth stating plainly.** It failed with
+`EPERM: unlink node_modules\bcrypt\prebuilds\win32-x64\bcrypt.node` — the file is held open by
+the two dev API processes on ports 4000 and 4310, which predate this session and which I did not
+start, so I did not kill them. `npm ci` deletes `node_modules` before installing, so it had
+already removed part of the tree (react, typescript, `@expo-google-fonts`) before hitting the
+lock. Repaired with `npm install`, which is non-destructive and resolved from the same
+unchanged lockfile: 752 packages restored, `git status package-lock.json` empty. Every build
+above therefore ran against a lockfile-exact tree — but it was not a from-scratch `npm ci`, and
+CLAUDE.md's build-trust rule asks for one. **To satisfy that rule properly, `npm ci` needs to be
+re-run with those two API processes stopped.**
+
+## Verification
+
+Side-by-side renders at 414pt against `parity-audit/web-01-dashboard.jpg`:
+`parity-audit/e1-01`/`e1-02` (the visual layer alone, including both Lost/Cold states) and
+`e2-01`…`e2-07` (dashboard, dashboard Lost/Cold, messages, tasks, profile, flash, account).
+
+Contrast was measured, not eyeballed — the numbers are in the deviations table above and in
+`ScreenBackground.tsx`'s own comment.
+
+## Still not verified
+
+**Nothing in this session has run on a phone**, unchanged from every previous mobile session.
+Specific to this one:
+
+- **The background photo's cost on device.** It is a 5.9 kB pre-blurred JPEG and a 19 kB tiled
+  PNG, both static, so there is nothing to recompute — but "nothing to recompute" is an argument,
+  not a frame timing.
+- **Whether the blur is affordable.** See deviation 2. If it is smooth on device, the card
+  treatment becomes exact.
+- **The grain at 4.5% on a real display.** On a desktop LCD it is nearly invisible, which is the
+  intent; an OLED phone may render it differently.
+- **Text legibility over the photo in sunlight.** The measured ratios are sRGB maths, not a
+  phone outdoors.
