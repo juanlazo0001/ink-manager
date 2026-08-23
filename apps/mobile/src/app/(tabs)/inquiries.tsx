@@ -1,5 +1,5 @@
 import type { ArtistInquiryListItem, StaffInquiryListItem } from '@ink-manager/shared-types';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -69,6 +69,7 @@ function fromArtist(inquiry: ArtistInquiryListItem): InquiryRowData {
 }
 
 export default function InquiriesScreen() {
+  const router = useRouter();
   const { session } = useAuth();
   const token = session?.token ?? null;
   const role = session?.profile.role ?? '';
@@ -153,9 +154,20 @@ export default function InquiriesScreen() {
         <FlatList
           data={visible}
           keyExtractor={(item) => item.id}
-          // Read-only this session: no detail screen exists yet, so rows
-          // are deliberately not tappable rather than tappable and dead.
-          renderItem={({ item }) => <InquiryRow inquiry={item} />}
+          renderItem={({ item }) => (
+            <InquiryRow
+              inquiry={item}
+              // Artists only: the detail screen is built on the artist
+              // route family, and the staff one is a different response
+              // shape with no mobile screen yet -- a staff row would open
+              // something that cannot load.
+              onPress={
+                isArtist
+                  ? () => router.push({ pathname: '/inquiry/[id]', params: { id: item.id } })
+                  : undefined
+              }
+            />
+          )}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           contentContainerStyle={visible.length === 0 ? styles.emptyContainer : styles.listContent}
           refreshControl={

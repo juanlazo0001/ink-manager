@@ -1,5 +1,7 @@
 import type {
+  ArtistInquiryDetail,
   ArtistInquiryListItem,
+  RespondRequest,
   StaffInquiryListItem,
 } from '@ink-manager/shared-types';
 
@@ -47,6 +49,24 @@ export function fetchArtistInquiries(
   return apiFetch<ArtistInquiryListItem[]>('/inquiries/assigned-to-me?scope=all', { token, signal });
 }
 
+/**
+ * `GET /inquiries/assigned-to-me/:id` (ARTIST, and an OWNER with their
+ * own artist profile).
+ *
+ * A 403 here on a row the LIST returned is an expected state, not a bug
+ * in this client: the list is scoped by the caller's HOME studio while
+ * this route checks the INQUIRY's studio. See PARITY-AUDIT.md Finding B.
+ * The screen must say so rather than spin.
+ */
+export function fetchArtistInquiry(
+  token: string,
+  inquiryId: string,
+  signal?: AbortSignal,
+): Promise<ArtistInquiryDetail> {
+  return apiFetch<ArtistInquiryDetail>(`/inquiries/assigned-to-me/${encodeURIComponent(inquiryId)}`, { token, signal });
+}
+
+/** OWNER / FRONT_DESK detail. Not reachable by an artist -- the route is role-gated. */
 export function fetchStaffInquiry(
   token: string,
   inquiryId: string,
@@ -55,10 +75,23 @@ export function fetchStaffInquiry(
   return apiFetch(`/inquiries/${encodeURIComponent(inquiryId)}`, { token, signal });
 }
 
-export function fetchArtistInquiry(
+/**
+ * `PATCH /inquiries/:id/respond` -- the artist's decision on their own
+ * assigned project.
+ *
+ * Only DECLINE is issued from mobile today. APPROVE is estimate
+ * composition (price range, time range, session plan, server-side
+ * validated) and web presents it as a form, not a button -- see the
+ * detail screen for how that hand-off is presented rather than faked.
+ */
+export function respondToInquiry(
   token: string,
   inquiryId: string,
-  signal?: AbortSignal,
-): Promise<ArtistInquiryListItem & Record<string, unknown>> {
-  return apiFetch(`/inquiries/assigned-to-me/${encodeURIComponent(inquiryId)}`, { token, signal });
+  body: RespondRequest,
+): Promise<ArtistInquiryDetail> {
+  return apiFetch<ArtistInquiryDetail>(`/inquiries/${encodeURIComponent(inquiryId)}/respond`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(body),
+  });
 }

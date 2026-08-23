@@ -46,6 +46,7 @@ function RootNavigator() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="conversation/[id]" />
         <Stack.Screen name="appointment/[id]" />
+        <Stack.Screen name="inquiry/[id]" />
         <Stack.Screen name="account" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
       </Stack.Protected>
       <Stack.Protected guard={status === 'signedOut'}>
