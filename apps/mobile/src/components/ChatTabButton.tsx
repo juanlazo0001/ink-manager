@@ -1,7 +1,7 @@
-import Feather from '@expo/vector-icons/Feather';
 import { formatBubbleCount } from '@ink-manager/shared-types';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { MessageIcon } from '@/components/icons';
 import { colors, fonts, radius, space } from '@/theme';
 
 /**
@@ -52,7 +52,7 @@ export function ChatTabButton({
         {/* The faint hairline halo -- web calls it the marketing site's own
             red-FAB character. Non-interactive and outside the fill. */}
         <View style={styles.halo} pointerEvents="none" />
-        <Feather name="message-square" size={20} color="#ffffff" />
+        <MessageIcon size={20} color="#ffffff" />
         <Text style={styles.label}>CHAT</Text>
         {unread > 0 ? (
           <View style={styles.badge} pointerEvents="none">

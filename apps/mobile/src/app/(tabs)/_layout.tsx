@@ -1,7 +1,7 @@
-import Feather from '@expo/vector-icons/Feather';
 import { Tabs } from 'expo-router';
 import { View } from 'react-native';
 
+import { AppointmentsIcon, DashboardIcon, DocumentIcon, TasksIcon } from '@/components/icons';
 import { Badge } from '@/components/TopBar';
 import { CHAT_BUTTON_LIFT, ChatTabButton } from '@/components/ChatTabButton';
 import { useBadgeCounts } from '@/hooks/useBadgeCounts';
@@ -10,9 +10,14 @@ import { colors, hairline, space, type } from '@/theme';
 /**
  * Five tabs, with CHAT raised in the centre.
  *
- * Order is Home, Schedule, CHAT, Tasks, Inquiries -- the chat button has
- * to be the third of five to actually be centred, so the order is a
- * consequence of the decision to raise it, not a separate choice.
+ * Order is Home, Inquiries, CHAT, Schedule, Tasks -- the owner's, with
+ * the chat button third of five so it is genuinely centred.
+ *
+ * The glyphs are apps/web's own, path-for-path (see components/icons.tsx):
+ * Home uses its sidebar Dashboard icon, Inquiries its My Inquiries
+ * document, Schedule its Calendar, Tasks the tick-in-a-square from its top
+ * bar. Feather look-alikes were what mobile had, and a look-alike in the
+ * one place the two clients sit side by side reads as two products.
  *
  * `index.tsx` is still Conversations, and still the route the app opens
  * on; it simply now sits in the middle and is titled Chat, matching web,
@@ -52,14 +57,14 @@ export default function TabsLayout() {
         name="home"
         options={{
           title: 'HOME',
-          tabBarIcon: ({ color, size }) => <Feather name="bar-chart-2" size={size - 3} color={color} />,
+          tabBarIcon: ({ color, size }) => <DashboardIcon size={size - 2} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="schedule"
+        name="inquiries"
         options={{
-          title: 'SCHEDULE',
-          tabBarIcon: ({ color, size }) => <Feather name="calendar" size={size - 3} color={color} />,
+          title: 'INQUIRIES',
+          tabBarIcon: ({ color, size }) => <DocumentIcon size={size - 2} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -79,12 +84,19 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="schedule"
+        options={{
+          title: 'SCHEDULE',
+          tabBarIcon: ({ color, size }) => <AppointmentsIcon size={size - 2} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="tasks"
         options={{
           title: 'TASKS',
           tabBarIcon: ({ color, size }) => (
             <View>
-              <Feather name="check-square" size={size - 3} color={color} />
+              <TasksIcon size={size - 2} color={color} />
               {/* Web puts this count on a top-bar tasks icon. There is no
                   tasks icon in mobile's bar by decision, so the badge
                   rides the tab that navigates there -- same count, same
@@ -92,13 +104,6 @@ export default function TabsLayout() {
               {tasks > 0 ? <Badge count={tasks} /> : null}
             </View>
           ),
-        }}
-      />
-      <Tabs.Screen
-        name="inquiries"
-        options={{
-          title: 'INQUIRIES',
-          tabBarIcon: ({ color, size }) => <Feather name="inbox" size={size - 3} color={color} />,
         }}
       />
     </Tabs>

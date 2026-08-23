@@ -1,11 +1,11 @@
-import Feather from '@expo/vector-icons/Feather';
 import { formatBubbleCount } from '@ink-manager/shared-types';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { AppMenu } from '@/components/AppMenu';
+import { AccountMenu } from '@/components/AccountMenu';
+import { BellIcon, ChevronDownIcon } from '@/components/icons';
 import { useAuth } from '@/context/auth';
 import { colors, fonts, hairline, radius, space, type } from '@/theme';
 
@@ -38,8 +38,17 @@ import { colors, fonts, hairline, radius, space, type } from '@/theme';
  *   `hidden ... sm:flex`, and a phone is below that breakpoint. So this
  *   IS web's phone rendering — avatar and chevron only.
  *
- * The hamburger is mobile's own: web has a permanent sidebar and a phone
- * has nowhere to put one.
+ * THE LEFT SIDE IS EMPTY, and that is web's hierarchy rather than an
+ * omission. Web's top bar is a `fixed right-4 top-4` cluster and nothing
+ * else — it has no left-hand region at all, and the studio name lives in
+ * the SIDEBAR's header, never in the bar. With the hamburger gone there is
+ * no sidebar on mobile either, so the studio name sits at the top of the
+ * account menu, which is the nearest thing to web's sidebar header.
+ *
+ * The hamburger it used to carry is gone by owner decision: its four
+ * destinations moved into the account menu, which is where web keeps
+ * Profile / Settings / Log out already. Flash Gallery came with them —
+ * web reaches it from the sidebar, and mobile no longer has one.
  */
 export function TopBar({ right }: { right?: ReactNode }) {
   const router = useRouter();
@@ -49,26 +58,17 @@ export function TopBar({ right }: { right?: ReactNode }) {
   return (
     <>
       <View style={styles.bar}>
-        <IconButton
-          icon="menu"
-          label="Menu"
-          onPress={() => setMenuOpen(true)}
-        />
-
         <View style={styles.spacer} />
 
         {right}
 
-        <IconButton
-          icon="bell"
-          label="Notifications"
-          onPress={() => router.push('/notifications')}
-        />
+        <IconButton label="Notifications" onPress={() => router.push('/notifications')} />
 
         <Pressable
-          onPress={() => router.push('/account')}
+          onPress={() => setMenuOpen(true)}
           accessibilityRole="button"
           accessibilityLabel="Account menu"
+          accessibilityState={{ expanded: menuOpen }}
           style={({ pressed }) => [styles.avatarPill, pressed && styles.pressed]}
         >
           {session?.profile.avatarUrl ? (
@@ -86,23 +86,21 @@ export function TopBar({ right }: { right?: ReactNode }) {
               </Text>
             </View>
           )}
-          <Feather name="chevron-down" size={14} color={colors.fgMuted} />
+          <ChevronDownIcon size={14} color={colors.fgMuted} />
         </Pressable>
       </View>
 
-      <AppMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
+      <AccountMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
     </>
   );
 }
 
-/** Web's `iconBtnClass`, as a control. */
+/** Web's `iconBtnClass`, as a control. The bell is its only caller now. */
 function IconButton({
-  icon,
   label,
   onPress,
   badge,
 }: {
-  icon: 'menu' | 'bell';
   label: string;
   onPress: () => void;
   badge?: number;
@@ -114,7 +112,7 @@ function IconButton({
       accessibilityLabel={badge ? `${label}, ${badge} unread` : label}
       style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
     >
-      <Feather name={icon} size={20} color={colors.fgMuted} />
+      <BellIcon size={20} color={colors.fgMuted} />
       {badge && badge > 0 ? <Badge count={badge} /> : null}
     </Pressable>
   );
