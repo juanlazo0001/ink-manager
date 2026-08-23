@@ -22035,3 +22035,233 @@ Branch **`mobile/session5`**, pushed, **not merged**:
 - **`GET /appointments/:id` still returns everything to any role** — session 4's finding,
   unchanged, and now with the inquiries routes as a worked example of the fix.
 - **No app icon or splash art.** Still Expo placeholders.
+
+# Mobile Session A — inquiry detail + approve/decline
+
+Branch **`mobile/session-a`** off `main` (gate checked first: `main` is at `3f98254`, and both
+`mobile/session5` and `mobile/parity-audit` are ancestors of it — everything from sessions 2–5
+plus the audit is merged). Pushed, **not merged**. `apps/api`, `apps/web`, `schema.prisma` and
+root dependency resolution untouched; the lockfile did not move.
+
+## Part 1 — the enum defect, fixed by derivation
+
+### Mechanism chosen: codegen from `schema.prisma`
+
+The brief asked which of codegen or a direct type import works across this workspace. **The
+type import does not**, for two independently disqualifying reasons:
+
+1. **`apps/api/generated/` is gitignored.** `apps/api/.gitignore` line 8 is `/generated/prisma`,
+   and `git ls-files apps/api/generated` returns zero. It exists only after `prisma generate`
+   runs on `apps/api`'s postinstall — so a fresh clone could not typecheck `shared-types`
+   before install, and install ordering would start to matter.
+2. **`shared-types` is dependency-free by design**, because `apps/mobile` bundles its *source*
+   through Metro. Pointing it into `apps/api` couples the mobile bundle's resolution graph to
+   the API's, which is the exact thing that package exists to prevent.
+
+`schema.prisma` is committed and is the real source of truth, so parsing it needs no Prisma
+runtime and no build ordering.
+
+`packages/shared-types/scripts/generate-enums.mjs` reads the schema and writes
+`src/enums.generated.ts`. **All eight** Prisma enums this package exposes are derived, not just
+the broken one — same mechanism, no extra cost, and it removes the whole class rather than one
+instance. The generator is deliberately strict: an enum it cannot find, or one that parses to
+zero values, throws rather than quietly emitting a short list, since a short list is precisely
+the bug being fixed.
+
+Counts on first run: `Role=4 ConversationType=3 MessageChannel=7 MessageDirection=2
+InquiryStatus=15 AppointmentStatus=5 AppointmentType=2 WaiverStatus=3`. Only `InquiryStatus`
+had drifted — the other seven matched what had been hand-typed, which is useful confirmation
+that the rest were right.
+
+### Drift is caught, not merely discouraged
+
+`--check` re-derives in memory and exits non-zero on any difference, and it runs as part of
+this package's own `typecheck`:
+
+```json
+"typecheck": "node scripts/generate-enums.mjs --check && tsc --noEmit"
+```
+
+So the bar every session already runs now fails on drift. **Proved rather than asserted**: with
+`TRANSFERRED` deleted from the generated file, `npm run typecheck` exits **1**; regenerating
+restores it and the check passes. CRLF is normalised so a Windows checkout does not read as
+drift.
+
+### `inquiryDisplay.ts`
+
+`STATUS_TONES` is now `Record<InquiryStatus, StatusTone>` — a new schema value becomes a
+**compile error**, not a silent `neutral`. `statusLabel` is web's own `formatStatus` algorithm
+rather than a lookup table, because a label map is just a second place to drift; that alone
+makes `FLASH_PAYMENT_PENDING` read "Flash Payment Pending" with no entry to maintain.
+
+| status | tone | inactive |
+| --- | --- | --- |
+| TRANSFERRED | neutral | **yes** — web's Inactive column, with CLOSED_LOST and COLD_LEAD |
+| FLASH_PENDING_APPROVAL | **warning** | no |
+| FLASH_PAYMENT_PENDING | **warning** (amber, as web) | no |
+| ON_HOLD | hold | no — paused, not finished; web keeps it on Projects |
+
+Red is still reached by `CLOSED_LOST` alone. Verified by driving the real modules over all 15
+values read out of `schema.prisma` at test time.
+
+`CLAUDE.md` gained a **Shared types** section; the package README documents the workflow and
+why the type import was rejected.
+
+## Part 2 — the detail screen
+
+Sections and hierarchy follow web as captured in the audit, restacked for a phone: status pill
+and description as the hero, photo strip, *The work*, *Estimate*, *Session plan*, *Booked
+sessions*, *Notes from the studio*, the portal note, footer. Reference and placement images are
+two arrays on the wire but one gallery to a person, so they are flattened with their origin
+kept as the caption. Tapping opens a full-screen horizontal pager.
+
+Two API behaviours the screen respects rather than flattens:
+
+- **Absent ≠ null.** `applyArtistFieldVisibility` **deletes** the keys when a studio switches
+  `pricingDetail` or `internalNotes` off. So absent means "your studio doesn't show you this"
+  and null means "not set yet" — rendering an absent estimate as a dash would claim there
+  wasn't one. The Estimate section says so in words instead.
+- **Notes are HTML** and mobile has no sanitiser, so tags are stripped to plain text rather
+  than rendered.
+
+### The 403 is a first-class state
+
+This is the known list/detail scoping inconsistency (audit Finding B), left to the backend
+session as instructed. Web renders `Loading project…` **forever** when it happens. This screen
+names which studio the project belongs to, says nothing is wrong with the account, and offers
+the way back. That was the explicit bar — "fail better than web does today" — and it is met.
+
+## Part 3 — approve / decline
+
+**Decline is implemented in full** and is a genuine one-step action: a required note, a confirm
+sheet, and the red the palette reserves for destructive choices.
+
+**It also corrected a wrong assumption of mine, by being tested rather than reasoned about.**
+Declining does **not** close an inquiry. `PATCH /:id/respond` sets `status` back to **`NEW`**
+and clears `assignedArtistId`: the project returns to the studio unassigned and leaves the
+artist's list entirely. An earlier draft optimistically set `CLOSED_LOST` and the sheet said
+"goes back to the studio as closed" — both lies. Verified against the live API:
+
+```
+empty note        -> 400  declineNote is required when declining
+real decline      -> 200  status NEW · assignedArtistId null · declineNote saved
+detail afterwards -> 404  correctly no longer theirs
+```
+
+Because the record stops being theirs, the screen navigates back on success rather than faking
+a status — a refetch would 404, which is exactly what the API just told us.
+
+**Approve is deliberately not implemented as a transition.** On web it opens an estimate
+builder — price range, time range, session plan, all validated server-side — so it is one of
+the deep flows this session was told to leave read-only. Two bad options were available:
+inventing an estimate builder that was not scoped, or sending a half-populated estimate to a
+real client. Hiding the button was a third, and also wrong, because it would misrepresent what
+an artist can do.
+
+So the control is present, in web's own hierarchy (gold Approve, outline Decline), and it hands
+off honestly — stating the **consequence** first, which depends on `inquiries.artistSendEstimate`
+at the project's studio: with it, approving really sends the estimate to the client; without
+it, front desk sends. Same reasoning as the Conversations live-send strip: on a phone, "this
+reaches a real person" should never be a surprise.
+
+**This is the session's one deliberate deviation**, and full estimate composition is the natural
+follow-up.
+
+## Part 4 — verification
+
+### Seeded dev data
+
+The audit recorded that **all 15** of artist1's inquiries sit at a guest studio that revokes
+`inquiries.view`, so every detail request 403s and the flow could not be exercised. One fixture
+was seeded in the **dev** database (`apps/api/.env`'s Railway dev instance — production
+untouched):
+
+| | |
+| --- | --- |
+| inquiry | `cmt554y0o0001qwi2l5zqfyxz` |
+| studio | `cmsdnv7u500003ci2mrp5l0t5` — artist1's **home** studio |
+| assigned to | `cmro4k27p0006jwi2zfahmko3` (artist1), status `ARTIST_ASSIGNED` |
+| client | Marta Reyes, `session-a.fixture@dev-studio.test` |
+| description | prefixed `[SESSION-A FIXTURE]` so it is identifiable and the seeder is idempotent |
+| images | 1 reference, 1 placement (Unsplash URLs) |
+
+`GET /inquiries/assigned-to-me/cmt554y0o0001qwi2l5zqfyxz` returns **200** with
+`fromGuestStudio: null` and a response whose keys match `ArtistInquiryDetail` exactly.
+
+It was declined for real during verification, then **reset to `ARTIST_ASSIGNED`** so the
+walkthrough has a live one. Both seed and reset ran as temp scripts inside `apps/api` (module
+resolution needs its `node_modules`) and were deleted immediately; `git status apps/api` is
+clean.
+
+### Standard bar, from a clean tree and fresh `npm ci`
+
+- `apps/web` build 10.34s exit 0; `apps/api` build exit 0.
+- `packages/shared-types` typecheck (drift check + tsc) clean; `apps/mobile` tsc clean.
+- `expo export --platform ios` — 1145 modules, no errors.
+- Dev bundle: manifest HTTP 200, **`sdkVersion = 54.0.0`**, dark; bundle HTTP 200 at 6,900,340
+  bytes; React `19.1.0` once and `19.2.7` **zero** times; the flash statuses, the 403 copy, the
+  decline-semantics copy and the approve hand-off copy all present.
+
+### Preview renders
+
+All five required states, at 414pt, compared against the audit's web captures:
+
+1. **Full data** — hero, both photos, all four sections. ARTIST ASSIGNED renders `progress`
+   violet as on web.
+2. **Minimal data** — no photos, pricing switched off: the Estimate section reads "Your studio
+   doesn't show pricing detail to artists." rather than a column of dashes. **FLASH PAYMENT
+   PENDING renders amber**, which is the Part 1 fix visible on screen.
+3. **The 403** — "NOT AVAILABLE" with the explanation and a Back to inquiries action, where web
+   shows an endless spinner.
+4. **Decline confirm** — red eyebrow, corrected copy, note required, DECLINE disabled until it
+   is filled.
+5. **Approve confirm** — the hand-off plus the consequence line, correctly reading "saved for
+   front desk to send" for artist1, which lacks `artistSendEstimate`.
+
+### What is NOT verified
+
+Nothing has run on a phone. The screen has been exercised against the real API from Node and
+rendered against fixtures in a browser, but no artist has opened it on a device.
+
+### Owner walkthrough
+
+1. Sign in as **`artist1@dev-studio.test`** (`password123`) against a local API, or any artist
+   account against production.
+2. **Inquiries → tap any row.** Rows are tappable for artists only.
+3. **Expect most of them to show the "not available" state** — that is the known scoping
+   inconsistency, and seeing it stated clearly instead of a spinner is the point.
+4. **Find "Marta Reyes"** (the seeded fixture). It opens fully: photos, the work, estimate,
+   Decline and Approve.
+5. **Tap a photo** — full screen, swipe between the two, tap ✕ to close. It does not pinch-zoom.
+6. **Tap Approve.** Read the sheet — it should tell you whether approving would reach the
+   client. Nothing is sent; it closes.
+7. **Tap Decline.** DECLINE stays disabled until a note is written. Confirm, and the project
+   should disappear from your list — **it goes back to the studio unassigned, it is not
+   closed**. Re-seeding is needed to try it twice.
+8. **Check a FLASH PAYMENT PENDING row is amber, not grey**, and that a TRANSFERRED inquiry (if
+   any) sits under CLOSED rather than OPEN.
+
+## Commits
+
+Branch **`mobile/session-a`**, pushed, **not merged**:
+
+- `b10d5bf` — `mobile: derive InquiryStatus from API (fixes session-5 enum drift)`
+- `321c539` — `mobile: inquiry detail + approve/decline`
+- (this REPORT.md entry)
+
+## Open
+
+- **The phone gate**, now covering inquiry detail and decline.
+- **Estimate composition** — the one deliberate deviation. Approve hands off to the portal;
+  building the estimate form on mobile is its own session and needs the form patterns Session B
+  will establish anyway.
+- **No pinch-zoom in the photo viewer.** Swipe and tap-to-close only; zooming into linework is a
+  plausible artist want and would need `react-native-gesture-handler` wiring.
+- **Staff rows are still not tappable.** The detail screen is built on the artist route family;
+  `GET /inquiries/:id` is a different response shape with no mobile screen, so opening it from
+  an OWNER/FRONT_DESK row would load nothing.
+- **Notes render as stripped plain text.** Formatting, links and attachments in a studio note
+  are lost.
+- **The 403 will mostly disappear** once the backend session lands Finding B's fix — at which
+  point most of artist1's 15 rows become openable and this screen gets far more real coverage.
+- **No app icon or splash art.** Still Expo placeholders.
