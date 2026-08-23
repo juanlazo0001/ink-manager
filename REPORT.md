@@ -23655,3 +23655,179 @@ Twenty node processes this session started were stopped; none remain.
 - **Upload progress on a real connection** — the preview renders a fixed 45% rather than a live
   transfer.
 - **`react-native-svg` on device**, still carried forward from G.
+
+# Mobile session H3 — lastMessage author + attachments (API), and the message action sheet
+
+Branch `mobile/session-h3`, cut from `mobile/session-h2` (`181fe75`, which itself contains
+session H), dedicated worktree, pushed. **This session changes `apps/api` and
+`packages/shared-types`** — at the owner's direct instruction, lifting the standing
+mobile-only constraint for exactly this change.
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `e29a833` | `API: author + attachments on lastMessage; mobile: message actions` |
+| 2 | *(this)* | REPORT.md |
+
+## Part 1 — the API gap, closed
+
+`GET /conversations` projected `lastMessage` as body / channel / direction / createdAt and nothing
+else. It now also returns:
+
+```
+authorUserId  string | null
+author        { id, name, email } | null
+attachments   string[] | null
+```
+
+The list query includes the last message's author to do it. `ConversationLastMessage` in
+`packages/shared-types` carries the same three fields, with the reasoning inline.
+
+**Why it was needed — `direction` does not identify the viewer.** It separates the STUDIO from the
+CLIENT (the API's own summary helper: `direction === INBOUND ? "Client" : "Studio"`), and on
+STAFF/GROUP threads the API *forces* every message to OUTBOUND. So a direction test marks every row
+on those threads as the viewer's own, whoever wrote it — the "You:" bug reported two sessions ago,
+which could not be fixed from the client because the data simply was not there.
+
+**And attachments could only be inferred from an empty body**, which is wrong in both directions: a
+message with a caption *and* images showed no indicator at all, and any genuinely empty-bodied
+message claimed one.
+
+### Verified live against dev
+
+```
+POST /conversations/:id/messages   body "Reference shots attached" + 1 attachment   201
+GET  /conversations?type=STAFF                                                      200
+     body         = 'Reference shots attached'
+     direction    = OUTBOUND
+     authorUserId = cmsdnv7wj00013ci200r5nl3r     <- the viewer's own id
+     author       = { id, name: 'QA Regular Owner', email: ... }
+     attachments  = 1 url
+```
+
+That row is the exact case the old inference got wrong: a body **and** an attachment.
+
+### What mobile does with it
+
+| Row | Before | Now |
+| --- | --- | --- |
+| My own message, staff thread | *(no prefix — H2 removed the wrong one)* | **You:** |
+| A colleague's message | *(no prefix — unknowable)* | **Priya:** |
+| Inbound client message | *(none)* | *(none — correct, there is no author)* |
+| Caption **and** image | no indicator | **image glyph + caption** |
+| Image, no caption | "Image" | "Image" |
+
+**`apps/web` still tests `direction === 'OUTBOUND' ? 'You: '` on that same line and still has the
+original bug.** I did not change web — it was not part of the ask — but the field it needs now
+exists, and the fix there is one line.
+
+## Part 2 — the message action sheet
+
+Long-press a bubble. The sheet carries exactly what web's menu carries: the six reaction emoji,
+then **Reply**, **Copy**, **Edit**.
+
+Web renders that menu at the bubble's corner because it has hover and right-click to open it; a
+phone has neither, so the same content is presented as the bottom sheet this app already uses for
+the channel and attach pickers.
+
+**The emoji set is the API's**, not a new one: `REACTION_EMOJIS` is validated server-side and
+anything else is a 400. Web keeps its own copy with a note saying so; mobile now mirrors that list
+the same way.
+
+### Gating — mirrors web, and is narrower than the server
+
+- **React / Reply / Copy** — every real message. Excluded: a still-sending message (no server id to
+  act on) and a shared-inquiry card (not a bubble with a body worth quoting), which is web's own
+  exclusion.
+- **Edit** — STAFF/GROUP only, and only your own message. The API enforces both: `400 "Client
+  messages can't be edited"` and `403 "Only this message's author can edit it"`. Deliberately *not*
+  an OWNER override — unlike a shared internal note, a colleague's chat message is not yours to
+  rewrite.
+- **Copy** — hidden when there is no text to put on the clipboard.
+
+### Endpoints exercised against dev
+
+| Call | Result |
+| --- | --- |
+| `PUT …/reaction` `{emoji:👍}` | **200** — 1 reaction, `userId` = viewer |
+| `DELETE …/reaction` | **200** — back to 0 (toggle-off) |
+| `PATCH …/messages/:id` `{body}` | **200** — body changed, `updatedAt` now differs from `createdAt` |
+
+Reactions are an **upsert of one per person per message**, so choosing a different emoji replaces
+rather than stacks, and the sheet marks the viewer's current choice (announced as
+*"Remove 👍 reaction"*, so the toggle is not a surprise).
+
+The CLIENT-thread edit rejection is verified by reading the handler rather than by a live 400 — the
+UI never offers it there, and the client gate is strictly narrower than the server's.
+
+### What else the bubbles gained
+
+- **Reaction chips** under the bubble, counted per emoji, the viewer's own marked in gold.
+- **A quoted-reply preview** inside the bubble, tappable — it scrolls to the quoted message (and
+  does nothing, rather than jumping somewhere wrong, if that message is not in the loaded window).
+- **"Edited"** in the meta row, using a threshold comparison — `updatedAt` and `createdAt` differ
+  by a few milliseconds even on an untouched row, which is the idiom the schema's own comment
+  prescribes.
+- The composer gained **reply** and **edit** banners. Attachments are hidden while editing, because
+  the edit endpoint takes only a body.
+
+`replyToId` now rides along on send; a stale or foreign id is ignored by the API rather than
+rejected, so the message still sends, just unquoted. It is captured before the optimistic row is
+built and cleared immediately, so a slow send cannot attach the quote to the next message too.
+
+### One dependency
+
+`expo-clipboard@8.0.8` for Copy — React Native removed `Clipboard` from core. Installed with
+`expo install`, so it matches SDK 54 and ships inside Expo Go; `expo install --check` reports
+dependencies up to date. **One package added, no resolved versions changed** — the lockfile diff is
++11 lines and the `react`/`expo`/`react-native` lines in it are expo-clipboard's own peer ranges,
+not a re-resolution.
+
+## Verification
+
+414pt renders in `apps/mobile/parity-audit/`: `h3-01` the row prefixes and the reaction/quote/edited
+bubbles, `h3-02` the action sheet, `h3-03` the composer replying, `h3-04` the composer editing.
+
+DOM assertions, not just pixels:
+
+| Check | Result |
+| --- | --- |
+| Sheet on my own staff message | Reply + Copy + **Edit**, 6 emoji, 👍 marked mine |
+| Sheet on a client thread | Reply + Copy, **Edit absent**, no marked reaction |
+| Copy tapped | label becomes **Copied** |
+| Edit mode | body pre-filled, **attach control hidden** |
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean — lockfile stable |
+| `packages/shared-types` typecheck | clean — enums match `schema.prisma` |
+| `apps/api` `tsc` | clean, exit 0 |
+| `apps/web` `tsc -b` + `vite build` | clean, 10.69s — **unaffected by the added fields** |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `apps/mobile` `expo export --platform ios` | clean — 3.44 MB |
+| expo / react / rn / svg / clipboard / picker | **54.0.37 / 19.1.0 / 0.81.5 / 15.12.1 / 8.0.8 / 17.0.11** |
+| React singleton in bundle | 19.1.0 once, 19.2.7 absent |
+| Bundle content | `Editing message`, `Copied`, `Remove ` present; harness absent |
+
+Eleven node processes this session started were stopped; none remain. Both dev fixture threads were
+deleted after use.
+
+## Deploy note
+
+**The API change must reach production for the mobile client to show any of this correctly.** Until
+it deploys, `lastMessage.author` and `.attachments` come back `undefined` on production — mobile
+degrades to no prefix and no attachment indicator rather than showing anything wrong, but it is not
+"done" until deployed. Schema is untouched, so there is no migration and no backfill.
+
+## Still not verified
+
+**Nothing has run on a phone.** Specific to this session:
+
+- **Long-press itself** — a browser click is not a touch long-press; the 300 ms `delayLongPress` and
+  whether it competes with the list's own scroll gesture are unproven on device.
+- **`expo-clipboard` on device**, including whether the paste actually lands in another app.
+- **`scrollToIndex` to a quoted message** on a real inverted list — it can throw on an unmeasured
+  index, and only a device with a long thread will show that.
+- Everything still carried from H2: the data-URI avatar fix, camera capture, upload progress, and
+  `react-native-svg`.
