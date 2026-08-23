@@ -118,6 +118,17 @@ Concise operating rules, not a project history — see REPORT.md for history.
   combination has caused real jank/frame drops on-device that didn't show up in desktop dev tools.
 - Red is punctuation (errors, destructive actions, urgent flags) — never a fill color or a large
   surface area. Gold is the primary brand color.
+- **The one exception: the CHAT control.** Red (`--color-danger-strong`) is a legitimate BRAND
+  FILL on the chat entry point — web's floating chat FAB and mobile's raised centre tab button.
+  That is a deliberate owner decision, not drift, and it predates this note on web
+  (`ConversationsPanel.tsx` has shipped a `bg-danger-strong` FAB for some time). **Do not "fix"
+  either control back to gold or to an outline.** Everywhere else the punctuation rule stands
+  unchanged.
+  - On that fill, label text is **white, not cream**: cream on `--color-danger-strong` measures
+    4.39:1, under the 4.5:1 AA floor for small text; white clears it at 5.16:1. Web checked this
+    and recorded it, and the chat label is the smallest type in either client.
+  - Its unread badge is **cream fill with dark text** (`--color-fg` on `--color-accent-fg`), the
+    same bubble treatment every other count in the app uses — the badge is not red.
 - `backdrop-filter` establishes a containing block for `position: fixed` descendants, same as
   `transform`/`filter` — a fixed-position layer nested inside a `backdrop-filter` ancestor gets
   sized/clipped to that ancestor's box, not the viewport. Portal full-viewport fixed layers
