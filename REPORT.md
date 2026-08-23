@@ -23264,3 +23264,193 @@ that respawns it.
 - **Thumbnail decode cost while scrolling.** Every row now decodes a remote Cloudinary image;
   `expo-image` caches, but a long list on cellular is a device question.
 - **Whether the raised chat button's overhang is tappable** — unchanged from F.
+
+# Mobile session H — chat polish + control consistency
+
+Branch `mobile/session-h` off `main` (`b92c3d5`), two commits, pushed, **unmerged**. Pre-flight
+passed (`432b982`, `cc160a9` both reachable). Dedicated worktree.
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `05b5b61` | `mobile: chat polish + one pill control` |
+| 2 | *(this)* | REPORT.md |
+
+**Three of the five items had premises that did not reproduce as written.** Each was checked
+against the code before anything was changed; the findings are below, per item.
+
+## Fix 1 — avatars: the instruction and web pointed opposite ways
+
+The brief said "remove photos for staff participants" and, in the same breath, "match web's
+treatment". Both could not hold:
+
+- **Mobile had no photos anywhere in chat.** `ConversationRow` drew initials; `MessageBubble` has
+  no avatar at all; the thread header has none. The only `avatarUrl` in the app was the signed-in
+  user's own, in the top bar.
+- **Web shows photos on every thread type.** `ProgressRingAvatar` takes
+  `conversation.counterpart?.avatarUrl` for CLIENT, STAFF and GROUP alike and falls back to
+  `initials(name)` only when it is null. There is no staff-specific stripping.
+
+So "remove" was already true and "match web" meant the opposite. Asked; the answer was **match
+web**. Photos are therefore **added** for every thread type, initials behind them.
+
+**A bug found while looking at the result**: a 404ing avatar left an empty circle, because the
+fallback only covered a *null* url and not a *failed load*. Both call sites now share one
+`Avatar` component that also falls back on `onError`, and clears that flag when the url changes —
+otherwise a recycled list row would show initials for a photo that is perfectly fine.
+
+## Fix 2 — nothing to remove
+
+The composer has exactly three controls: the channel/direction picker, the text input, and send.
+**There is no attachment entry point, and there never has been** — no handler, no picker, no
+upload wiring. Nothing was removed and nothing was left dangling.
+
+`MessageBubble` *displays* a note when an inbound message carries attachments ("2 attachments").
+That is read-only rendering of what the API sends, not a way to attach anything, so it stays.
+
+## Fix 3 — one pill, sized from web
+
+Web's `.editorial-btn-secondary`, plus the `rounded-full border px-4 py-2` its callers add
+(`DateRangePresetFilter`'s trigger being the canonical instance):
+
+| Property | Value |
+| --- | --- |
+| font | `var(--font-jura)`, weight 400, **11.5px** |
+| letter-spacing | **0.14em** (1.61px at 11.5) |
+| text-transform | uppercase |
+| padding | `px-4 py-2` → **16 / 8** |
+| border | 1px `--color-border-strong` |
+| radius | `rounded-full` |
+| colour | `--color-fg-secondary` |
+| selected | border `--color-accent`, text `--color-fg`, bg `rgba(201,154,91,0.08)` |
+
+### Before / after
+
+| Control | Before (padH / padV / type) | After |
+| --- | --- | --- |
+| `SegmentedControl` (Inquiries/Projects, task segments) | 12 / 8 / 10px | **16 / 8 / 11.5px** |
+| Tasks sort + Overdue chips | 12 / 4 / 9px | **16 / 8 / 11.5px** |
+| Conversations filters (All / Unread / Needs action) | 12 / 5 / 10px | **16 / 8 / 11.5px** |
+| Flash status filters | 12 / 6 / 10px | **16 / 8 / 11.5px** |
+| Home date-range presets | 12 / 6 / 10px | **16 / 8 / 11.5px** |
+
+Five sizings became one. Nothing was wrong individually — together they read as five different
+products, which is what the device review caught.
+
+The row **scrolls**: at web's size four pills no longer fit across 414pt, and Tasks has exactly
+four (the last was clipped). Scrolling rather than shrinking, because the whole point of the
+component is that a pill is one size everywhere. `flexGrow: 0` on the scroll view and
+`alignItems: center` on its content are load-bearing — without them the row takes all the height
+offered and stretches its pills into ovals, which is the same trap session G hit.
+
+## Fix 4 — the viewer's insets were "applied" and still zero
+
+The chrome **already sat inside a `SafeAreaView`**, which is exactly why this looked handled and
+was not.
+
+**Root cause**: a React Native `<Modal>` is a separate native root, and
+`react-native-safe-area-context` does not resolve insets inside one unless a `SafeAreaProvider`
+is mounted *within the modal*. The `SafeAreaView` measured zero, so the close button and counter
+sat at y = 0, under the status bar. `statusBarTranslucent` on the Modal compounds it on Android
+by drawing beneath the bar as well.
+
+**Fix**: `useSafeAreaInsets()` is called in the component body — which renders inside the app's
+real provider — and applied as explicit padding. No dependence on what the Modal does with
+context.
+
+## Feature 5 — chat list
+
+**a. Frequent strip.** The five most recently active CLIENT threads as a row of faces, above the
+list. `lastMessageAt` descending is already the order `GET /conversations` returns, so this takes
+the first five rather than re-sorting, and a thread with no messages never displaces one that has
+them. Client-only deliberately: staff are colleagues an artist reaches constantly, and including
+them would fill the strip with the same four faces daily and bury the clients it exists for.
+Hidden while a search or filter narrows the list — "frequent" is a fact about the whole inbox,
+and showing it beside filtered results would imply it had been filtered too. It scrolls **with**
+the list rather than pinning: it is a shortcut, not chrome.
+
+**b. Channel tags — what web actually does.** **Web uses a flat coloured swatch, not a glyph.**
+`ChannelDot` is `h-3.5 w-3.5 shrink-0 rounded-[4px]`, filled from `CHANNEL_DOT_CLASSES`:
+
+| Channel | Web |
+| --- | --- |
+| SMS | `#2fb35c` |
+| EMAIL | `#4a90d9` |
+| FACEBOOK | `#1877f2` |
+| PHONE | `#8a8a92` |
+| OTHER | `#5a5a62` |
+| INSTAGRAM | brand gradient `#f9ce34 → #ee2a7b → #6228d7` |
+| IN_APP | **no entry** — falls through to OTHER's grey |
+
+So the brief's "if web has none for a channel, design minimal monochrome glyphs" does not apply:
+web has a convention for every channel, and it is **colour rather than shape**. Those *are*
+third-party brand colours — Instagram's gradient, Facebook blue — which the brief permitted
+because web already ships them. Mobile's swatch now matches web's size and radius, and the same
+swatch badges the frequent-row avatars. `IN_APP` falls through to grey exactly as web's does,
+rather than to something invented. Instagram stays flattened to its mid-stop (`#ee2a7b`): at
+14px a three-stop gradient is indistinguishable from a flat fill.
+
+**c. The "You:" bug — root cause.** The row printed `"You: "` for
+`item.lastMessage?.direction === 'OUTBOUND'`. That is wrong twice over:
+
+1. **`MessageDirection` separates the STUDIO from the CLIENT, not the viewer from everyone
+   else.** The API's own summary helper spells it out:
+   `direction === INBOUND ? "Client" : "Studio"`. On a client thread an OUTBOUND message may well
+   have been written by a colleague.
+2. **On STAFF and GROUP threads it is a constant.** The API rejects anything else outright —
+   *"Staff conversations only support OUTBOUND direction"* (`conversations.ts`) — so **every** row
+   on those threads said "You:", whoever wrote the message. That is the reported symptom exactly.
+
+The literal instruction ("prefix only when the last message's sender is the current user")
+**cannot be satisfied from this endpoint**: `GET /conversations` projects `lastMessage` as body,
+channel, direction and createdAt, with **no author**. Rather than invent an API field, the prefix
+now says only what the data supports — **"Studio: "** where the studio spoke on a client thread,
+and **nothing at all** on staff threads, where direction carries no information.
+
+**`apps/web` has the identical bug on the same line, still unfixed** —
+`conversation.lastMessage.direction === 'OUTBOUND' ? 'You: ' : ''`.
+
+**API gap to close if "You:" is wanted literally**: add the author to `lastMessage` in
+`GET /conversations`'s projection. One field; both clients could then be exactly right.
+
+**d.** Search field, filter pills and ordering all unchanged.
+
+## Verification
+
+414pt renders in `apps/mobile/parity-audit/`: `h-01` the chat list (frequent strip, channel
+badges, staff threads, the corrected prefix, and the `FD` initials fallback where an avatar
+404s), `h-02` the pill sweep on Tasks, `h-03` the viewer under a notch.
+
+**The viewer fix cannot be seen in a browser, and it took two attempts to prove.** Web reports
+zero safe-area insets; `SafeAreaProvider`'s `initialMetrics` does not help, because the web build
+measures the real `env()` values and overwrites them — the first attempt showed the chrome
+unmoved and `paddingTop: 0px`, which was the browser, not the fix. Overriding
+`SafeAreaInsetsContext` directly does work, since `useSafeAreaInsets` reads it: with a
+59/34pt inset the counter moved from y=24 to **y=83** and the container reported
+`paddingTop: 59px`, `paddingBottom: 34px`. **Still wants device confirmation** — the brief asked
+for that flag and it stands.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean — 1352 packages in 1m; `package-lock.json` unchanged |
+| `packages/shared-types` typecheck | clean |
+| `apps/api` `tsc` | clean, exit 0 |
+| `apps/web` `tsc -b` + `vite build` | clean, 11.10s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `apps/mobile` `expo export --platform ios` | clean — 3,389,373 bytes |
+| expo / react / react-native / svg | **54.0.37 / 19.1.0 / 0.81.5 / 15.12.1** |
+| React singleton in bundle | 19.1.0 once, 19.2.7 absent |
+| Bundle content | `"Studio: "` and `"Frequent"` present; **`"You: "` absent** |
+
+Nine node processes holding the repo were stopped before `npm ci`.
+
+## Still not verified
+
+**Nothing has run on a phone.** Specific to this session:
+
+- **The viewer's insets on a real notch** — proven by context override, not by a device.
+- **Whether the frequent strip's avatars are worth their decode cost** on a cold list over
+  cellular; five 52pt remote images now load above the fold.
+- **`react-native-svg` on device**, carried forward from G and still the highest-value first
+  check.
