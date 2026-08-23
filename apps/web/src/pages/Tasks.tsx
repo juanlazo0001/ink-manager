@@ -108,8 +108,23 @@ const ASSIGNED_TO_ME_SORT_OPTIONS = [
 ] as const
 type AssignedToMeSort = (typeof ASSIGNED_TO_ME_SORT_OPTIONS)[number]['value']
 
+// A CALENDAR-DAY comparison, not an instant one.
+//
+// `dueAt` is a due DATE: it is written as `parseDateString(value).toISOString()`
+// (see updateDueDate/createMutation below), and parseDateString builds
+// `new Date(y, m - 1, d)` -- LOCAL midnight of the chosen day, not a
+// meaningful time of day. So `new Date(dueAt) < new Date()`, which this
+// used to be, went true at 00:00 on the very day the task was due: a task
+// due today was flagged Overdue for the whole of today, and swept into the
+// "Overdue" filter, while the pill beside it correctly read today's date.
+//
+// Comparing the two calendar days instead -- through `toDateString`, the
+// same helper the pill itself renders with, so the flag can never disagree
+// with the date shown next to it -- makes "overdue" mean what it says:
+// the day it was due has already passed.
 function isOverdue(task: { dueAt: string | null; completedAt: string | null }): boolean {
-  return !!task.dueAt && !task.completedAt && new Date(task.dueAt) < new Date()
+  if (!task.dueAt || task.completedAt) return false
+  return toDateString(new Date(task.dueAt)) < toDateString(new Date())
 }
 
 // Mobile row redesign: shared "compact due date pill" look, used both by
