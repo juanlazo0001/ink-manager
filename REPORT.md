@@ -22856,3 +22856,77 @@ Specific to this one:
   intent; an OLED phone may render it differently.
 - **Text legibility over the photo in sunlight.** The measured ratios are sRGB maths, not a
   phone outdoors.
+
+## Session E addendum — the standard bar, properly
+
+The session E section above says `npm ci` could not complete because two dev API processes held
+`node_modules\bcrypt\prebuilds\win32-x64\bcrypt.node` open. Those processes were stopped on the
+owner's instruction and the bar was re-run. It passes. Three things are worth recording, because
+two of them are corrections and one is a trap.
+
+### The processes were this repo's, and there were nine of them
+
+Both listeners on 4000 and 4310 were running `src/index.ts` through
+`C:\...\ink-manager\node_modules\tsx` — this repo's own tree, not a sibling worktree's, which is
+exactly why they held the lock. Killing the two listeners was not enough: seven `tsx watch`
+parents were still alive and would have respawned them. All nine were stopped.
+
+### `npm ci --dry-run` deletes `node_modules` anyway
+
+Run to confirm the tree was lockfile-exact, it reported `added 1419 packages` and left
+`node_modules` **empty** — npm's remove phase runs before the dry-run check short-circuits. Not a
+dry run in any useful sense. Do not reach for it to inspect an installed tree.
+
+### The working tree was switched out from under this session
+
+Partway through, `apps/mobile/src/components/ScreenBackground.tsx` and both new image assets
+vanished while `git status` reported clean. The reflog explains it:
+
+```
+ceb4aff HEAD@{0}: checkout: moving from mobile/session-e to main
+969545a HEAD@{1}: commit: REPORT.md: mobile session E ...
+```
+
+A concurrent session checked `main` out in this shared tree after the last session E commit. This
+is precisely what CLAUDE.md's "never share a working tree between sessions" rule exists to
+prevent, and it is now a thing that has actually happened rather than a hypothetical. Nothing was
+lost — all three commits were already on `origin/mobile/session-e` — but **the api/web/shared-types
+builds run immediately after the clean `npm ci` were run against `main`, not against session E**,
+and were therefore not evidence for this branch.
+
+Re-run in a dedicated worktree (`git worktree add ... mobile/session-e`), which is both the
+repo's own prescribed mechanism and the cleanest possible build-trust check: a fresh checkout of
+the branch plus a from-scratch `npm ci`, disturbing nobody.
+
+### Result, from `ink-manager-w-session-e` at `969545a`
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | **clean, exit 0** — 1378 packages in 1m; `package-lock.json` unchanged |
+| `packages/shared-types` typecheck | clean — `enums.generated.ts matches schema.prisma` |
+| `apps/api` `tsc` | clean, exit 0 |
+| `apps/web` `tsc -b` + `vite build` | clean, built in 11.02s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `apps/mobile` `expo export --platform ios` | clean — 3,100,509 byte bundle, **60 assets** |
+| expo / react / react-native | **54.0.37 / 19.1.0 / 0.81.5** — pin intact |
+
+Verified in the shipped bundle rather than assumed:
+
+```
+React version constants
+  19.1.0     1 occurrence
+  19.2.7     0 occurrences   <- absent
+```
+
+That check matters more than usual here. `npm ci` hoists differently from the incremental
+`npm install` that had been repairing the tree: React is now present twice on disk (19.1.0 in
+`apps/mobile/node_modules`, 19.2.7 at the root), which is exactly the situation
+`metro.config.js`'s `resolveRequest` pin exists to handle. The pin holds — session 1B's
+two-Reacts regression has not come back.
+
+Both new assets are in the export at their exact byte sizes (`app-bg-blurred-amber.jpg` 5,926;
+`grain-tile.png` 19,681), both italic Fraunces faces are bundled, and the new copy
+("Here's how your work is going.", "Lost / Cold Rate", "Needs Scheduling") is present.
+
+The verification worktree was removed afterwards; the shared tree was left on `main`, where the
+other session put it.
