@@ -266,7 +266,7 @@ export default function ScheduleScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: 'transparent' },
 
   controls: {
     flexDirection: 'row',

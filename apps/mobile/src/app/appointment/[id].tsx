@@ -348,7 +348,7 @@ export default function AppointmentDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: 'transparent' },
   headerSpacer: { width: 36 },
   centre: { flex: 1, justifyContent: 'center' },
   content: { paddingBottom: space.xxxl },
@@ -399,7 +399,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: hairline,
     borderColor: colors.border,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.cardGlass,
   },
   photoImage: { width: '100%', height: '100%' },
   pressed: { opacity: 0.7 },

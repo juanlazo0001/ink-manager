@@ -137,7 +137,7 @@ const styles = StyleSheet.create({
     paddingBottom: space.md,
     borderBottomWidth: hairline,
     borderBottomColor: colors.borderSoft,
-    backgroundColor: colors.bg,
+    backgroundColor: 'transparent',
   },
   searchRow: {
     flexDirection: 'row',

@@ -88,7 +88,10 @@ const styles = StyleSheet.create({
     gap: space.md,
     paddingHorizontal: space.lg,
     paddingVertical: space.md,
-    backgroundColor: colors.bg,
+    // Transparent, so the background photo reads behind the list the same
+    // way it does behind every other screen. The pressed state still
+    // paints a real surface, which is what makes a tap visible.
+    backgroundColor: 'transparent',
   },
   pressed: { backgroundColor: colors.surface },
 

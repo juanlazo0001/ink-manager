@@ -55,9 +55,9 @@ const styles = StyleSheet.create({
   section: { gap: space.sm, paddingHorizontal: space.lg, paddingTop: space.xl },
   titleAccent: { color: colors.accent },
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.cardGlass,
     borderWidth: hairline,
-    borderColor: colors.border,
+    borderColor: colors.cardBorder,
     borderRadius: radius.card,
     paddingHorizontal: space.lg,
     paddingVertical: space.xs,

@@ -201,7 +201,7 @@ export default function ConversationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: 'transparent' },
   separator: { height: 1, backgroundColor: colors.borderSoft, marginLeft: space.lg },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
 });

@@ -197,5 +197,5 @@ const styles = StyleSheet.create({
   stateBody: { ...type.small, color: colors.fgMuted, textAlign: 'center', maxWidth: 300 },
   stateAction: { marginTop: space.md, alignSelf: 'center', paddingHorizontal: space.xl },
 
-  screenLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
+  screenLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
 });

@@ -103,7 +103,7 @@ export default function AccountScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: 'transparent' },
   headerSpacer: { width: 36 },
   body: { flex: 1, paddingHorizontal: space.lg, paddingTop: space.xl, paddingBottom: space.xl, gap: space.xl },
   identity: { gap: space.xs },
@@ -117,9 +117,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.cardGlass,
     borderWidth: hairline,
-    borderColor: colors.border,
+    borderColor: colors.cardBorder,
     borderRadius: radius.card,
     paddingHorizontal: space.lg,
     paddingVertical: space.lg,

@@ -2,6 +2,7 @@ import Feather from '@expo/vector-icons/Feather';
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { SectionHeader } from '@/components/editorial';
 import { colors, hairline, radius, space, type } from '@/theme';
 
 /**
@@ -51,7 +52,7 @@ export function ProfileSection({
             color={colors.fgMuted}
             style={styles.chevron}
           />
-          <Text style={styles.title}>{title.toUpperCase()}</Text>
+          <SectionHeader style={styles.title}>{title}</SectionHeader>
           {collapsed && summary ? (
             <Text style={styles.summary} numberOfLines={1}>
               {summary}
@@ -108,7 +109,8 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   header: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.lg },
   chevron: { width: 16 },
-  title: { ...type.label, color: colors.accent },
+  /* Web sets a card title in .sc, not in the eyebrow label face. */
+  title: { color: colors.accent },
   summary: { ...type.meta, color: colors.fgMuted, flex: 1 },
   body: { paddingBottom: space.sm },
 

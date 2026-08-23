@@ -235,7 +235,7 @@ export default function FlashGalleryScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: 'transparent' },
   content: { paddingBottom: space.xxxl },
 
   newButton: {
@@ -268,9 +268,9 @@ const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, paddingHorizontal: space.lg },
   card: {
     borderWidth: hairline,
-    borderColor: colors.border,
+    borderColor: colors.cardBorder,
     borderRadius: radius.card,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.cardGlass,
     overflow: 'hidden',
   },
   image: { backgroundColor: colors.surfaceInset },

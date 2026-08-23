@@ -373,7 +373,7 @@ export default function FlashPieceScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: 'transparent' },
   headerSpacer: { width: 36 },
 
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingTop: space.lg, flexWrap: 'wrap' },

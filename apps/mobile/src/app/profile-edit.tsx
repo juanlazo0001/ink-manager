@@ -830,7 +830,7 @@ function sideMessage(err: unknown, subject: string): string {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: 'transparent' },
   accountBlock: { paddingTop: space.lg, paddingBottom: space.lg },
   accentTitle: { color: colors.accent },
   hint: { ...type.meta, color: colors.fgMuted, paddingVertical: space.xs },

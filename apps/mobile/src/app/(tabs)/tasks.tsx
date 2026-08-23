@@ -367,7 +367,7 @@ export default function TasksScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: 'transparent' },
   listContent: { paddingTop: space.sm, paddingBottom: space.xxl },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
   separator: { height: hairline, backgroundColor: colors.borderSoft, marginLeft: space.lg + 22 + space.md },

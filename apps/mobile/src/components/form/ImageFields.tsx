@@ -239,7 +239,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     borderWidth: hairline,
     borderColor: colors.borderStrong,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.cardGlass,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'visible',

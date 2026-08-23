@@ -23,6 +23,6 @@ export function ComingSoon({ title, line }: { title: string; line: string }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: 'transparent' },
   body: { flex: 1, justifyContent: 'center' },
 });

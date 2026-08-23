@@ -1,4 +1,5 @@
 import Feather from '@expo/vector-icons/Feather';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -6,13 +7,18 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuth } from '@/context/auth';
 import { colors, hairline, radius, space, type } from '@/theme';
 
-/** Two letters at most — a full name would not fit the circle. */
-function initials(name: string | null, fallback: string): string {
+/**
+ * ONE letter, not two.
+ *
+ * Web's TopBar falls back to `(profile?.name ?? user.role ?? 'U').slice(0, 1)`
+ * — a single character in Fraunces at `--color-accent-hover`. Mobile had
+ * been building two initials in Jura at `--color-accent`, which is a
+ * different mark for the same person in the same corner of the same
+ * product.
+ */
+function initial(name: string | null, fallback: string): string {
   const source = name?.trim() || fallback;
-  const parts = source.split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return (source.slice(0, 1) || 'U').toUpperCase();
 }
 
 /**
@@ -70,9 +76,23 @@ export function ScreenHeader({
           hitSlop={8}
           style={({ pressed }) => [styles.avatar, pressed && styles.pressed]}
         >
-          <Text style={styles.avatarLabel}>
-            {initials(session?.profile.name ?? null, session?.profile.email ?? '?')}
-          </Text>
+          {/* The real photo, from `profile.avatarUrl` on the session this
+              app already holds — the same field web's TopBar renders. No
+              new request: GET /users/me has always returned it, and the
+              corner has been drawing initials over the top of it. */}
+          {session?.profile.avatarUrl ? (
+            <Image
+              source={{ uri: session.profile.avatarUrl }}
+              style={styles.avatarImage}
+              contentFit="cover"
+              transition={140}
+              accessible={false}
+            />
+          ) : (
+            <Text style={styles.avatarLabel}>
+              {initial(session?.profile.name ?? null, session?.profile.email ?? '?')}
+            </Text>
+          )}
         </Pressable>
       )}
     </View>
@@ -89,13 +109,14 @@ const styles = StyleSheet.create({
     paddingBottom: space.md,
     borderBottomWidth: hairline,
     borderBottomColor: colors.border,
-    backgroundColor: colors.bg,
+    backgroundColor: 'transparent',
   },
   back: { marginLeft: -space.sm },
   titles: { flex: 1, gap: 2 },
   title: { ...type.display, fontSize: 24, lineHeight: 29, color: colors.fg },
   subtitle: { ...type.meta, color: colors.fgMuted },
   avatar: {
+    // h-9 w-9 on web's editorial branch.
     width: 36,
     height: 36,
     borderRadius: radius.pill,
@@ -103,8 +124,12 @@ const styles = StyleSheet.create({
     borderColor: colors.borderStrong,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surface,
+    // bg-surface-raised, web's own fallback ground.
+    backgroundColor: colors.surfaceRaised,
+    overflow: 'hidden',
   },
-  avatarLabel: { ...type.label, fontSize: 12, color: colors.accent },
+  avatarImage: { width: '100%', height: '100%' },
+  /* font-display text-sm text-accent-hover */
+  avatarLabel: { fontFamily: type.display.fontFamily, fontSize: 14, color: colors.accentHover },
   pressed: { opacity: 0.6 },
 });

@@ -5,8 +5,17 @@ import { useCallback, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import {
+  EditorialCard,
+  Eyebrow,
+  SectionHeader,
+  FunnelBar,
+  FunnelBarList,
+  RedRule,
+  StatChip,
+} from '@/components/editorial';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { Eyebrow, ScreenLoading, StateMessage } from '@/components/ui';
+import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { useStudioTimeZone } from '@/hooks/useStudioTimeZone';
 import { fetchDashboard, presetRange, RANGE_PRESETS, type DateRange, type RangeDays } from '@/lib/dashboard';
@@ -78,6 +87,10 @@ export default function HomeScreen() {
   );
 
   const rows = useMemo(() => (data ? funnelRows(data) : []), [data]);
+  // Web scales its bars to the largest stage, not to `received`, and this
+  // mirrors `HorizontalBarList`'s own `Math.max(...values, 1)`.
+  const funnelMax = useMemo(() => Math.max(...rows.map((r) => r.count), 1), [rows]);
+  const rangeCaption = range ? `${range.start} – ${range.end}` : undefined;
   const greeting = session ? firstName(session.profile.name, session.profile.email) : '';
 
   if (!ready || (!data && !error)) {
@@ -100,7 +113,10 @@ export default function HomeScreen() {
         }
       >
         <View style={styles.welcome}>
-          <Eyebrow>{data?.scope === 'studio' ? 'The studio' : 'Your work'}</Eyebrow>
+          {/* Web's own subtitle copy, verbatim. */}
+          <Eyebrow>
+            {data?.scope === 'studio' ? "Here's how the studio is doing." : "Here's how your work is going."}
+          </Eyebrow>
           <Text style={styles.welcomeText}>
             Welcome, <Text style={styles.welcomeName}>{greeting}</Text>
           </Text>
@@ -147,8 +163,12 @@ export default function HomeScreen() {
               style={({ pressed }) => [styles.needsCard, pressed && styles.pressed]}
             >
               <View style={styles.needsText}>
-                <Eyebrow tone="accent">Needs scheduling</Eyebrow>
-                <Text style={styles.bigNumber}>{data.needsSchedulingCount}</Text>
+                {/* Web's own caption, verbatim, in the eyebrow slot -- with
+                    the title as a .sc heading beneath it, the same
+                    arrangement every other card on the page uses. */}
+                <Eyebrow>Right now, not affected by the date range above</Eyebrow>
+                <SectionHeader style={styles.needsTitle}>Needs Scheduling</SectionHeader>
+                <Text style={styles.needsNumber}>{data.needsSchedulingCount}</Text>
                 <Text style={styles.hint}>
                   {data.needsSchedulingCount === 1 ? 'project has' : 'projects have'} a paid deposit and no appointment
                   yet. Right now — not the range above.
@@ -157,40 +177,61 @@ export default function HomeScreen() {
               <Feather name="chevron-right" size={20} color={colors.fgMuted} />
             </Pressable>
 
-            <Section title="Your inquiry funnel">
+            <EditorialCard
+              title={data.scope === 'own' ? 'Your Inquiry Funnel' : 'Inquiry Funnel'}
+              caption={rangeCaption}
+              style={styles.card}
+            >
+              <Text style={styles.cardHint}>Conversion is shown as % of Received still in this stage today</Text>
               {funnelIsEmpty(data) ? (
                 <Text style={styles.hint}>Nothing came in during this window.</Text>
               ) : (
-                <View style={styles.funnel}>
+                <FunnelBarList>
                   {rows.map((row) => (
-                    <View key={row.stage} style={styles.funnelRow}>
-                      <View style={styles.funnelHead}>
-                        <Text style={styles.funnelLabel}>{row.label}</Text>
-                        <Text style={styles.funnelCount}>{row.count}</Text>
-                        {row.conversion ? <Text style={styles.funnelPct}>{row.conversion}</Text> : null}
-                      </View>
-                      <View style={styles.barTrack}>
-                        <View style={[styles.barFill, { width: `${Math.round(row.fill * 100)}%` }]} />
-                      </View>
-                    </View>
+                    <FunnelBar
+                      key={row.stage}
+                      label={row.label}
+                      value={row.count}
+                      max={funnelMax}
+                      // Web composes exactly this: `${count} (${pct})`,
+                      // with an em dash where the rate is null.
+                      valueLabel={`${row.count} (${row.conversion ?? '—'})`}
+                    />
                   ))}
-                </View>
+                </FunnelBarList>
               )}
-            </Section>
+            </EditorialCard>
 
-            <Section title="Lost / cold rate">
-              <View style={styles.statRow}>
-                <Stat label="Rate" value={formatPercent(data.lostRate.lostColdRate) ?? '—'} tone="warning" />
-                <Stat label="Lost" value={String(data.lostRate.lost)} />
-                <Stat label="Cold" value={String(data.lostRate.cold)} />
-                <Stat label="Confirmed" value={String(data.lostRate.converted)} tone="success" />
-              </View>
+            {/* Rebuilt to web's own layout. The four-column version this
+                replaces was invented here -- web has a short red rule, then
+                either the cream chip or a designed empty state, then the
+                caption, then three dots. Green appears only as one of those
+                dots (--color-success, web's `bg-success` on "N Confirmed"),
+                never as a figure. */}
+            <EditorialCard title="Lost / Cold Rate" caption={rangeCaption} style={styles.card}>
+              <RedRule style={styles.redRule} />
               {data.lostRate.lostColdRate === null ? (
-                <Text style={styles.hint}>No projects have resolved either way yet.</Text>
-              ) : null}
-            </Section>
+                <View style={styles.emptyRow}>
+                  <Text style={styles.emptyDash}>—</Text>
+                  <Text style={styles.emptyText}>No outcomes yet in this range.</Text>
+                </View>
+              ) : (
+                <>
+                  <StatChip>{formatPercent(data.lostRate.lostColdRate)}</StatChip>
+                  <Text style={styles.cardCaption}>
+                    of {data.scope === 'own' ? 'your inquiries' : 'inquiries'} that reached a terminal outcome ended
+                    lost or cold, rest converted
+                  </Text>
+                </>
+              )}
+              <View style={styles.dots}>
+                <Dot color={colors.danger} label={`${data.lostRate.lost} Closed Lost`} />
+                <Dot color={colors.warning} label={`${data.lostRate.cold} Cold Lead`} />
+                <Dot color={colors.success} label={`${data.lostRate.converted} Confirmed`} />
+              </View>
+            </EditorialCard>
 
-            <Section title="Response time">
+            <EditorialCard title="Response Time" caption={rangeCaption} style={styles.card}>
               <View style={styles.stack}>
                 <View>
                   <Text style={styles.statLabel}>YOU SENT AN ESTIMATE</Text>
@@ -207,9 +248,13 @@ export default function HomeScreen() {
                   </Text>
                 </View>
               </View>
-            </Section>
+            </EditorialCard>
 
-            <Section title="Appointments">
+            <EditorialCard
+              title={data.scope === 'own' ? 'My Appointments' : 'Artist Utilization'}
+              caption={rangeCaption}
+              style={styles.card}
+            >
               <Text style={styles.bigNumber}>
                 {data.artistUtilization.reduce((sum, a) => sum + a.appointmentCount, 0)}
               </Text>
@@ -232,29 +277,53 @@ export default function HomeScreen() {
                   ))}
                 </View>
               ) : null}
-            </Section>
+            </EditorialCard>
 
             {/* Present only when the API actually sent them. It OMITS both
                 objects without reports.viewFinancial (default false for
                 ARTIST) rather than zeroing them, precisely so a client can
                 hide the section instead of showing a misleading $0. */}
+            {/* Two cards on web, and the same two here -- both captioned
+                "not affected by the date range above", because neither is
+                date-ranged (a deposit form is sent once; liability is a
+                right-now snapshot). The headline figure is the CONVERSION
+                RATE, not a count, and nothing here is tinted green: a
+                figure carries its meaning in the number. */}
             {hasFinancials(data) ? (
-              <Section title="Deposits">
+              <>
                 {data.depositConversion ? (
-                  <View style={styles.statRow}>
-                    <Stat label="Sent" value={String(data.depositConversion.sent)} />
-                    <Stat label="Paid" value={String(data.depositConversion.paid)} tone="success" />
-                    <Stat label="Rate" value={formatPercent(data.depositConversion.conversionRate) ?? '—'} />
-                  </View>
+                  <EditorialCard
+                    title="Deposit Conversion"
+                    caption="All-time, not affected by the date range above"
+                    style={styles.card}
+                  >
+                    <Text style={styles.bigNumber}>
+                      {formatPercent(data.depositConversion.conversionRate) ?? '—'}
+                    </Text>
+                    <Text style={styles.cardCaption}>
+                      {data.depositConversion.paid} of {data.depositConversion.sent} deposit forms sent have been paid
+                    </Text>
+                    <Text style={styles.cardCaption}>
+                      Avg time to payment: {formatHours(data.depositConversion.avgHoursToPayment) ?? '—'}
+                    </Text>
+                  </EditorialCard>
                 ) : null}
                 {data.giftCardLiability ? (
-                  <Text style={styles.hint}>
-                    {data.giftCardLiability.activeCardCount} active gift card
-                    {data.giftCardLiability.activeCardCount === 1 ? '' : 's'} · $
-                    {(data.giftCardLiability.totalCents / 100).toFixed(2)} outstanding
-                  </Text>
+                  <EditorialCard
+                    title="Outstanding Gift Card Liability"
+                    caption="Right now, not affected by the date range above"
+                    style={styles.card}
+                  >
+                    <Text style={styles.bigNumber}>
+                      ${(data.giftCardLiability.totalCents / 100).toFixed(2)}
+                    </Text>
+                    <Text style={styles.cardCaption}>
+                      across {data.giftCardLiability.activeCardCount} active, unredeemed gift card
+                      {data.giftCardLiability.activeCardCount === 1 ? '' : 's'}
+                    </Text>
+                  </EditorialCard>
                 ) : null}
-              </Section>
+              </>
             ) : null}
           </>
         ) : null}
@@ -263,31 +332,31 @@ export default function HomeScreen() {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * One of the three outcome counts under Lost / Cold Rate. Web:
+ * `<span className="flex items-center gap-1.5">
+ *    <span className="h-2 w-2 rounded-full bg-danger" /> {n} Closed Lost
+ *  </span>`
+ *
+ * This is the ONLY place green appears on the dashboard, and it appears as
+ * an 8px dot -- `--color-success`, web's own token. It is never a figure.
+ */
+function Dot({ color, label }: { color: string; label: string }) {
   return (
-    <View style={styles.section}>
-      <Eyebrow>{title}</Eyebrow>
-      <View style={styles.card}>{children}</View>
-    </View>
-  );
-}
-
-function Stat({ label, value, tone }: { label: string; value: string; tone?: keyof typeof tones }) {
-  return (
-    <View style={styles.stat}>
-      <Text style={styles.statLabel}>{label.toUpperCase()}</Text>
-      <Text style={[styles.statValue, tone ? { color: tones[tone] } : null]}>{value}</Text>
+    <View style={styles.dotRow}>
+      <View style={[styles.dot, { backgroundColor: color }]} />
+      <Text style={styles.dotLabel}>{label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: 'transparent' },
   content: { paddingBottom: space.xxl },
 
   welcome: { paddingHorizontal: space.lg, paddingTop: space.xl, gap: space.xs },
-  welcomeText: { ...type.display, color: colors.fg },
-  welcomeName: { color: colors.accent },
+  welcomeText: { ...type.welcome, color: colors.fg, marginTop: space.md },
+  welcomeName: { ...type.welcomeName, color: colors.accentHover },
 
   rangeRow: { flexDirection: 'row', gap: space.sm, paddingHorizontal: space.lg, paddingTop: space.lg },
   range: {
@@ -309,41 +378,36 @@ const styles = StyleSheet.create({
     marginHorizontal: space.lg,
     marginTop: space.xl,
     padding: space.lg,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.cardGlass,
     borderWidth: hairline,
     borderColor: colors.borderStrong,
     borderRadius: radius.card,
   },
   needsText: { flex: 1, gap: space.xs },
+  needsTitle: { marginTop: space.sm },
   accentEyebrow: { color: colors.accent },
 
-  section: { gap: space.sm, paddingHorizontal: space.lg, paddingTop: space.xl },
-  card: {
-    backgroundColor: colors.surface,
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.card,
-    padding: space.lg,
-    gap: space.sm,
-  },
+  card: { marginHorizontal: space.lg, marginTop: space.lg },
+  cardHint: { ...type.meta, color: colors.fgMuted, marginBottom: space.md },
+  cardCaption: { ...type.small, color: colors.fgMuted, marginTop: space.md },
+  redRule: { marginBottom: space.md },
 
-  funnel: { gap: space.md },
-  funnelRow: { gap: space.xs },
-  funnelHead: { flexDirection: 'row', alignItems: 'baseline', gap: space.sm },
-  funnelLabel: { ...type.small, color: colors.fgSecondary, flex: 1 },
-  funnelCount: { ...type.body, color: colors.fg },
-  funnelPct: { ...type.meta, color: colors.fgMuted, width: 46, textAlign: 'right' },
-  barTrack: { height: 4, borderRadius: radius.pill, backgroundColor: colors.surfaceInset, overflow: 'hidden' },
-  barFill: { height: 4, borderRadius: radius.pill, backgroundColor: colors.accent },
+  /* Web's designed empty state: a light red em dash beside an italic serif
+     line, instead of the bare "—" formatPct would fall back to. */
+  emptyRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  emptyDash: { fontSize: 30, lineHeight: 32, color: colors.dangerStrong },
+  emptyText: { ...type.displayItalic, color: colors.fgSecondary },
 
-  statRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xl },
-  stat: { gap: 2 },
-  statLabel: { ...type.label, color: colors.fgMuted },
-  statValue: { ...type.heading, color: colors.fg },
+  dots: { flexDirection: 'row', flexWrap: 'wrap', gap: space.lg, marginTop: space.lg },
+  dotRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dot: { width: 8, height: 8, borderRadius: radius.pill },
+  dotLabel: { ...type.small, color: colors.fg },
 
   stack: { gap: space.lg },
-  bigNumber: { ...type.display, color: colors.fg },
+  statLabel: { ...type.label, color: colors.fgMuted },
+  bigNumber: { ...type.statNumeralSmall, color: colors.fg },
   hint: { ...type.meta, color: colors.fgMuted },
+  needsNumber: { ...type.statNumeral, color: colors.fg },
 
   utilList: { gap: space.xs, paddingTop: space.sm },
   utilRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },

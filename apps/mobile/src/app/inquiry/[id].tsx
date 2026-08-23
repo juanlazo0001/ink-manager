@@ -340,7 +340,7 @@ export default function InquiryDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  screen: { flex: 1, backgroundColor: 'transparent' },
   headerSpacer: { width: 36 },
   centre: { flex: 1, justifyContent: 'center' },
   content: { paddingBottom: space.xxxl },
