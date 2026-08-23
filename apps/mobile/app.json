@@ -40,6 +40,12 @@
           }
         }
       ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Ink Manager uses your photos so you can set a profile photo and add work to your portfolio and flash."
+        }
+      ],
       "expo-web-browser"
     ],
     "experiments": {
