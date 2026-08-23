@@ -22575,3 +22575,93 @@ Expo Go, signed in as an artist. **Anything below that fails, stops the merge.**
 30. Anywhere the app says something failed, read the sentence. If any of them reads like a
     machine wrote it — a bare status code, the word "Forbidden", an untranslated field name —
     that is a bug worth reporting, not a rough edge.
+
+# Correction — `PersonalTask.dueAt` is stored at LOCAL midnight, not UTC midnight
+
+The B+C+D section above states, in the DECISIONS log and again under "Deviations from web", that
+`dueAt` is "a calendar date at UTC midnight (web writes it with
+`parseDateString(...).toISOString()`)". **The parenthetical is right and the claim is wrong.**
+`parseDateString` builds `new Date(y, m - 1, d)` — **LOCAL** midnight of the browser that created
+the row, not UTC midnight:
+
+```
+a task due 2026-08-25, as apps/web actually stores it
+  America/New_York   2026-08-25T04:00:00.000Z
+  Europe/Berlin      2026-08-24T22:00:00.000Z
+  Asia/Tokyo         2026-08-24T15:00:00.000Z
+  Pacific/Auckland   2026-08-24T12:00:00.000Z
+```
+
+CLAUDE.md's timezone note calls `parseDateString(...).toISOString()` and the API's own
+`new Date("YYYY-MM-DD")` "equivalent for this one write case". For this field they are not: the
+first is local, the second is UTC. Worth reconciling there, but not edited as part of this work.
+
+Two consequences, both now fixed.
+
+## What was wrong in mobile
+
+- **The reader.** `dueDateKey` was `dueAt.slice(0, 10)`. That reads the right day only for a
+  studio at or behind UTC. Against a real Tokyo-written row it is **exactly one day early on
+  every task**:
+
+  | stored | `slice(0, 10)` | correct (Tokyo) |
+  | --- | --- | --- |
+  | `2026-08-21T15:00:00.000Z` | `2026-08-21` | `2026-08-22` |
+  | `2026-08-22T15:00:00.000Z` | `2026-08-22` | `2026-08-23` |
+  | `2026-08-29T15:00:00.000Z` | `2026-08-29` | `2026-08-30` |
+
+  It now resolves the instant in the **studio's** zone, which is the right day whenever the
+  browser that wrote it sat in the studio's zone — what studio staff are.
+
+- **The writer.** `NewTaskBar` wrote UTC midnight, so a task created on a phone would land a day
+  earlier than web renders it for every studio behind UTC. It now writes midnight in the
+  studio's zone via `zonedTimeToUtc`, producing **byte-identical instants to web's** in all four
+  zones tested.
+
+- **The due-soonest sort** no longer needs a zone at all: the raw ISO instants are compared
+  directly, since whichever is earlier is the earlier day in every zone.
+
+Verified in the UI at both zones, device fixed on `America/New_York` throughout:
+
+| studio | Aug-21-ish row | Aug-22-ish row | far-future row |
+| --- | --- | --- | --- |
+| `America/New_York` | `OVERDUE · YESTERDAY` | `TODAY` | `AUG 29` |
+| `Asia/Tokyo` | `OVERDUE · YESTERDAY` | `TODAY` | `AUG 30` |
+
+`AUG 29` vs `AUG 30` from instants that differ only by the studio's zone is the fix visible on
+screen; the old reader showed `AUG 29` for both. Creating a task due "Tomorrow" from a Tokyo
+studio now posts `dueAt: "2026-08-23T15:00:00.000Z"` — Tokyo midnight — where it used to post
+`2026-08-24T00:00:00.000Z`.
+
+Commit: `mobile: due dates follow web's real storage convention`, on `mobile/session-bcd`.
+
+## What was wrong in web
+
+The off-by-one flagged in the B+C+D section is real, but it is **not** the one described there.
+It has nothing to do with UTC and it happens in every timezone:
+
+```ts
+// before
+new Date(task.dueAt) < new Date()
+```
+
+`dueAt` is local midnight of the due day, so this goes true at **00:00 on the very day the task
+is due**. A task due today was flagged Overdue for the whole of today and pulled into the
+"Overdue" filter — while the pill immediately beside it correctly read today's date. The flag
+and the date disagreed with each other all day, every day.
+
+Now a calendar-day comparison through `toDateString`, the same helper the pill renders with, so
+the two can never disagree again. Checked across the boundary: due-yesterday overdue at 00:01,
+09:00 and 23:59; due-today overdue at none of them and overdue at 00:01 the next morning;
+due-tomorrow never; a completed task never, whatever its date.
+
+Commit: `Tasks: a task due today is not overdue`, branch `fix/web-task-due-date` off `main`,
+pushed, **unmerged**. `apps/web`: `tsc -b` clean, `vite build` clean. It is one function in
+`apps/web/src/pages/Tasks.tsx` and touches nothing else.
+
+## Session E — not started
+
+The Session E brief opens with: verify `mobile/session-bcd` is merged first, and if not, **STOP
+and report**. It is not merged — `origin/main` is at `7bc17e8` and all five session-BCD commits
+are still ahead of it. No Session E work was begun: no branch, no Part 0 extraction, no code.
+The phone gate in the section above is what unblocks it.

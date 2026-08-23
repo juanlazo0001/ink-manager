@@ -2,7 +2,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { shiftDateKey, todayKey } from '@/lib/studioTime';
+import { shiftDateKey, todayKey, zonedTimeToUtc } from '@/lib/studioTime';
 import { colors, hairline, radius, space, type } from '@/theme';
 
 /**
@@ -28,15 +28,20 @@ const DUE_CHOICES = [
 type DueKey = (typeof DUE_CHOICES)[number]['key'];
 
 /**
- * A date key → the UTC-midnight instant the API stores.
+ * A date key → the instant the API stores for it.
  *
- * `new Date("YYYY-MM-DD")` on a bare date string is the UTC-parsing form,
- * which is what makes this correct and NOT the local-getter form the
- * repo's rules warn about. It is the same value web's `parseDateString`
- * produces.
+ * Midnight IN THE STUDIO'S ZONE, not UTC midnight. Web writes this field
+ * as `parseDateString(value).toISOString()`, and `parseDateString` builds
+ * `new Date(y, m - 1, d)` — local midnight of the browser that created
+ * it. Writing UTC midnight instead (this function's first version) would
+ * put a mobile-created task a day earlier than web renders it for every
+ * studio behind UTC.
+ *
+ * Going through `zonedTimeToUtc` makes what this app writes byte-identical
+ * to what web writes from a browser sitting in the studio's own zone.
  */
-function dateKeyToDueAt(dateKey: string): string {
-  return new Date(dateKey).toISOString();
+function dateKeyToDueAt(dateKey: string, timeZone: string): string {
+  return zonedTimeToUtc(dateKey, '00:00', timeZone).toISOString();
 }
 
 export function NewTaskBar({
@@ -60,7 +65,10 @@ export function NewTaskBar({
   function submit() {
     if (!canAdd) return;
     const choice = DUE_CHOICES.find((c) => c.key === due)!;
-    const dueAt = choice.offset === null ? null : dateKeyToDueAt(shiftDateKey(todayKey(timeZone), choice.offset));
+    const dueAt =
+      choice.offset === null
+        ? null
+        : dateKeyToDueAt(shiftDateKey(todayKey(timeZone), choice.offset), timeZone);
     onCreate({ title: title.trim(), dueAt });
     setTitle('');
     setDue('none');

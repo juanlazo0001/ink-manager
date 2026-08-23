@@ -1,6 +1,6 @@
 import type { PersonalTask, SystemTask, TasksResponse } from '@ink-manager/shared-types';
 
-import { formatDateKey, shiftDateKey, todayKey } from './studioTime';
+import { civilDateKey, formatDateKey, shiftDateKey, todayKey } from './studioTime';
 
 /**
  * Which segments the Tasks tab shows, and what goes in each.
@@ -48,16 +48,27 @@ export function taskSegmentsFor(permissions: string[]): TaskSegmentDef[] {
 /**
  * The calendar date a task is due, as a `"YYYY-MM-DD"` key.
  *
- * `dueAt` is NOT an instant despite its ISO shape: it is a plain calendar
- * date stored at UTC midnight (web writes it with
- * `parseDateString(value).toISOString()`), which is one of the two
- * conventions this codebase uses on purpose. Slicing the date portion is
- * the documented way to read that convention back — reading it with local
- * `Date` getters re-interprets the UTC midnight in the viewer's own zone
- * and shows the wrong day for anyone west of UTC.
+ * `dueAt` is a due DATE, not an instant, but it is NOT stored at UTC
+ * midnight. Web writes it with `parseDateString(value).toISOString()`,
+ * and `parseDateString` builds `new Date(y, m - 1, d)` — LOCAL midnight
+ * of the browser that created it. So a task due 2026-08-25 is stored as:
+ *
+ *   New_York   2026-08-25T04:00:00.000Z
+ *   Berlin     2026-08-24T22:00:00.000Z
+ *   Tokyo      2026-08-24T15:00:00.000Z
+ *
+ * Which means `dueAt.slice(0, 10)` — this function's first version, and
+ * the reason for this comment — reads the right day only for a studio at
+ * or behind UTC, and is a day early for every European, Asian and Pacific
+ * studio.
+ *
+ * Resolving the instant in the STUDIO's zone gives the right day whenever
+ * the browser that wrote it was in the studio's zone, which is what staff
+ * at a studio actually are. It is also the same day web itself renders,
+ * since web reads back through the matching local `toDateString`.
  */
-export function dueDateKey(dueAt: string): string {
-  return dueAt.slice(0, 10);
+export function dueDateKey(dueAt: string, timeZone: string): string {
+  return civilDateKey(new Date(dueAt), timeZone);
 }
 
 /**
@@ -77,7 +88,7 @@ export function isOverdue(
   now: Date = new Date(),
 ): boolean {
   if (!task.dueAt || task.completedAt) return false;
-  return dueDateKey(task.dueAt) < todayKey(timeZone, now);
+  return dueDateKey(task.dueAt, timeZone) < todayKey(timeZone, now);
 }
 
 /**
@@ -85,7 +96,7 @@ export function isOverdue(
  * today. Same convention and same reasoning as `isOverdue` above.
  */
 export function dueLabel(dueAt: string, timeZone: string, now: Date = new Date()): string {
-  const key = dueDateKey(dueAt);
+  const key = dueDateKey(dueAt, timeZone);
   const today = todayKey(timeZone, now);
   if (key === today) return 'Today';
   if (key === shiftDateKey(today, 1)) return 'Tomorrow';
@@ -120,10 +131,12 @@ export function sortTasks(tasks: PersonalTask[], sort: TaskSort): PersonalTask[]
         if (!a.dueAt && !b.dueAt) return 0;
         if (!a.dueAt) return 1;
         if (!b.dueAt) return -1;
-        // Compared as date KEYS, not parsed instants -- dueAt is a
-        // calendar date at UTC midnight, and string order on
-        // "YYYY-MM-DD" is chronological order.
-        return dueDateKey(a.dueAt).localeCompare(dueDateKey(b.dueAt));
+        // The raw instants, compared as strings. Every dueAt is a
+        // UTC-normalised ISO-8601 string, so lexical order IS chronological
+        // order — and unlike the display helpers above, ORDERING two due
+        // dates needs no timezone at all: whichever instant is earlier is
+        // the earlier day in every zone.
+        return a.dueAt.localeCompare(b.dueAt);
       });
     case 'name':
       return out.sort((a, b) => a.title.localeCompare(b.title));
