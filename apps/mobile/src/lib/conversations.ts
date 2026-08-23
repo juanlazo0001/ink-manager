@@ -86,6 +86,12 @@ export interface SendOptions {
   channel?: ClientChannel;
   /** CLIENT threads only. */
   direction?: MessageDirection;
+  /**
+   * Cloudinary URLs, already uploaded. The API takes `attachments` on
+   * send (`SendMessageRequest`) and requires either a body or a non-empty
+   * attachments array -- so an image with no caption is a valid send.
+   */
+  attachments?: string[];
 }
 
 /**
@@ -103,6 +109,9 @@ export function sendMessage(token: string, conversationId: string, options: Send
     body: options.body,
     ...(options.channel ? { channel: options.channel } : {}),
     ...(options.direction ? { direction: options.direction } : {}),
+    ...(options.attachments && options.attachments.length > 0
+      ? { attachments: options.attachments }
+      : {}),
   };
 
   return apiFetch<Message>(`/conversations/${encodeURIComponent(conversationId)}/messages`, {

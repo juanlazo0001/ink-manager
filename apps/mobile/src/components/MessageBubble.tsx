@@ -1,4 +1,5 @@
 import Feather from '@expo/vector-icons/Feather';
+import { Image } from 'expo-image';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { channelLabel } from '@/components/ConversationRow';
@@ -6,12 +7,27 @@ import type { DisplayMessage } from '@/lib/threadRows';
 import { channelColor, colors, hairline, radius, space, type } from '@/theme';
 import { timeOfDay } from '@/lib/time';
 
+/**
+ * Is this attachment something we can show inline?
+ *
+ * Chat attachments go through Cloudinary's `image/upload` endpoint (the
+ * same `/uploads/signature` apps/web's composer uses), so outbound ones
+ * are always images. Inbound attachments arrive from whatever the client
+ * sent over SMS/Email and are not guaranteed to be, so anything that
+ * doesn't look like an image keeps the plain paperclip note rather than
+ * rendering a broken frame.
+ */
+function isImageUrl(url: string): boolean {
+  return /\.(jpe?g|png|gif|webp|avif|heic|bmp)(\?|$)/i.test(url) || /\/image\/upload\//.test(url);
+}
+
 export function MessageBubble({
   message,
   own,
   showMeta,
   showAuthor,
   onRetry,
+  onOpenImage,
 }: {
   message: DisplayMessage;
   own: boolean;
@@ -20,10 +36,16 @@ export function MessageBubble({
   /** GROUP threads only: whose message this is, when it isn't the viewer's. */
   showAuthor: boolean;
   onRetry?: () => void;
+  /** Opens the full-screen viewer on the tapped image. */
+  onOpenImage?: (urls: string[], index: number) => void;
 }) {
   const failed = message.status === 'failed';
   const pending = message.status === 'pending';
   const authorName = message.author?.name ?? message.author?.email ?? null;
+
+  const attachments = message.attachments ?? [];
+  const images = attachments.filter(isImageUrl);
+  const others = attachments.filter((url) => !isImageUrl(url));
 
   return (
     <View style={[styles.wrap, own ? styles.wrapOwn : styles.wrapTheirs]}>
@@ -43,11 +65,32 @@ export function MessageBubble({
           <Text style={[styles.body, own ? styles.bodyOwn : styles.bodyTheirs]}>{message.body}</Text>
         ) : null}
 
-        {message.attachments && message.attachments.length > 0 ? (
+        {images.length > 0 ? (
+          <View style={[styles.images, message.body ? styles.imagesAfterText : null]}>
+            {images.map((url, index) => (
+              <Pressable
+                key={url}
+                onPress={() => onOpenImage?.(images, index)}
+                accessibilityRole="button"
+                accessibilityLabel={`Attached image ${index + 1} of ${images.length}. Opens full screen.`}
+                style={({ pressed }) => [
+                  styles.imageWrap,
+                  // One image gets the full bubble width; several tile.
+                  images.length === 1 ? styles.imageSolo : styles.imageTiled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Image source={{ uri: url }} style={styles.image} contentFit="cover" transition={140} />
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
+        {others.length > 0 ? (
           <View style={styles.attachmentNote}>
             <Feather name="paperclip" size={12} color={own ? colors.accentFg : colors.fgMuted} />
             <Text style={[styles.attachmentLabel, own ? styles.bodyOwn : styles.bodyTheirs]}>
-              {message.attachments.length} attachment{message.attachments.length === 1 ? '' : 's'}
+              {others.length} attachment{others.length === 1 ? '' : 's'}
             </Text>
           </View>
         ) : null}
@@ -102,6 +145,13 @@ const styles = StyleSheet.create({
   body: { ...type.message },
   bodyOwn: { color: colors.accentFg },
   bodyTheirs: { color: colors.fg },
+
+  images: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs },
+  imagesAfterText: { marginTop: space.sm },
+  imageWrap: { borderRadius: radius.input, overflow: 'hidden', backgroundColor: colors.surfaceInset },
+  imageSolo: { width: 220, height: 220 },
+  imageTiled: { width: 104, height: 104 },
+  image: { width: '100%', height: '100%' },
 
   attachmentNote: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.xs },
   attachmentLabel: { ...type.small },

@@ -1,4 +1,5 @@
 import type { ConversationListItem } from '@ink-manager/shared-types';
+import Feather from '@expo/vector-icons/Feather';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar, initialsOf } from '@/components/Avatar';
@@ -56,9 +57,14 @@ export function ConversationRow({ item, onPress }: { item: ConversationListItem;
   const name = item.counterpart?.name ?? 'Unknown';
   const unread = item.unreadCount > 0;
   const preview = item.lastMessage?.body?.trim();
-  // An attachment-only message has an empty body — saying "No messages
-  // yet" there would be wrong, so the two cases are distinguished.
-  const previewText = preview || (item.lastMessage ? 'Attachment' : 'No messages yet');
+  // An attachment-only message has an empty body, and that is the ONLY
+  // signal either client has: `GET /conversations` projects lastMessage as
+  // body/channel/direction/createdAt with no attachment field at all. Web
+  // reads it exactly the same way (`{body || '📷 Image'}`), so an empty
+  // body means "an image" on both. Mobile draws the same idea with the
+  // Feather glyph every other icon in this app uses instead of the emoji.
+  const isImageOnly = !!item.lastMessage && !preview;
+  const previewText = preview || (item.lastMessage ? 'Image' : 'No messages yet');
 
   return (
     <Pressable
@@ -90,6 +96,10 @@ export function ConversationRow({ item, onPress }: { item: ConversationListItem;
 
         <Text style={[styles.preview, unread && styles.previewUnread]} numberOfLines={2}>
           {previewPrefix(item)}
+          {isImageOnly ? (
+            <Feather name="image" size={12} color={unread ? colors.fg : colors.fgMuted} />
+          ) : null}
+          {isImageOnly ? ' ' : ''}
           {previewText}
         </Text>
 

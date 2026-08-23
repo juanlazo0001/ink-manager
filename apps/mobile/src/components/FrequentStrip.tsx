@@ -1,4 +1,4 @@
-import { ConversationType, type ConversationListItem } from '@ink-manager/shared-types';
+import type { ConversationListItem } from '@ink-manager/shared-types';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar, initialsOf } from '@/components/Avatar';
@@ -7,7 +7,7 @@ import { Eyebrow } from '@/components/editorial';
 import { colors, hairline, radius, space, type } from '@/theme';
 
 /**
- * The frequent strip: the five most recently active CLIENT threads, as a
+ * The frequent strip: the five most recently active threads, as a
  * horizontal row of faces above the list.
  *
  * A mobile-first addition — web has no counterpart, and the owner approved
@@ -15,10 +15,10 @@ import { colors, hairline, radius, space, type } from '@/theme';
  * look: the app's eyebrow above it, the app's avatar treatment, the app's
  * channel swatch.
  *
- * CLIENT threads only, deliberately. Staff threads are colleagues an
- * artist reaches constantly and already knows by name — putting them here
- * would fill the strip with the same four faces every day and bury the
- * clients, who are the ones this is for.
+ * ANY thread type, per the owner's amended spec. Session H shipped this
+ * client-only on the reasoning that staff faces would crowd out clients;
+ * the owner's decision is that the strip should simply follow recent
+ * activity, whoever it is with, so the type filter is gone.
  *
  * "Most recently active" is `lastMessageAt` descending, which is the order
  * `GET /conversations` already returns — so this takes the first five
@@ -27,15 +27,26 @@ import { colors, hairline, radius, space, type } from '@/theme';
  */
 export const FREQUENT_COUNT = 5;
 
+/**
+ * Below this the strip hides entirely: a two-face "frequent" row is noise
+ * next to a list that already shows those same two threads.
+ */
+export const FREQUENT_MIN = 3;
+
 export function frequentThreads(items: ConversationListItem[]): ConversationListItem[] {
-  return items
-    .filter((item) => item.type === ConversationType.CLIENT && item.lastMessageAt !== null)
-    .slice(0, FREQUENT_COUNT);
+  return items.filter((item) => item.lastMessageAt !== null).slice(0, FREQUENT_COUNT);
 }
 
-/** First name only — the strip is 64pt wide per face and a surname will not fit. */
+/**
+ * A name that fits under a 64pt face.
+ *
+ * GROUP threads name every other participant, comma-separated ("Ana Ruiz,
+ * Bo Lang"), so the comma is cut before the first word is taken —
+ * otherwise the label reads "Ana,".
+ */
 export function firstName(name: string): string {
-  return name.trim().split(/\s+/)[0] || name;
+  const head = name.split(',')[0].trim();
+  return head.split(/\s+/)[0] || name;
 }
 
 export function FrequentStrip({
@@ -46,9 +57,9 @@ export function FrequentStrip({
   onOpen: (id: string) => void;
 }) {
   const frequent = frequentThreads(items);
-  // Nothing to show is not an empty state worth drawing — the list below
-  // already says the inbox is quiet.
-  if (frequent.length === 0) return null;
+  // Too few to be worth a section of its own — the list below already
+  // shows exactly these threads, in the same order.
+  if (frequent.length < FREQUENT_MIN) return null;
 
   return (
     <View style={styles.wrap}>
@@ -82,6 +93,10 @@ export function FrequentStrip({
                   labelStyle={styles.initials}
                 />
                 {item.lastMessage ? <ChannelAvatarBadge channel={item.lastMessage.channel} /> : null}
+                {/* Unread reads twice here: the gold ring (the same signal
+                    the list row uses) and this dot, which stays legible
+                    when a photo behind the ring is itself gold-ish. */}
+                {unread ? <View style={styles.unreadDot} /> : null}
               </View>
               <Text style={[styles.name, unread && styles.nameUnread]} numberOfLines={1}>
                 {firstName(name)}
@@ -109,6 +124,18 @@ const styles = StyleSheet.create({
   item: { width: 64, alignItems: 'center', gap: space.sm },
   avatarWrap: { width: 52, height: 52 },
   initials: { ...type.label, fontSize: 15, color: colors.fgMuted },
+
+  unreadDot: {
+    position: 'absolute',
+    top: -1,
+    right: -1,
+    width: 12,
+    height: 12,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accent,
+    borderWidth: 2,
+    borderColor: colors.bg,
+  },
 
   name: { ...type.meta, color: colors.fgSecondary, textAlign: 'center' },
   nameUnread: { color: colors.fg },

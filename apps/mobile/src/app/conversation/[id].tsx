@@ -19,6 +19,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Composer, type ComposerSendState } from '@/components/Composer';
+import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
 import { channelLabel } from '@/components/ConversationRow';
 import { MessageBubble } from '@/components/MessageBubble';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -59,6 +60,9 @@ export default function ConversationScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [sending, setSending] = useState(false);
+  // Lifted out of the bubble so the viewer can page across every image in
+  // the tapped message, the way web's lightbox does.
+  const [lightbox, setLightbox] = useState<{ images: ViewerImage[]; index: number } | null>(null);
   const [unavailableChannels, setUnavailableChannels] = useState<Set<string>>(new Set());
   const [sendState, setSendState] = useState<ComposerSendState>({ channel: 'SMS', direction: 'OUTBOUND' });
 
@@ -179,7 +183,7 @@ export default function ConversationScreen() {
   useEffect(() => () => void ++requestRef.current, []);
 
   const doSend = useCallback(
-    async (body: string, retryOf?: DisplayMessage) => {
+    async (body: string, attachments: string[] = [], retryOf?: DisplayMessage) => {
       if (!token || !id) return;
 
       const tempId = retryOf?.id ?? `local:${Date.now()}:${Math.random().toString(36).slice(2)}`;
@@ -188,7 +192,9 @@ export default function ConversationScreen() {
         channel: isClientThread ? sendState.channel : 'IN_APP',
         direction: isClientThread ? sendState.direction : 'OUTBOUND',
         body,
-        attachments: null,
+        // Already-uploaded Cloudinary URLs, so the optimistic bubble shows
+        // the real images immediately rather than a placeholder.
+        attachments: attachments.length > 0 ? attachments : null,
         metadata: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -212,6 +218,7 @@ export default function ConversationScreen() {
       try {
         const created = await sendMessage(token, id, {
           body,
+          ...(attachments.length > 0 ? { attachments } : {}),
           ...(isClientThread ? { channel: sendState.channel, direction: sendState.direction } : {}),
         });
         pendingRef.current.delete(tempId);
@@ -305,7 +312,10 @@ export default function ConversationScreen() {
                 own={item.own}
                 showMeta={item.showMeta}
                 showAuthor={item.showAuthor}
-                onRetry={() => doSend(item.message.body, item.message)}
+                onRetry={() => doSend(item.message.body, item.message.attachments ?? [], item.message)}
+                onOpenImage={(urls, index) =>
+                  setLightbox({ images: urls.map((url) => ({ url })), index })
+                }
               />
             )
           }
@@ -347,10 +357,18 @@ export default function ConversationScreen() {
           onChangeSendState={setSendState}
           unavailableChannels={unavailableChannels}
           canSendLive={canSendLive}
-          onSend={(body) => doSend(body)}
+          onSend={(body, attachments) => doSend(body, attachments)}
           sending={sending}
+          token={token}
         />
       </KeyboardAvoidingView>
+
+      <PhotoViewer
+        images={lightbox?.images ?? []}
+        initialIndex={lightbox?.index ?? 0}
+        visible={!!lightbox}
+        onClose={() => setLightbox(null)}
+      />
     </SafeAreaView>
   );
 }

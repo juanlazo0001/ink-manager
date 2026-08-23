@@ -1,6 +1,6 @@
 import Feather from '@expo/vector-icons/Feather';
 import { Image } from 'expo-image';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -53,6 +53,27 @@ export function PhotoViewer({
    */
   const insets = useSafeAreaInsets();
   const [index, setIndex] = useState(initialIndex);
+  const scrollRef = useRef<ScrollView>(null);
+
+  /*
+   * Re-sync on every open, because this component does NOT unmount
+   * between openings -- every call site renders it permanently and just
+   * toggles `visible`. `useState(initialIndex)` therefore captured the
+   * FIRST value only: opening the third image showed "1 / 3" while the
+   * pager sat elsewhere. Latent in the flash gallery and inquiry screens
+   * for as long as they have used this, and surfaced by chat, where a
+   * message routinely carries several images.
+   *
+   * `scrollTo` as well as `contentOffset`: contentOffset positions a
+   * freshly-mounted ScrollView on iOS, but react-native-web ignores it
+   * (proven in the preview -- tapping image 2 of 3 opened image 1), and
+   * the ScrollView does not remount when only `visible` changes.
+   */
+  useEffect(() => {
+    if (!visible) return;
+    setIndex(initialIndex);
+    scrollRef.current?.scrollTo({ x: initialIndex * width, y: 0, animated: false });
+  }, [visible, initialIndex, width]);
 
   if (images.length === 0) return null;
   const current = images[Math.min(index, images.length - 1)];
@@ -77,6 +98,7 @@ export function PhotoViewer({
           </View>
 
           <ScrollView
+            ref={scrollRef}
             horizontal
             pagingEnabled
             showsHorizontalScrollIndicator={false}

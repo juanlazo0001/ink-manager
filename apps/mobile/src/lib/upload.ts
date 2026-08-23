@@ -34,6 +34,11 @@ export interface UploadSignature {
 export const SIGNATURE_ENDPOINTS = {
   portfolio: '/uploads/portfolio-signature',
   flash: '/uploads/flash-piece-signature',
+  // Chat attachments. apps/web's composer uploads through
+  // `uploadImageToCloudinary`, which is this same generic
+  // `/uploads/signature` (the inquiry folder) -- so mobile reuses the
+  // endpoint web already uses for exactly this, rather than adding one.
+  chat: '/uploads/signature',
 } as const;
 
 export type UploadPurpose = keyof typeof SIGNATURE_ENDPOINTS;
@@ -44,6 +49,15 @@ export type UploadStatus =
   | { state: 'uploading' }
   | { state: 'done'; url: string }
   | { state: 'failed'; message: string };
+
+/** Asks for camera access. Returns false when the person says no. */
+export async function ensureCameraPermission(): Promise<boolean> {
+  const current = await ImagePicker.getCameraPermissionsAsync();
+  if (current.granted) return true;
+  if (!current.canAskAgain) return false;
+  const asked = await ImagePicker.requestCameraPermissionsAsync();
+  return asked.granted;
+}
 
 /** Asks for library access. Returns false when the person says no. */
 export async function ensureLibraryPermission(): Promise<boolean> {
@@ -88,6 +102,81 @@ export async function pickImage(options: { forAvatar?: boolean } = {}): Promise<
     fileName: asset.fileName ?? `upload-${Date.now()}.jpg`,
     base64: asset.base64 ?? undefined,
   };
+}
+
+/**
+ * Camera capture. Same shape as `pickImage`, so callers can treat the two
+ * sources identically -- expo-image-picker returns the same asset type
+ * from both, which is why adding capture costs almost nothing here.
+ */
+export async function captureImage(): Promise<PickedImage | null> {
+  const result = await ImagePicker.launchCameraAsync({
+    mediaTypes: ['images'],
+    quality: 0.85,
+  });
+  if (result.canceled || result.assets.length === 0) return null;
+  const asset = result.assets[0];
+  return {
+    uri: asset.uri,
+    mimeType: asset.mimeType ?? 'image/jpeg',
+    fileName: asset.fileName ?? `capture-${Date.now()}.jpg`,
+    base64: asset.base64 ?? undefined,
+  };
+}
+
+/**
+ * The same Cloudinary upload as `uploadToCloudinary`, but reporting
+ * progress.
+ *
+ * XMLHttpRequest rather than `fetch`: RN's fetch exposes no upload
+ * progress at all, and a chat attachment is the one upload in this app
+ * where the person is waiting on it before they can send. React Native
+ * implements `xhr.upload.onprogress`, so this is a platform feature, not
+ * a polyfill.
+ *
+ * Returns the same `secure_url` string, so callers are interchangeable.
+ */
+export function uploadToCloudinaryWithProgress(
+  signature: UploadSignature,
+  image: PickedImage,
+  onProgress: (fraction: number) => void,
+): { promise: Promise<string>; cancel: () => void } {
+  const form = new FormData();
+  form.append('file', { uri: image.uri, name: image.fileName, type: image.mimeType } as unknown as Blob);
+  form.append('api_key', signature.apiKey);
+  form.append('timestamp', String(signature.timestamp));
+  form.append('signature', signature.signature);
+  form.append('folder', signature.folder);
+
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise<string>((resolve, reject) => {
+    xhr.open('POST', `https://api.cloudinary.com/v1_1/${signature.cloudName}/image/upload`);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) onProgress(event.loaded / event.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve((JSON.parse(xhr.responseText) as { secure_url: string }).secure_url);
+        } catch {
+          reject(new Error('Upload succeeded but the response could not be read.'));
+        }
+        return;
+      }
+      let message = 'Image upload failed.';
+      try {
+        message = (JSON.parse(xhr.responseText) as { error?: { message?: string } }).error?.message ?? message;
+      } catch {
+        // Cloudinary answered with something that isn't JSON; keep the generic message.
+      }
+      reject(new Error(message));
+    };
+    xhr.onerror = () => reject(new Error("Couldn't reach the image service. Check your connection."));
+    xhr.onabort = () => reject(new Error('Upload cancelled.'));
+    xhr.send(form as unknown as Document);
+  });
+
+  return { promise, cancel: () => xhr.abort() };
 }
 
 /**

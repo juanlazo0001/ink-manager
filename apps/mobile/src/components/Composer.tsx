@@ -1,10 +1,13 @@
 import { CLIENT_CHANNELS, type ClientChannel, type MessageDirection } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
 import { useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { AttachmentTray } from '@/components/AttachmentTray';
 import { channelLabel } from '@/components/ConversationRow';
 import { Eyebrow } from '@/components/ui';
+import { useAttachments } from '@/hooks/useAttachments';
+import { captureImage, ensureCameraPermission, ensureLibraryPermission, pickImage } from '@/lib/upload';
 import { channelColor, colors, hairline, radius, space, type } from '@/theme';
 
 export interface ComposerSendState {
@@ -24,6 +27,12 @@ export interface ComposerSendState {
  * connected integration is an actual message to an actual person. That is
  * why the strip above the input always states, in plain words, whether
  * this send will leave the building or only be written down.
+ *
+ * Attachments upload as soon as they are picked, not on send -- see
+ * `useAttachments`. The API accepts `attachments` (Cloudinary URLs) on
+ * `POST /conversations/:id/messages` and requires either a body or a
+ * non-empty attachments array, so an image with no caption is a valid
+ * send and the send control enables on either.
  */
 export function Composer({
   isClientThread,
@@ -36,20 +45,29 @@ export function Composer({
   onSend,
   sending,
   disabled,
+  token,
 }: {
   isClientThread: boolean;
   sendState: ComposerSendState;
   onChangeSendState: (next: ComposerSendState) => void;
   unavailableChannels: Set<string>;
   canSendLive: boolean;
-  onSend: (body: string) => void;
+  onSend: (body: string, attachments: string[]) => void;
   sending: boolean;
   disabled?: boolean;
+  /** Bearer token for fetching per-upload Cloudinary signatures. */
+  token: string | null;
 }) {
   const [body, setBody] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const attachments = useAttachments(token);
 
-  const canSubmit = body.trim().length > 0 && !sending && !disabled;
+  // Either a caption or a finished image is enough to send, mirroring the
+  // API's own rule. Still uploading blocks send: the URL does not exist
+  // yet, so there would be nothing to reference.
+  const hasContent = body.trim().length > 0 || attachments.uploadedUrls.length > 0;
+  const canSubmit = hasContent && !sending && !disabled && !attachments.busy;
 
   const wouldSendLive =
     isClientThread &&
@@ -60,8 +78,29 @@ export function Composer({
 
   function submit() {
     if (!canSubmit) return;
-    onSend(body.trim());
+    onSend(body.trim(), attachments.uploadedUrls);
     setBody('');
+    attachments.clear();
+  }
+
+  async function addFromLibrary() {
+    setSourceOpen(false);
+    if (!(await ensureLibraryPermission())) {
+      Alert.alert('Photos access needed', 'Allow photo access in Settings to attach an image.');
+      return;
+    }
+    const image = await pickImage();
+    if (image) attachments.add(image);
+  }
+
+  async function addFromCamera() {
+    setSourceOpen(false);
+    if (!(await ensureCameraPermission())) {
+      Alert.alert('Camera access needed', 'Allow camera access in Settings to take a photo.');
+      return;
+    }
+    const image = await captureImage();
+    if (image) attachments.add(image);
   }
 
   return (
@@ -85,7 +124,18 @@ export function Composer({
         </Pressable>
       ) : null}
 
+      <AttachmentTray items={attachments.items} onRetry={attachments.retry} onRemove={attachments.remove} />
+
       <View style={styles.inputRow}>
+        <Pressable
+          onPress={() => setSourceOpen(true)}
+          disabled={disabled}
+          accessibilityRole="button"
+          accessibilityLabel="Attach an image"
+          style={({ pressed }) => [styles.attach, pressed && styles.pressed]}
+        >
+          <Feather name="paperclip" size={20} color={disabled ? colors.fgMuted : colors.fgSecondary} />
+        </Pressable>
         <TextInput
           style={styles.input}
           value={body}
@@ -110,6 +160,28 @@ export function Composer({
           <Feather name="arrow-up" size={20} color={canSubmit ? colors.accentFg : colors.fgMuted} />
         </Pressable>
       </View>
+
+      <Modal visible={sourceOpen} transparent animationType="slide" onRequestClose={() => setSourceOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setSourceOpen(false)}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <Eyebrow style={styles.sheetEyebrow}>Attach</Eyebrow>
+
+            <Pressable onPress={addFromLibrary} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
+              <Feather name="image" size={16} color={colors.fgSecondary} />
+              <Text style={styles.optionLabel}>Photo library</Text>
+            </Pressable>
+
+            <Pressable onPress={addFromCamera} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
+              <Feather name="camera" size={16} color={colors.fgSecondary} />
+              <Text style={styles.optionLabel}>Take photo</Text>
+            </Pressable>
+
+            <Pressable onPress={() => setSourceOpen(false)} style={styles.done}>
+              <Text style={styles.doneLabel}>CANCEL</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal visible={pickerOpen} transparent animationType="slide" onRequestClose={() => setPickerOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setPickerOpen(false)}>
@@ -204,6 +276,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingTop: space.sm + 2,
     paddingBottom: space.sm + 2,
+  },
+  attach: {
+    width: 40,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   send: {
     width: 44,
