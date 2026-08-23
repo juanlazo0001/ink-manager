@@ -1,7 +1,9 @@
 import type { ConversationListItem } from '@ink-manager/shared-types';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { channelColor, colors, hairline, radius, space, type } from '@/theme';
+import { Avatar, initialsOf } from '@/components/Avatar';
+import { ChannelSwatch } from '@/components/ChannelSwatch';
+import { colors, hairline, radius, space, type } from '@/theme';
 import { relativeStamp } from '@/lib/time';
 
 const CHANNEL_LABELS: Record<string, string> = {
@@ -18,12 +20,37 @@ export function channelLabel(channel: string): string {
   return CHANNEL_LABELS[channel] ?? channel;
 }
 
-function initials(name: string): string {
-  const parts = name.split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+/**
+ * Who spoke last, when that can honestly be said.
+ *
+ * This used to print "You: " for `direction === 'OUTBOUND'`, which is
+ * wrong twice over:
+ *
+ *  1. `MessageDirection` separates the STUDIO from the CLIENT, not the
+ *     viewer from everyone else. On a client thread an OUTBOUND message
+ *     may well have been written by a colleague -- the API's own summary
+ *     helper spells this out: `direction === INBOUND ? "Client" : "Studio"`.
+ *  2. On STAFF and GROUP threads it is a constant. The API rejects any
+ *     other value outright -- "Staff conversations only support OUTBOUND
+ *     direction" (conversations.ts) -- so EVERY row on those threads said
+ *     "You:", whoever wrote the message. That is the reported symptom.
+ *
+ * The honest prefix needs the message's author, and `GET /conversations`
+ * does not return one: its `lastMessage` projection is body, channel,
+ * direction and createdAt, nothing more. Rather than invent an API field,
+ * this says only what the data supports -- "Studio: " where the studio
+ * spoke on a client thread, and nothing at all on staff threads, where
+ * direction carries no information.
+ *
+ * apps/web has the identical bug on the same line, still unfixed.
+ */
+function previewPrefix(item: ConversationListItem): string {
+  if (!item.lastMessage) return '';
+  // Constant on these, so it can distinguish nobody.
+  if (item.type !== 'CLIENT') return '';
+  return item.lastMessage.direction === 'OUTBOUND' ? 'Studio: ' : '';
 }
+
 
 export function ConversationRow({ item, onPress }: { item: ConversationListItem; onPress: () => void }) {
   const name = item.counterpart?.name ?? 'Unknown';
@@ -40,9 +67,18 @@ export function ConversationRow({ item, onPress }: { item: ConversationListItem;
       accessibilityLabel={`${name}${unread ? `, ${item.unreadCount} unread` : ''}`}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
-      <View style={[styles.avatar, unread && styles.avatarUnread]}>
-        <Text style={[styles.avatarLabel, unread && styles.avatarLabelUnread]}>{initials(name)}</Text>
-      </View>
+      {/* The counterpart's own photo, for every thread type -- which is
+          what web does: ProgressRingAvatar takes counterpart.avatarUrl on
+          CLIENT, STAFF and GROUP alike and falls back to initials. Mobile
+          had only ever drawn initials. */}
+      <Avatar
+        url={item.counterpart?.avatarUrl}
+        initials={initialsOf(name)}
+        size={42}
+        ring={unread ? colors.accent : undefined}
+        style={styles.avatar}
+        labelStyle={[styles.avatarLabel, unread && styles.avatarLabelUnread]}
+      />
 
       <View style={styles.middle}>
         <View style={styles.topLine}>
@@ -53,16 +89,14 @@ export function ConversationRow({ item, onPress }: { item: ConversationListItem;
         </View>
 
         <Text style={[styles.preview, unread && styles.previewUnread]} numberOfLines={2}>
-          {/* An inbound message is what the client said; marking it makes
-              a two-line preview readable without opening the thread. */}
-          {item.lastMessage?.direction === 'OUTBOUND' ? 'You: ' : ''}
+          {previewPrefix(item)}
           {previewText}
         </Text>
 
         <View style={styles.metaLine}>
           {item.lastMessage ? (
             <View style={styles.channel}>
-              <View style={[styles.channelDot, { backgroundColor: channelColor(item.lastMessage.channel) }]} />
+              <ChannelSwatch channel={item.lastMessage.channel} />
               <Text style={styles.channelLabel}>{channelLabel(item.lastMessage.channel).toUpperCase()}</Text>
             </View>
           ) : (
@@ -95,18 +129,7 @@ const styles = StyleSheet.create({
   },
   pressed: { backgroundColor: colors.surface },
 
-  avatar: {
-    width: 42,
-    height: 42,
-    borderRadius: radius.pill,
-    borderWidth: hairline,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 2,
-  },
-  avatarUnread: { borderColor: colors.accent },
+  avatar: { marginTop: 2 },
   avatarLabel: { ...type.label, fontSize: 13, color: colors.fgMuted },
   avatarLabelUnread: { color: colors.accent },
 
@@ -121,7 +144,6 @@ const styles = StyleSheet.create({
 
   metaLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 },
   channel: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
-  channelDot: { width: 6, height: 6, borderRadius: radius.pill },
   channelLabel: { ...type.label, color: colors.fgMuted },
 
   unreadBadge: {

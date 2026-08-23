@@ -5,6 +5,7 @@ import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from '
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { NewTaskBar } from '@/components/NewTaskBar';
+import { Pill, PillRow } from '@/components/Pill';
 import { TopBar } from '@/components/TopBar';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { PersonalTaskRow, SystemTaskRow } from '@/components/TaskRow';
@@ -255,31 +256,22 @@ export default function TasksScreen() {
       {/* Not shown on QUEUE: system tasks are computed, have no title to
           sort by and no due date to be late against. */}
       {segment !== 'queue' ? (
-        <View style={styles.controls}>
-          <Pressable
+        <PillRow style={styles.controls}>
+          <Pill
+            label="Overdue"
+            tone="alert"
+            selected={overdueOnly}
             onPress={() => setOverdueOnly((v) => !v)}
-            accessibilityRole="button"
-            accessibilityState={{ selected: overdueOnly }}
-            style={({ pressed }) => [styles.chip, overdueOnly && styles.chipOverdue, pressed && styles.pressed]}
-          >
-            <Text style={[styles.chipLabel, overdueOnly && styles.chipLabelOverdue]}>OVERDUE</Text>
-          </Pressable>
-          <View style={styles.controlsSpacer} />
-          {TASK_SORTS.map((option) => {
-            const on = option.key === sort;
-            return (
-              <Pressable
-                key={option.key}
-                onPress={() => setSort(option.key)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: on }}
-                style={({ pressed }) => [styles.chip, on && styles.chipOn, pressed && styles.pressed]}
-              >
-                <Text style={[styles.chipLabel, on && styles.chipLabelOn]}>{option.label.toUpperCase()}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+          />
+          {TASK_SORTS.map((option) => (
+            <Pill
+              key={option.key}
+              label={option.label}
+              selected={option.key === sort}
+              onPress={() => setSort(option.key)}
+            />
+          ))}
+        </PillRow>
       ) : null}
 
       {data === null && error === null ? (
@@ -379,26 +371,6 @@ const styles = StyleSheet.create({
   sectionRule: { flex: 1, height: hairline, backgroundColor: colors.borderSoft },
   sectionLabel: { ...type.label, color: colors.fgMuted },
 
-  controls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    paddingHorizontal: space.lg,
-    paddingBottom: space.md,
-  },
-  controlsSpacer: { flex: 1 },
-  chip: {
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.md,
-    paddingVertical: 4,
-  },
-  chipOn: { borderColor: colors.accent, backgroundColor: colors.surfaceRaised },
-  // The one place red belongs on this screen: lateness is the alert.
-  chipOverdue: { borderColor: colors.dangerStrong },
-  chipLabel: { ...type.label, fontSize: 9, color: colors.fgMuted },
-  chipLabelOn: { color: colors.accent },
-  chipLabelOverdue: { color: colors.danger },
+  controls: { paddingBottom: space.md },
   pressed: { opacity: 0.6 },
 });

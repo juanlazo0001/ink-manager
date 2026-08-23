@@ -5,6 +5,7 @@ import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ConversationRow } from '@/components/ConversationRow';
+import { FrequentStrip } from '@/components/FrequentStrip';
 import { TopBar } from '@/components/TopBar';
 import { ThreadListControls } from '@/components/ThreadListControls';
 import { ScreenLoading, StateMessage } from '@/components/ui';
@@ -137,6 +138,21 @@ export default function ConversationsScreen() {
       ) : (
         <FlatList
           data={visible}
+          // The strip scrolls WITH the list rather than pinning above it:
+          // it is a shortcut, not chrome, and a phone screen has no room
+          // to spend five permanent rows on one. Search and the filter
+          // pills stay pinned above, unchanged.
+          ListHeaderComponent={
+            // Hidden while a search or filter is narrowing the list --
+            // "frequent" is about the whole inbox, and showing it beside
+            // filtered results would suggest it had been filtered too.
+            activeSearch || filter !== 'all' ? null : (
+              <FrequentStrip
+                items={items ?? []}
+                onOpen={(id) => router.push({ pathname: '/conversation/[id]', params: { id } })}
+              />
+            )
+          }
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <ConversationRow

@@ -1,6 +1,7 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet } from 'react-native';
 
-import { colors, hairline, radius, space, type } from '@/theme';
+import { Pill } from '@/components/Pill';
+import { space } from '@/theme';
 
 export interface Segment<T extends string> {
   key: T;
@@ -43,27 +44,15 @@ export function SegmentedControl<T extends string>({
       contentContainerStyle={styles.stripContent}
       accessibilityRole="tablist"
     >
-      {segments.map((segment) => {
-        const active = segment.key === value;
-        return (
-          <Pressable
-            key={segment.key}
-            onPress={() => onChange(segment.key)}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: active }}
-            style={({ pressed }) => [styles.segment, active && styles.segmentActive, pressed && styles.pressed]}
-          >
-            <Text style={[styles.label, active && styles.labelActive]}>{segment.label}</Text>
-            {segment.count ? (
-              <View style={[styles.badge, active && styles.badgeActive]}>
-                <Text style={[styles.badgeLabel, active && styles.badgeLabelActive]}>
-                  {segment.count > 99 ? '99+' : segment.count}
-                </Text>
-              </View>
-            ) : null}
-          </Pressable>
-        );
-      })}
+      {segments.map((segment) => (
+        <Pill
+          key={segment.key}
+          label={segment.label}
+          count={segment.count}
+          selected={segment.key === value}
+          onPress={() => onChange(segment.key)}
+        />
+      ))}
     </ScrollView>
   );
 }
@@ -73,35 +62,10 @@ const styles = StyleSheet.create({
   stripContent: {
     flexDirection: 'row',
     // Centred rather than stretched, so a segment is only ever as tall as
-    // its own content.
+    // its own content. See the note on the ScrollView above.
     alignItems: 'center',
     paddingHorizontal: space.lg,
     paddingTop: space.md,
-    gap: space.xs,
+    gap: space.sm,
   },
-  segment: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.xs,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    borderRadius: radius.pill,
-    borderWidth: hairline,
-    borderColor: colors.border,
-  },
-  segmentActive: { borderColor: colors.accent, backgroundColor: colors.surface },
-  pressed: { opacity: 0.6 },
-  label: { ...type.label, color: colors.fgMuted },
-  labelActive: { color: colors.accent },
-  badge: {
-    minWidth: 18,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceRaised,
-    alignItems: 'center',
-  },
-  badgeActive: { backgroundColor: colors.accent },
-  badgeLabel: { ...type.label, fontSize: 10, color: colors.fgMuted },
-  badgeLabelActive: { color: colors.accentFg },
 });

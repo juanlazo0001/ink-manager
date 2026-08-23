@@ -2,7 +2,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { Image } from 'expo-image';
 import { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, hairline, radius, space, type } from '@/theme';
 
@@ -34,6 +34,24 @@ export function PhotoViewer({
   onClose: () => void;
 }) {
   const { width, height } = useWindowDimensions();
+  /*
+   * Insets read HERE, in the app's own tree, and applied as padding --
+   * not via <SafeAreaView> inside the <Modal>.
+   *
+   * The chrome already sat inside a SafeAreaView, which is why this looked
+   * handled. It is not: a RN <Modal> is a separate native root, and
+   * react-native-safe-area-context does not resolve insets inside one
+   * unless a SafeAreaProvider is mounted within the modal itself. So the
+   * SafeAreaView measured zero and the close button and counter sat at
+   * y = 0, under the status bar -- exactly what the device screenshot
+   * shows. statusBarTranslucent on the Modal makes it worse on Android
+   * by drawing beneath the bar as well.
+   *
+   * useSafeAreaInsets() is called in THIS component, which renders inside
+   * the root provider, so it returns the real values regardless of what
+   * the Modal does with context.
+   */
+  const insets = useSafeAreaInsets();
   const [index, setIndex] = useState(initialIndex);
 
   if (images.length === 0) return null;
@@ -42,7 +60,7 @@ export function PhotoViewer({
   return (
     <Modal visible={visible} transparent={false} animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <View style={styles.root}>
-        <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        <View style={[styles.safe, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           <View style={styles.bar}>
             <Text style={styles.counter}>
               {images.length > 1 ? `${Math.min(index, images.length - 1) + 1} / ${images.length}` : ' '}
@@ -74,7 +92,7 @@ export function PhotoViewer({
           </ScrollView>
 
           <Text style={styles.caption}>{current.caption ?? ' '}</Text>
-        </SafeAreaView>
+        </View>
       </View>
     </Modal>
   );

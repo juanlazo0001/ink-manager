@@ -7,6 +7,7 @@ import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindo
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { PhotoViewer } from '@/components/PhotoViewer';
+import { Pill } from '@/components/Pill';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Chip, ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -127,27 +128,15 @@ export default function FlashGalleryScreen() {
           contentContainerStyle={styles.filters}
           style={styles.filterStrip}
         >
-          {STATUS_FILTERS.map((status) => {
-            const on = statuses.includes(status);
-            return (
-              <Pressable
-                key={status}
-                onPress={() => toggleStatus(status)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: on }}
-                style={({ pressed }) => [
-                  styles.filter,
-                  on && { borderColor: tones[STATUS_TONES[status]] },
-                  pressed && styles.pressed,
-                ]}
-              >
-                <View style={[styles.filterDot, { backgroundColor: tones[STATUS_TONES[status]] }]} />
-                <Text style={[styles.filterLabel, on && styles.filterLabelOn]}>
-                  {STATUS_LABELS[status].toUpperCase()}
-                </Text>
-              </Pressable>
-            );
-          })}
+          {STATUS_FILTERS.map((status) => (
+            <Pill
+              key={status}
+              label={STATUS_LABELS[status]}
+              selected={statuses.includes(status)}
+              onPress={() => toggleStatus(status)}
+              leading={<View style={[styles.filterDot, { backgroundColor: tones[STATUS_TONES[status]] }]} />}
+            />
+          ))}
         </ScrollView>
 
         {error ? (
@@ -251,19 +240,7 @@ const styles = StyleSheet.create({
 
   filterStrip: { flexGrow: 0 },
   filters: { flexDirection: 'row', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.lg },
-  filter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.xs,
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.md,
-    paddingVertical: 6,
-  },
   filterDot: { width: 6, height: 6, borderRadius: radius.pill },
-  filterLabel: { ...type.label, color: colors.fgMuted },
-  filterLabelOn: { color: colors.fg },
 
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, paddingHorizontal: space.lg },
   card: {

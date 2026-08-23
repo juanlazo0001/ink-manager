@@ -8,6 +8,7 @@ import {
   type ThreadFilter,
   type ThreadSort,
 } from '@/lib/conversationListControls';
+import { Pill } from '@/components/Pill';
 import { colors, hairline, radius, space, type } from '@/theme';
 
 /**
@@ -74,20 +75,14 @@ export function ThreadListControls({
 
       <View style={styles.chipRow}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-          {THREAD_FILTERS.map((option) => {
-            const on = option.key === filter;
-            return (
-              <Pressable
-                key={option.key}
-                onPress={() => onFilterChange(option.key)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: on }}
-                style={({ pressed }) => [styles.chip, on && styles.chipOn, pressed && styles.pressed]}
-              >
-                <Text style={[styles.chipLabel, on && styles.chipLabelOn]}>{option.label.toUpperCase()}</Text>
-              </Pressable>
-            );
-          })}
+          {THREAD_FILTERS.map((option) => (
+            <Pill
+              key={option.key}
+              label={option.label}
+              selected={option.key === filter}
+              onPress={() => onFilterChange(option.key)}
+            />
+          ))}
         </ScrollView>
 
         <Pressable
@@ -153,16 +148,6 @@ const styles = StyleSheet.create({
 
   chipRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   chips: { flexDirection: 'row', gap: space.sm, paddingRight: space.sm },
-  chip: {
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.md,
-    paddingVertical: 5,
-  },
-  chipOn: { borderColor: colors.accent, backgroundColor: colors.surfaceRaised },
-  chipLabel: { ...type.label, color: colors.fgMuted },
-  chipLabelOn: { color: colors.accent },
 
   sortToggle: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   sortToggleLabel: { ...type.label, color: colors.fgMuted },

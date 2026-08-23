@@ -15,6 +15,7 @@ import {
   StatChip,
 } from '@/components/editorial';
 import { TopBar } from '@/components/TopBar';
+import { Pill, PillRow } from '@/components/Pill';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { useStudioTimeZone } from '@/hooks/useStudioTimeZone';
@@ -122,22 +123,17 @@ export default function HomeScreen() {
           </Text>
         </View>
 
-        <View style={styles.rangeRow}>
-          {RANGE_PRESETS.map((preset) => {
-            const on = preset.days === days;
-            return (
-              <Pressable
-                key={preset.days}
-                onPress={() => setDays(preset.days)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: on }}
-                style={({ pressed }) => [styles.range, on && styles.rangeOn, pressed && styles.pressed]}
-              >
-                <Text style={[styles.rangeLabel, on && styles.rangeLabelOn]}>{preset.label.toUpperCase()}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <PillRow style={styles.rangeRow}>
+          {RANGE_PRESETS.map((preset) => (
+            <Pill
+              key={preset.days}
+              label={preset.label}
+              selected={preset.days === days}
+              onPress={() => setDays(preset.days)}
+            />
+          ))}
+        </PillRow>
+
         {range ? (
           <Text style={styles.rangeNote}>
             {range.start} to {range.end} · {timeZone.replace(/_/g, ' ')}
@@ -358,17 +354,7 @@ const styles = StyleSheet.create({
   welcomeText: { ...type.welcome, color: colors.fg, marginTop: space.md },
   welcomeName: { ...type.welcomeName, color: colors.accentHover },
 
-  rangeRow: { flexDirection: 'row', gap: space.sm, paddingHorizontal: space.lg, paddingTop: space.lg },
-  range: {
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.md,
-    paddingVertical: 6,
-  },
-  rangeOn: { borderColor: colors.accent, backgroundColor: colors.surfaceRaised },
-  rangeLabel: { ...type.label, color: colors.fgMuted },
-  rangeLabelOn: { color: colors.accent },
+  rangeRow: { paddingTop: space.lg },
   rangeNote: { ...type.meta, color: colors.fgMuted, paddingHorizontal: space.lg, paddingTop: space.sm },
 
   needsCard: {
