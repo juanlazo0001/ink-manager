@@ -3,6 +3,7 @@ import { Image } from 'expo-image';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { channelLabel } from '@/components/ConversationRow';
+import { isMessageEdited } from '@/lib/conversations';
 import type { DisplayMessage } from '@/lib/threadRows';
 import { channelColor, colors, hairline, radius, space, type } from '@/theme';
 import { timeOfDay } from '@/lib/time';
@@ -28,6 +29,9 @@ export function MessageBubble({
   showAuthor,
   onRetry,
   onOpenImage,
+  onLongPress,
+  viewerUserId,
+  onScrollToMessage,
 }: {
   message: DisplayMessage;
   own: boolean;
@@ -38,10 +42,33 @@ export function MessageBubble({
   onRetry?: () => void;
   /** Opens the full-screen viewer on the tapped image. */
   onOpenImage?: (urls: string[], index: number) => void;
+  /** Long-press opens the action sheet (react / reply / copy / edit). */
+  onLongPress?: () => void;
+  viewerUserId?: string;
+  /** Tapping a quoted reply jumps to the message it quotes. */
+  onScrollToMessage?: (messageId: string) => void;
 }) {
   const failed = message.status === 'failed';
   const pending = message.status === 'pending';
   const authorName = message.author?.name ?? message.author?.email ?? null;
+
+  // One reaction per person per message, so this collapses to a count per
+  // emoji and remembers whether the viewer's own is among them.
+  const reactionSummary = (message.reactions ?? []).reduce<
+    { emoji: string; count: number; mine: boolean }[]
+  >((acc, r) => {
+    const existing = acc.find((e) => e.emoji === r.emoji);
+    const mine = (existing?.mine ?? false) || r.userId === viewerUserId;
+    if (existing) {
+      existing.count += 1;
+      existing.mine = mine;
+    } else {
+      acc.push({ emoji: r.emoji, count: 1, mine });
+    }
+    return acc;
+  }, []);
+
+  const edited = message.status === 'sent' && isMessageEdited(message);
 
   const attachments = message.attachments ?? [];
   const images = attachments.filter(isImageUrl);
@@ -51,7 +78,11 @@ export function MessageBubble({
     <View style={[styles.wrap, own ? styles.wrapOwn : styles.wrapTheirs]}>
       {showAuthor && !own && authorName ? <Text style={styles.author}>{authorName}</Text> : null}
 
-      <View
+      <Pressable
+        onLongPress={onLongPress}
+        delayLongPress={300}
+        accessibilityRole={onLongPress ? 'button' : undefined}
+        accessibilityHint={onLongPress ? 'Long press for message actions' : undefined}
         style={[
           styles.bubble,
           own ? styles.bubbleOwn : styles.bubbleTheirs,
@@ -61,6 +92,22 @@ export function MessageBubble({
           failed && styles.bubbleFailed,
         ]}
       >
+        {message.replyTo ? (
+          <Pressable
+            onPress={() => onScrollToMessage?.(message.replyTo!.id)}
+            accessibilityRole="button"
+            accessibilityLabel={`In reply to ${message.replyTo.author?.name ?? 'a message'}`}
+            style={[styles.quote, own ? styles.quoteOwn : styles.quoteTheirs]}
+          >
+            <Text style={[styles.quoteAuthor, own ? styles.bodyOwn : styles.bodyTheirs]} numberOfLines={1}>
+              {message.replyTo.author?.name ?? message.replyTo.author?.email ?? 'Message'}
+            </Text>
+            <Text style={[styles.quoteBody, own ? styles.bodyOwn : styles.bodyTheirs]} numberOfLines={2}>
+              {message.replyTo.body || 'Image'}
+            </Text>
+          </Pressable>
+        ) : null}
+
         {message.body ? (
           <Text style={[styles.body, own ? styles.bodyOwn : styles.bodyTheirs]}>{message.body}</Text>
         ) : null}
@@ -94,7 +141,18 @@ export function MessageBubble({
             </Text>
           </View>
         ) : null}
-      </View>
+      </Pressable>
+
+      {reactionSummary.length > 0 ? (
+        <View style={[styles.reactions, own ? styles.reactionsOwn : styles.reactionsTheirs]}>
+          {reactionSummary.map((r) => (
+            <View key={r.emoji} style={[styles.reaction, r.mine && styles.reactionMine]}>
+              <Text style={styles.reactionGlyph}>{r.emoji}</Text>
+              {r.count > 1 ? <Text style={styles.reactionCount}>{r.count}</Text> : null}
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       {failed ? (
         <Pressable
@@ -115,6 +173,12 @@ export function MessageBubble({
               <Text style={styles.metaText}>{channelLabel(message.channel)}</Text>
               <Text style={styles.metaDivider}>·</Text>
               <Text style={styles.metaText}>{timeOfDay(message.createdAt)}</Text>
+              {edited ? (
+                <>
+                  <Text style={styles.metaDivider}>·</Text>
+                  <Text style={styles.metaText}>Edited</Text>
+                </>
+              ) : null}
             </>
           )}
         </View>
@@ -145,6 +209,35 @@ const styles = StyleSheet.create({
   body: { ...type.message },
   bodyOwn: { color: colors.accentFg },
   bodyTheirs: { color: colors.fg },
+
+  quote: {
+    borderLeftWidth: 2,
+    paddingLeft: space.sm,
+    marginBottom: space.sm,
+    opacity: 0.85,
+  },
+  quoteOwn: { borderLeftColor: colors.accentFg },
+  quoteTheirs: { borderLeftColor: colors.accent },
+  quoteAuthor: { ...type.meta },
+  quoteBody: { ...type.small },
+
+  reactions: { flexDirection: 'row', gap: space.xs, marginTop: -space.xs + 2 },
+  reactionsOwn: { justifyContent: 'flex-end' },
+  reactionsTheirs: { justifyContent: 'flex-start' },
+  reaction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: space.sm - 2,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    borderWidth: hairline,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceRaised,
+  },
+  reactionMine: { borderColor: colors.accent, backgroundColor: 'rgba(201, 154, 91, 0.10)' },
+  reactionGlyph: { fontSize: 12, lineHeight: 16 },
+  reactionCount: { ...type.meta, color: colors.fgMuted },
 
   images: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs },
   imagesAfterText: { marginTop: space.sm },

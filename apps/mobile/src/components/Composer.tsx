@@ -1,6 +1,6 @@
 import { CLIENT_CHANNELS, type ClientChannel, type MessageDirection } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AttachmentTray } from '@/components/AttachmentTray';
@@ -46,6 +46,11 @@ export function Composer({
   sending,
   disabled,
   token,
+  replyPreview,
+  onCancelReply,
+  editingMessageId,
+  editingInitialBody,
+  onCancelEdit,
 }: {
   isClientThread: boolean;
   sendState: ComposerSendState;
@@ -57,16 +62,37 @@ export function Composer({
   disabled?: boolean;
   /** Bearer token for fetching per-upload Cloudinary signatures. */
   token: string | null;
+  /** The message being quoted, if any. */
+  replyPreview?: { author: string; body: string } | null;
+  onCancelReply?: () => void;
+  /** Non-null puts the composer in edit mode. */
+  editingMessageId?: string | null;
+  editingInitialBody?: string;
+  onCancelEdit?: () => void;
 }) {
   const [body, setBody] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const attachments = useAttachments(token);
 
+  const editing = !!editingMessageId;
+
+  // Entering edit mode loads the existing text so it can be amended
+  // rather than retyped. Keyed on the id, so switching directly from one
+  // message to another reloads rather than keeping the first one's text.
+  useEffect(() => {
+    if (editingMessageId) setBody(editingInitialBody ?? '');
+    else setBody('');
+  }, [editingMessageId, editingInitialBody]);
+
   // Either a caption or a finished image is enough to send, mirroring the
   // API's own rule. Still uploading blocks send: the URL does not exist
   // yet, so there would be nothing to reference.
-  const hasContent = body.trim().length > 0 || attachments.uploadedUrls.length > 0;
+  // An edit must keep a body -- the API rejects an empty one, and there is
+  // no way to attach to an existing message.
+  const hasContent = editing
+    ? body.trim().length > 0
+    : body.trim().length > 0 || attachments.uploadedUrls.length > 0;
   const canSubmit = hasContent && !sending && !disabled && !attachments.busy;
 
   const wouldSendLive =
@@ -78,7 +104,7 @@ export function Composer({
 
   function submit() {
     if (!canSubmit) return;
-    onSend(body.trim(), attachments.uploadedUrls);
+    onSend(body.trim(), editing ? [] : attachments.uploadedUrls);
     setBody('');
     attachments.clear();
   }
@@ -124,18 +150,49 @@ export function Composer({
         </Pressable>
       ) : null}
 
-      <AttachmentTray items={attachments.items} onRetry={attachments.retry} onRemove={attachments.remove} />
+      {editing ? (
+        <View style={styles.banner}>
+          <Feather name="edit-2" size={13} color={colors.accent} />
+          <Text style={styles.bannerLabel} numberOfLines={1}>
+            Editing message
+          </Text>
+          <Pressable onPress={onCancelEdit} accessibilityRole="button" accessibilityLabel="Cancel edit" hitSlop={8}>
+            <Feather name="x" size={15} color={colors.fgMuted} />
+          </Pressable>
+        </View>
+      ) : replyPreview ? (
+        <View style={styles.banner}>
+          <Feather name="corner-up-left" size={13} color={colors.accent} />
+          <View style={styles.bannerText}>
+            <Text style={styles.bannerAuthor} numberOfLines={1}>
+              {replyPreview.author}
+            </Text>
+            <Text style={styles.bannerLabel} numberOfLines={1}>
+              {replyPreview.body || 'Image'}
+            </Text>
+          </View>
+          <Pressable onPress={onCancelReply} accessibilityRole="button" accessibilityLabel="Cancel reply" hitSlop={8}>
+            <Feather name="x" size={15} color={colors.fgMuted} />
+          </Pressable>
+        </View>
+      ) : null}
+
+      {editing ? null : (
+        <AttachmentTray items={attachments.items} onRetry={attachments.retry} onRemove={attachments.remove} />
+      )}
 
       <View style={styles.inputRow}>
-        <Pressable
-          onPress={() => setSourceOpen(true)}
-          disabled={disabled}
-          accessibilityRole="button"
-          accessibilityLabel="Attach an image"
-          style={({ pressed }) => [styles.attach, pressed && styles.pressed]}
-        >
-          <Feather name="paperclip" size={20} color={disabled ? colors.fgMuted : colors.fgSecondary} />
-        </Pressable>
+        {editing ? null : (
+          <Pressable
+            onPress={() => setSourceOpen(true)}
+            disabled={disabled}
+            accessibilityRole="button"
+            accessibilityLabel="Attach an image"
+            style={({ pressed }) => [styles.attach, pressed && styles.pressed]}
+          >
+            <Feather name="paperclip" size={20} color={disabled ? colors.fgMuted : colors.fgSecondary} />
+          </Pressable>
+        )}
         <TextInput
           style={styles.input}
           value={body}
@@ -277,6 +334,17 @@ const styles = StyleSheet.create({
     paddingTop: space.sm + 2,
     paddingBottom: space.sm + 2,
   },
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingTop: space.sm,
+  },
+  bannerText: { flex: 1 },
+  bannerAuthor: { ...type.meta, color: colors.accent },
+  bannerLabel: { ...type.meta, color: colors.fgMuted, flex: 1 },
+
   attach: {
     width: 40,
     height: 44,

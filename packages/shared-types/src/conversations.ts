@@ -45,6 +45,19 @@ export interface ConversationLastMessage {
   channel: MessageChannel;
   direction: MessageDirection;
   createdAt: string;
+  /**
+   * Who wrote it. Null on an inbound client message — there is no
+   * logged-in author — and on rows predating authorship.
+   *
+   * Needed because `direction` does NOT identify the viewer: it separates
+   * the studio from the client, and on STAFF/GROUP threads the API forces
+   * every message to OUTBOUND, so it carries no information about who
+   * spoke. Compare `authorUserId` against the viewer's own id.
+   */
+  authorUserId: string | null;
+  author: MessageAuthor | null;
+  /** Cloudinary URLs. Null when there are none. */
+  attachments: string[] | null;
 }
 
 /**

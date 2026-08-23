@@ -4,10 +4,12 @@ import type {
   Message,
   MessageDirection,
 } from '@ink-manager/shared-types';
+import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -19,6 +21,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Composer, type ComposerSendState } from '@/components/Composer';
+import { MessageActions } from '@/components/MessageActions';
 import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
 import { channelLabel } from '@/components/ConversationRow';
 import { MessageBubble } from '@/components/MessageBubble';
@@ -27,8 +30,17 @@ import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { ApiError } from '@/lib/api';
 import { screenErrorMessage } from '@/lib/screenError';
-import { fetchIntegrationStatus, fetchThread, markConversationRead, sendMessage } from '@/lib/conversations';
-import { buildThreadRows, type DisplayMessage } from '@/lib/threadRows';
+import {
+  clearReaction,
+  editMessage,
+  fetchIntegrationStatus,
+  fetchThread,
+  markConversationRead,
+  sendMessage,
+  setReaction,
+  type ReactionEmoji,
+} from '@/lib/conversations';
+import { buildThreadRows, type DisplayMessage, type Row } from '@/lib/threadRows';
 import { colors, hairline, space, type } from '@/theme';
 
 /** See the note in the list screen: polling, not sockets, this session. */
@@ -63,6 +75,13 @@ export default function ConversationScreen() {
   // Lifted out of the bubble so the viewer can page across every image in
   // the tapped message, the way web's lightbox does.
   const [lightbox, setLightbox] = useState<{ images: ViewerImage[]; index: number } | null>(null);
+  // The message whose action sheet is open, plus the three modes those
+  // actions can put the composer into.
+  const [actionFor, setActionFor] = useState<DisplayMessage | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<DisplayMessage | null>(null);
+  const [editing, setEditing] = useState<DisplayMessage | null>(null);
+  const listRef = useRef<FlatList<Row>>(null);
   const [unavailableChannels, setUnavailableChannels] = useState<Set<string>>(new Set());
   const [sendState, setSendState] = useState<ComposerSendState>({ channel: 'SMS', direction: 'OUTBOUND' });
 
@@ -185,6 +204,10 @@ export default function ConversationScreen() {
   const doSend = useCallback(
     async (body: string, attachments: string[] = [], retryOf?: DisplayMessage) => {
       if (!token || !id) return;
+      // Captured before the optimistic row is built, and cleared straight
+      // away so a slow send can't attach the quote to the NEXT message too.
+      const replyToId = retryOf ? (retryOf.replyToId ?? undefined) : (replyTo?.id ?? undefined);
+      setReplyTo(null);
 
       const tempId = retryOf?.id ?? `local:${Date.now()}:${Math.random().toString(36).slice(2)}`;
       const optimistic: DisplayMessage = {
@@ -202,8 +225,8 @@ export default function ConversationScreen() {
         conversationId: id,
         authorUserId: viewerUserId,
         author: session ? { id: viewerUserId, name: session.profile.name, email: session.profile.email } : null,
-        replyToId: null,
-        replyTo: null,
+        replyToId: replyToId ?? null,
+        replyTo: replyToId ? (replyTo ?? retryOf?.replyTo ?? null) : null,
         reactions: [],
         status: 'pending',
       };
@@ -218,6 +241,7 @@ export default function ConversationScreen() {
       try {
         const created = await sendMessage(token, id, {
           body,
+          ...(replyToId ? { replyToId } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(isClientThread ? { channel: sendState.channel, direction: sendState.direction } : {}),
         });
@@ -234,7 +258,59 @@ export default function ConversationScreen() {
         setSending(false);
       }
     },
-    [token, id, isClientThread, sendState, header, viewerUserId, session],
+    [token, id, isClientThread, sendState, header, viewerUserId, session, replyTo],
+  );
+
+  /**
+   * Replace one message in place, used by every action that returns the
+   * updated message. Keyed by id rather than index because the list is
+   * rebuilt from `messages` on every change.
+   */
+  const replaceMessage = useCallback((updated: Message) => {
+    setMessages((current) =>
+      current.map((m) => (m.id === updated.id ? { ...updated, status: 'sent' } : m)),
+    );
+  }, []);
+
+  /**
+   * Reactions are an upsert of ONE reaction per person per message, so
+   * tapping the emoji already chosen clears it and tapping a different one
+   * replaces it -- never stacks. Both cases return the updated message.
+   */
+  const handleReact = useCallback(
+    async (message: DisplayMessage, emoji: ReactionEmoji) => {
+      if (!token || !id) return;
+      const mine = (message.reactions ?? []).find((r) => r.userId === viewerUserId);
+      setActionFor(null);
+      try {
+        const updated =
+          mine?.emoji === emoji
+            ? await clearReaction(token, id, message.id)
+            : await setReaction(token, id, message.id, emoji);
+        replaceMessage(updated);
+      } catch (err) {
+        Alert.alert('Reaction', screenErrorMessage(err, "That reaction didn't save."));
+      }
+    },
+    [token, id, viewerUserId, replaceMessage],
+  );
+
+  const handleCopy = useCallback(async (message: DisplayMessage) => {
+    await Clipboard.setStringAsync(message.body);
+    setCopiedId(message.id);
+  }, []);
+
+  const handleSubmitEdit = useCallback(
+    async (message: DisplayMessage, body: string) => {
+      if (!token || !id) return;
+      setEditing(null);
+      try {
+        replaceMessage(await editMessage(token, id, message.id, body));
+      } catch (err) {
+        Alert.alert('Edit', screenErrorMessage(err, "That edit didn't save."));
+      }
+    },
+    [token, id, replaceMessage],
   );
 
   // Built by a pure helper (src/lib/threadRows.ts) rather than inline, so
@@ -243,6 +319,20 @@ export default function ConversationScreen() {
   const rows = useMemo(
     () => buildThreadRows({ messages, viewerUserId, isClientThread, isGroupThread }),
     [messages, viewerUserId, isClientThread, isGroupThread],
+  );
+
+  /**
+   * Jump to a quoted message. The list is inverted, so its index in `rows`
+   * is already the visual one; a message that has scrolled out of the
+   * loaded window simply is not there, and nothing happens rather than
+   * jumping somewhere wrong.
+   */
+  const scrollToMessage = useCallback(
+    (messageId: string) => {
+      const index = rows.findIndex((r) => r.kind === 'message' && r.message.id === messageId);
+      if (index >= 0) listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+    },
+    [rows],
   );
 
   const title = header?.counterpart?.name ?? 'Conversation';
@@ -296,6 +386,7 @@ export default function ConversationScreen() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
       >
         <FlatList
+          ref={listRef}
           inverted
           data={rows}
           keyExtractor={(row) => (row.kind === 'day' ? row.key : row.message.id)}
@@ -315,6 +406,19 @@ export default function ConversationScreen() {
                 onRetry={() => doSend(item.message.body, item.message.attachments ?? [], item.message)}
                 onOpenImage={(urls, index) =>
                   setLightbox({ images: urls.map((url) => ({ url })), index })
+                }
+                viewerUserId={viewerUserId}
+                onScrollToMessage={scrollToMessage}
+                onLongPress={
+                  // A message that never reached the server has no id to
+                  // act on, and a shared-inquiry card is not a bubble with
+                  // a body worth quoting -- web excludes it the same way.
+                  item.message.status === 'sent' && !item.message.metadata?.kind
+                    ? () => {
+                        setCopiedId(null);
+                        setActionFor(item.message);
+                      }
+                    : undefined
                 }
               />
             )
@@ -357,11 +461,50 @@ export default function ConversationScreen() {
           onChangeSendState={setSendState}
           unavailableChannels={unavailableChannels}
           canSendLive={canSendLive}
-          onSend={(body, attachments) => doSend(body, attachments)}
+          onSend={(body, attachments) =>
+            editing ? handleSubmitEdit(editing, body) : doSend(body, attachments)
+          }
           sending={sending}
           token={token}
+          replyPreview={
+            replyTo
+              ? {
+                  author: replyTo.author?.name ?? replyTo.author?.email ?? 'Message',
+                  body: replyTo.body,
+                }
+              : null
+          }
+          onCancelReply={() => setReplyTo(null)}
+          editingMessageId={editing?.id ?? null}
+          editingInitialBody={editing?.body ?? ''}
+          onCancelEdit={() => setEditing(null)}
         />
       </KeyboardAvoidingView>
+
+      <MessageActions
+        visible={!!actionFor}
+        onClose={() => setActionFor(null)}
+        myReaction={
+          actionFor ? ((actionFor.reactions ?? []).find((r) => r.userId === viewerUserId)?.emoji ?? null) : null
+        }
+        // Web's rule exactly: edits are STAFF/GROUP-only and author-only,
+        // which is also what the API enforces.
+        canEdit={!!actionFor && !isClientThread && actionFor.authorUserId === viewerUserId}
+        canCopy={!!actionFor?.body}
+        copied={!!actionFor && copiedId === actionFor.id}
+        onReact={(emoji) => actionFor && handleReact(actionFor, emoji)}
+        onReply={() => {
+          setReplyTo(actionFor);
+          setEditing(null);
+          setActionFor(null);
+        }}
+        onCopy={() => actionFor && handleCopy(actionFor)}
+        onEdit={() => {
+          setEditing(actionFor);
+          setReplyTo(null);
+          setActionFor(null);
+        }}
+      />
 
       <PhotoViewer
         images={lightbox?.images ?? []}

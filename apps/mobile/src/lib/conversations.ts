@@ -87,6 +87,12 @@ export interface SendOptions {
   /** CLIENT threads only. */
   direction?: MessageDirection;
   /**
+   * Quote another message from this same thread. A stale or foreign id is
+   * ignored by the API rather than rejected -- the message still sends,
+   * just without the quote.
+   */
+  replyToId?: string;
+  /**
    * Cloudinary URLs, already uploaded. The API takes `attachments` on
    * send (`SendMessageRequest`) and requires either a body or a non-empty
    * attachments array -- so an image with no caption is a valid send.
@@ -112,6 +118,7 @@ export function sendMessage(token: string, conversationId: string, options: Send
     ...(options.attachments && options.attachments.length > 0
       ? { attachments: options.attachments }
       : {}),
+    ...(options.replyToId ? { replyToId: options.replyToId } : {}),
   };
 
   return apiFetch<Message>(`/conversations/${encodeURIComponent(conversationId)}/messages`, {
@@ -119,4 +126,77 @@ export function sendMessage(token: string, conversationId: string, options: Send
     token,
     body: JSON.stringify(payload),
   });
+}
+
+/**
+ * The reaction set, which is defined and validated by the API
+ * (`REACTION_EMOJIS` in apps/api/src/routes/conversations.ts) — anything
+ * outside it is a 400. apps/web keeps its own copy with the same note;
+ * this mirrors that list rather than inventing a different one.
+ */
+export const REACTION_EMOJIS = ['❤️', '👍', '👎', '😂', '‼️', '❓'] as const;
+
+export type ReactionEmoji = (typeof REACTION_EMOJIS)[number];
+
+/**
+ * Sets this viewer's reaction.
+ *
+ * Upsert, not append: one reaction per (message, user), so choosing a
+ * different emoji REPLACES the previous one rather than stacking. The API
+ * enforces that, and the UI must not imply otherwise.
+ *
+ * Allowed on every thread type including CLIENT, because a reaction is
+ * additive metadata rather than a rewrite of what was actually sent. It is
+ * never delivered over SMS/Email — purely an internal annotation.
+ */
+export function setReaction(
+  token: string,
+  conversationId: string,
+  messageId: string,
+  emoji: ReactionEmoji,
+): Promise<Message> {
+  return apiFetch<Message>(
+    `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/reaction`,
+    { method: 'PUT', token, body: JSON.stringify({ emoji }) },
+  );
+}
+
+/** Clears this viewer's reaction — tapping the same emoji again toggles off. */
+export function clearReaction(token: string, conversationId: string, messageId: string): Promise<Message> {
+  return apiFetch<Message>(
+    `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/reaction`,
+    { method: 'DELETE', token },
+  );
+}
+
+/**
+ * Edits a message in place.
+ *
+ * STAFF/GROUP only and author-only; the API rejects both otherwise. A
+ * CLIENT thread is an immutable record of what actually went over
+ * SMS/Email, and a colleague's message is not yours to rewrite even as an
+ * OWNER (deliberately NOT an OWNER override, unlike InquiryNote's edit).
+ */
+export function editMessage(
+  token: string,
+  conversationId: string,
+  messageId: string,
+  body: string,
+): Promise<Message> {
+  return apiFetch<Message>(
+    `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+    { method: 'PATCH', token, body: JSON.stringify({ body }) },
+  );
+}
+
+/**
+ * Was this message edited after it was sent?
+ *
+ * `updatedAt` and `createdAt` differ by a few milliseconds even on an
+ * untouched row, so this is a threshold comparison rather than equality —
+ * the same idiom the API's own doc comment prescribes and that
+ * `isMessageEdited` uses on web.
+ */
+export function isMessageEdited(message: { createdAt: string; updatedAt: string }): boolean {
+  return new Date(message.updatedAt).getTime() - new Date(message.createdAt).getTime() > 1000;
 }

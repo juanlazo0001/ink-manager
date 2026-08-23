@@ -22,49 +22,59 @@ export function channelLabel(channel: string): string {
 }
 
 /**
- * Who spoke last, when that can honestly be said.
+ * Who spoke, for the list preview.
  *
- * This used to print "You: " for `direction === 'OUTBOUND'`, which is
- * wrong twice over:
+ * This needs the message's AUTHOR, and for a long time `GET /conversations`
+ * did not return one -- its `lastMessage` projection was body, channel,
+ * direction and createdAt. `direction` is not a substitute:
  *
- *  1. `MessageDirection` separates the STUDIO from the CLIENT, not the
- *     viewer from everyone else. On a client thread an OUTBOUND message
- *     may well have been written by a colleague -- the API's own summary
- *     helper spells this out: `direction === INBOUND ? "Client" : "Studio"`.
- *  2. On STAFF and GROUP threads it is a constant. The API rejects any
- *     other value outright -- "Staff conversations only support OUTBOUND
- *     direction" (conversations.ts) -- so EVERY row on those threads said
- *     "You:", whoever wrote the message. That is the reported symptom.
+ *  1. It separates the STUDIO from the CLIENT, not the viewer from
+ *     everyone else. On a client thread an OUTBOUND message may well have
+ *     been written by a colleague -- the API's own summary helper spells
+ *     it out: `direction === INBOUND ? "Client" : "Studio"`.
+ *  2. On STAFF and GROUP threads it is a CONSTANT. The API rejects any
+ *     other value outright ("Staff conversations only support OUTBOUND
+ *     direction"), so a direction test marked every row on those threads
+ *     as the viewer's own, whoever wrote it.
  *
- * The honest prefix needs the message's author, and `GET /conversations`
- * does not return one: its `lastMessage` projection is body, channel,
- * direction and createdAt, nothing more. Rather than invent an API field,
- * this says only what the data supports -- "Studio: " where the studio
- * spoke on a client thread, and nothing at all on staff threads, where
- * direction carries no information.
+ * `lastMessage.authorUserId` / `.author` now exist, so this answers the
+ * question properly: your own message says "You", a colleague's says their
+ * first name, and an inbound client message has no author at all and so
+ * says nothing.
  *
- * apps/web has the identical bug on the same line, still unfixed.
+ * apps/web still tests `direction === 'OUTBOUND' ? 'You: '` on this same
+ * line and still has the original bug; the field it needs is now there.
  */
-function previewPrefix(item: ConversationListItem): string {
-  if (!item.lastMessage) return '';
-  // Constant on these, so it can distinguish nobody.
-  if (item.type !== 'CLIENT') return '';
-  return item.lastMessage.direction === 'OUTBOUND' ? 'Studio: ' : '';
+function previewPrefix(item: ConversationListItem, viewerUserId?: string): string {
+  const last = item.lastMessage;
+  if (!last) return '';
+  if (last.authorUserId && viewerUserId && last.authorUserId === viewerUserId) return 'You: ';
+  const name = last.author?.name ?? last.author?.email;
+  if (name) return `${name.split(' ')[0]}: `;
+  return '';
 }
 
 
-export function ConversationRow({ item, onPress }: { item: ConversationListItem; onPress: () => void }) {
+export function ConversationRow({
+  item,
+  onPress,
+  viewerUserId,
+}: {
+  item: ConversationListItem;
+  onPress: () => void;
+  /** Needed to say "You" rather than naming the viewer to themselves. */
+  viewerUserId?: string;
+}) {
   const name = item.counterpart?.name ?? 'Unknown';
   const unread = item.unreadCount > 0;
   const preview = item.lastMessage?.body?.trim();
-  // An attachment-only message has an empty body, and that is the ONLY
-  // signal either client has: `GET /conversations` projects lastMessage as
-  // body/channel/direction/createdAt with no attachment field at all. Web
-  // reads it exactly the same way (`{body || '📷 Image'}`), so an empty
-  // body means "an image" on both. Mobile draws the same idea with the
-  // Feather glyph every other icon in this app uses instead of the emoji.
-  const isImageOnly = !!item.lastMessage && !preview;
-  const previewText = preview || (item.lastMessage ? 'Image' : 'No messages yet');
+  // `lastMessage.attachments` now says so outright, instead of being
+  // inferred from an empty body. That inference was wrong in both
+  // directions: a message with a caption AND images showed no indicator,
+  // and any genuinely empty-bodied message claimed one. Web still infers
+  // (`{body || '📷 Image'}`); mobile no longer has to.
+  const hasAttachment = (item.lastMessage?.attachments?.length ?? 0) > 0;
+  const previewText = preview || (hasAttachment ? 'Image' : item.lastMessage ? 'Message' : 'No messages yet');
 
   return (
     <Pressable
@@ -95,11 +105,11 @@ export function ConversationRow({ item, onPress }: { item: ConversationListItem;
         </View>
 
         <Text style={[styles.preview, unread && styles.previewUnread]} numberOfLines={2}>
-          {previewPrefix(item)}
-          {isImageOnly ? (
+          {previewPrefix(item, viewerUserId)}
+          {hasAttachment ? (
             <Feather name="image" size={12} color={unread ? colors.fg : colors.fgMuted} />
           ) : null}
-          {isImageOnly ? ' ' : ''}
+          {hasAttachment ? ' ' : ''}
           {previewText}
         </Text>
 

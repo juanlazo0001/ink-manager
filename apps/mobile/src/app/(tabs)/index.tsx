@@ -157,6 +157,7 @@ export default function ConversationsScreen() {
           renderItem={({ item }) => (
             <ConversationRow
               item={item}
+              viewerUserId={session?.profile.id}
               // Object form, not a template string: typed routes describe a
               // dynamic route by its literal `[id]` pathname plus params,
               // so an interpolated href is (correctly) rejected.

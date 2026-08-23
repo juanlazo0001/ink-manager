@@ -276,7 +276,15 @@ router.get("/", async (req, res) => {
     where,
     include: {
       ...COUNTERPART_SELECT,
-      messages: { orderBy: { createdAt: "desc" }, take: 1 },
+      // The author is needed for the list preview's own prefix: direction
+      // separates the STUDIO from the CLIENT, never the viewer from a
+      // colleague, and on STAFF/GROUP threads it is a constant OUTBOUND --
+      // so "who wrote this" is unanswerable without it.
+      messages: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        include: { author: { select: { id: true, name: true, email: true } } },
+      },
     },
     orderBy: { lastMessageAt: "desc" },
   });
@@ -298,6 +306,15 @@ router.get("/", async (req, res) => {
             channel: conversation.messages[0].channel,
             direction: conversation.messages[0].direction,
             createdAt: conversation.messages[0].createdAt,
+            // Who actually wrote it. Null for an inbound client message
+            // (no logged-in author) and for anything predating authorship.
+            authorUserId: conversation.messages[0].authorUserId,
+            author: conversation.messages[0].author,
+            // Present so a client can mark an attachment honestly instead
+            // of inferring one from an empty body -- which is what both
+            // clients had to do, and which is wrong for a message that has
+            // BOTH a caption and images.
+            attachments: (conversation.messages[0].attachments as string[] | null) ?? null,
           }
         : null,
       unreadCount: await getUnreadCountForConversation(conversation.id, userId),
