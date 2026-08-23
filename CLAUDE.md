@@ -182,6 +182,25 @@ Concise operating rules, not a project history — see REPORT.md for history.
   semantics) for ad hoc HTTP checks — don't assume a POSIX shell unless a bash-specific tool is
   explicitly in use.
 
+## Mobile session handoff (device gate)
+
+Every `apps/mobile` session ends by preparing the owner's device gate, so that testing it requires
+no git knowledge from him:
+
+1. The session branch is committed and **pushed**.
+2. **The session branch is checked out in the PRIMARY checkout** (the main `ink-manager` folder) —
+   never left reachable only from a worktree. If this session's worktree holds the branch,
+   `git worktree remove` it first; the work is pushed, so that is safe. If the branch has already
+   been merged, `main` carries the identical commit and the primary checkout may stay on `main` —
+   but say so explicitly in the report rather than leaving it implied.
+3. Run `npm install` in the primary checkout **root**, and confirm `apps/mobile` typechecks
+   **there** — not in the worktree the work was done in.
+4. The report's walkthrough begins: **`cd apps\mobile`, then `npx expo start`** — from the primary
+   checkout, nothing else.
+
+Merge, push, and branch/worktree cleanup happen only **after** the owner's gate passes and he says
+"merge". That is a separate step, not part of the handoff.
+
 ## End-of-session cleanup
 
 Before ending a session that started dev servers, background shells, or scratch scripts:
