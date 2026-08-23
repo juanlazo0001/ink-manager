@@ -22265,3 +22265,313 @@ Branch **`mobile/session-a`**, pushed, **not merged**:
 - **The 403 will mostly disappear** once the backend session lands Finding B's fix — at which
   point most of artist1's 15 rows become openable and this screen gets far more real coverage.
 - **No app icon or splash art.** Still Expo placeholders.
+
+# Mobile sessions B + C + D — artist profile, flash gallery, dashboard (overnight run)
+
+Branch `mobile/session-bcd`, four commits, all pushed, **unmerged** — the owner gate is a phone.
+
+## What shipped
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `93850a9` | `mobile: form + upload foundation` |
+| 2 | `f57af59` | `mobile: artist profile + editor` |
+| 3 | `d798915` | `mobile: flash gallery` |
+| 4 | `900a9a3` | `mobile: dashboard + parity items` |
+
+`git rev-parse HEAD` and `origin/mobile/session-bcd` both read `900a9a3` — **pushed and in sync**.
+Working tree clean; the only untracked files (`marketing/package-lock.json`,
+`public/desktop/screenshots/ink-manager-portal-restyle-v3.html`) predate this session and were
+left untouched. `tsc --noEmit` clean in `apps/mobile` and `npm run typecheck` (enum drift check +
+`tsc`) clean in `packages/shared-types` at every commit point; `expo export --platform ios`
+clean at every commit point (2.89 MB → 3.02 MB as the screens landed).
+
+## B0 — artist profile API surface (investigation)
+
+- **`GET /artists/:id`** needs `artists.view`, which ARTIST holds by default. The response was
+  captured live from the dev API and matches the type added to `packages/shared-types` exactly.
+- **The artist id comes from `GET /users/me` → `artist.id`.** There is no other source. That
+  block is present only for an account that *has* an artist profile, which is **not** the same
+  question as `role === 'ARTIST'` — a solo studio's first account is commonly an OWNER with one
+  attached. Mobile keys off the field, never the role.
+- **`PATCH /artists/:id`** is gated `requirePermissionOrSelfArtist("artists.manage")`. When the
+  caller arrives via self-bypass the API **silently strips** `isGuest`, `guestStartDate`,
+  `guestEndDate` and `allowsClientSelfScheduling`. Mobile therefore never sends them.
+- **Web saves whole-document**, with exceptions that each have their own route and their own
+  permission: `PATCH /artists/:id/preferred-schedule` (`artistSchedules.manage`, which a studio
+  can revoke from ARTIST entirely), `PATCH /artists/:id/self-scheduling` (solo-gated),
+  `PATCH /artists/:id/profile-delegation` (self-only, **no staff bypass at all**), and
+  `PATCH /artists/:id/publish`.
+- **Section order** is `GET|PUT /widget-layouts/artist-detail`, body
+  `{ widgetOrder: string[], collapsedWidgetIds: string[] }`. The API validates neither the page
+  key nor the ids inside it.
+- **`ARTIST_WIDGET_ORDER` has ten ids, but an artist sees nine.** `guest-artist` ("Limited
+  Availability Window") is rendered on web only for a caller with `artists.manage`. Flash
+  Booking Review and Client self-scheduling are *not* their own widgets — both live inside
+  `scheduling-buffer`.
+- **Two upload mechanisms, not one.** Portfolio and flash go to Cloudinary via
+  `GET /uploads/portfolio-signature` / `/uploads/flash-piece-signature`; **avatars do not touch
+  Cloudinary at all** — `PATCH /users/me` takes `avatarUrl` as a base64 `data:` string capped at
+  5 MB of source image. Conflating the two would break one of them.
+- `PATCH /users/me` is account fields only: `name`, `phone`, `avatarUrl`. Email and password
+  moved to their own confirmation-gated flows, and this route **silently ignores** them rather
+  than erroring — which is exactly how a client can believe it changed something it didn't.
+
+## C0 — flash API surface (investigation)
+
+- **`GET /flash-pieces`** needs `flashGallery.manage` (ARTIST default true) and **narrows an
+  ARTIST caller to their own pieces server-side**, across their HOME studio *and* every studio
+  they currently guest at. Passing `artistId` would be ignored.
+- **`POST /flash-pieces`**: an ARTIST never sends `artistId` (the route resolves "for myself").
+  Required: `imageUrl`, `title`, `priceCents`, `estimatedDurationMinutes`. The last two must be
+  **strictly positive** — zero is a 400.
+- **`PATCH /flash-pieces/:id`** is partial, and editing your *own* piece is never gated by any
+  studio permission.
+- **There is no delete.** `POST /:id/retire` is the only exit, it is one-way, and it is
+  reachable **only from AVAILABLE** — anything else answers
+  `400 Can't retire a piece that's currently BOOKED`.
+- **There is no `GET /flash-pieces/:id`.** The list route is the only read path, so the detail
+  screen fetches the list and picks its row. That also means the server's own scoping applies:
+  a piece that isn't the caller's simply isn't there.
+- `translations` is keyed by locale and the API **only upserts the locales it receives**, so a
+  write that omits the key preserves what web created.
+
+## DECISIONS
+
+Choices this prompt didn't cover, each resolved toward web where a precedent existed and toward
+less-capable where none did.
+
+1. **Reorder is arrows, not drag.** Web drags; mobile shows up/down controls behind a "Reorder"
+   toggle. Same ids, same `PUT`, same result on both clients — drag-inside-a-scrolling-form is
+   the one gesture a phone handles worst, and an arrow is reachable one-handed.
+2. **Profile is split into a read screen and an editor.** Web has one page that is merely
+   disabled for a caller who can't edit. A phone screen has room for the content or the
+   controls, not both.
+3. **Preferred-schedule times are typed, not picked.** `ScheduleBlock` holds a wall clock in the
+   *studio's* zone; every native picker returns a `Date` — an instant in the *device's* zone.
+   That conversion is the bug class this repo has hit four times.
+4. **Task due dates are Today / Tomorrow / In a week, not a picker.** Same reason. `dueAt` is a
+   calendar date at UTC midnight (web writes it with `parseDateString(...).toISOString()`), and
+   mobile writes the identical value.
+5. **`guest-artist` is not shown.** An artist has never seen it on web; showing it would be a
+   difference, not parity.
+6. **Retire is confirmed; web's is one tap.** It cannot be undone from this app at all, and on a
+   phone the control sits under a thumb.
+7. **No delete for flash pieces.** The API has none. Inventing one would offer a guaranteed
+   failure.
+8. **No Spanish translation editor.** Mobile omits the `translations` key entirely rather than
+   sending an empty object, so web's translations survive a mobile edit untouched.
+9. **No artist filter on the flash gallery.** Web has one because staff see everyone's; the API
+   already narrows an artist to their own, so it would have exactly one option.
+10. **Flash is reached from Account, not a sixth tab.** Five tabs is iOS's ceiling before a
+    "More" list. The tab bar ran out of room; the feature is not lesser for it.
+11. **Web's "Archived" conversation chip is omitted.** It is a separate server-side bucket, not
+    a view of the same list — a chip beside two instant filters would imply it costs nothing.
+12. **Conversation search is a server parameter.** The API matches message *content*, which this
+    client never fetches; a local title filter would look like search and miss most of it.
+13. **Go Solo and Delete Account are not built.** Both are irreversible account-lifecycle
+    actions, and the audit's own open question #3 asks whether they belong on a phone at all.
+    Left for that answer rather than assumed.
+14. **Settings (§10) is not built.** For an artist it is entirely read-only and contains nothing
+    they can change. A whole screen for "you don't have permission to edit this" is not parity
+    worth the surface.
+15. **`@react-navigation/native` was added to `apps/mobile`'s dependencies.** Required for
+    `usePreventRemove`, the only thing that holds a native-stack screen against the iOS
+    swipe-back gesture. It was already installed at the identical version under `expo-router`,
+    so the lockfile change is **one hoist and zero version changes**.
+16. **`FlashReviewMode` and `FlashPieceStatus` were added to the enum codegen**, not retyped —
+    the drift check covers them now, the same guard that would have caught `InquiryStatus`
+    shipping with 11 of its 15 values.
+
+## Deviations from web, deliberate
+
+- **Mobile's task due dates are correct and web's are not.** `PersonalTaskRow` read a
+  UTC-midnight calendar date with local `Date` getters, so a task due today rendered
+  "Yesterday · OVERDUE" for any viewer west of UTC. Both the label and the overdue test are
+  calendar-date comparisons against the studio's today now. **Web still does
+  `new Date(dueAt) < new Date()` and still has the same off-by-a-day** — flagged here rather
+  than reproduced for the sake of matching. **This is an open item for a web session.**
+- **`PATCH /artists/:id/preferred-schedule` answers a studio that has revoked
+  `artistSchedules.manage` with the bare word `Forbidden`.** Mobile was showing it verbatim,
+  which tells a person nothing; that one message now falls through to the shared role sentence,
+  the same treatment `loginErrorMessage` already gives `invalid credentials`.
+
+## Bugs found in my own work, by rendering it
+
+- **`commit(form.values)` left the form permanently dirty.** The clean baseline was a `useRef`,
+  so passing the same object back never invalidated the dirty memo — a successfully saved form
+  went on showing "unsaved changes" with a live Save button. It is state now.
+- **"Fix the highlighted fields" stayed up after the fields were fixed.** The form-level message
+  lives in `useForm` now and clears on any edit.
+- **Duplicate labels.** "SPECIALTIES" under a "SPECIALTIES" heading, four times over. The form
+  controls take `hideLabel` now, which suppresses the visible label only — the accessibility
+  label stays either way.
+- **The add-task bar floated mid-screen** when a filter emptied the list, because the empty-state
+  container centres its contents. And the empty copy said "Nothing on your list" when the truth
+  was "nothing overdue".
+
+None of these were caught by the type checker.
+
+## Skipped, and why
+
+- **Go Solo, Delete Account, Settings** — DECISIONS 13 and 14.
+- **Mentions (§11)** — web's popover is an empty state reading "internal mentions are coming to
+  Conversations". There is nothing to port.
+- **Kanban / Projects tab, calendar month & week views** — outside this prompt's scope, and the
+  audit deliberately did not sequence the calendar views.
+- **Push notifications** — no API support. Still **BLOCKED**, unchanged.
+
+## Data written during verification
+
+- **Dev database only. No production record was written at any point** — production was not
+  contacted at all this session.
+- One labelled flash piece was created, edited and retired against the **dev** database
+  (`localhost:4000`, `artist1@dev-studio.test`) using the exact bodies `src/lib/flash.ts`
+  builds: create `201`, patch `200`, values re-read from a fresh list (26000 cents / 150 min /
+  `isOneOfOne` true), `translations` still `{}`, retire `200`, second retire correctly `400`.
+  **Left on the dev database:** `[SESSION-BCD FIXTURE] mobile edit check`, status `RETIRED`, id
+  `cmt585qiv000usgi2i5v8fq14`. Safe to delete.
+- Everything else was exercised against a throwaway fixture server in the scratchpad, serving
+  the response shapes captured live from the dev API. It logged every write, which is how the
+  request bodies below were confirmed. It is not in the repo and is gone.
+
+## How this was verified
+
+A browser cannot log into this app: `expo-secure-store` has no web implementation, so
+`saveToken` throws. Every preview therefore supplied a session directly through a temporary
+`/preview` route (deleted before each commit) while the screens made their own real requests.
+
+Request bodies observed, not inferred:
+
+- `PATCH /users/me` → `{ name, phone, avatarUrl }` only.
+- `PATCH /artists/:id` → whole document, `hourlyRateCents: 19550` for `"195.50"`, and **none** of
+  the four fields the API strips.
+- `PUT /widget-layouts/artist-detail` → web's own ids, e.g.
+  `{"widgetOrder":["rates","bio","scheduling-buffer",…],"collapsedWidgetIds":["bio"]}`.
+- `POST /tasks/personal` → `{"title":"…","dueAt":"2026-08-23T00:00:00.000Z"}` — UTC midnight,
+  web's own convention.
+- `GET /reports/dashboard?start=2026-07-24&end=2026-08-22` — the **studio's** window.
+- Exactly one debounced `GET /conversations?search=walk`.
+
+**Two-timezone test** (dev box on `America/New_York`, studio deliberately set elsewhere):
+
+| | studio `America/New_York` | studio `Asia/Tokyo` |
+| --- | --- | --- |
+| Dashboard range | `2026-07-24 to 2026-08-22` | `2026-07-25 to 2026-08-23` |
+| Task due `2026-08-23T00:00Z` | `TOMORROW` | `TODAY` |
+| Task due `2026-08-22T00:00Z` | `TODAY`, not overdue | `OVERDUE · YESTERDAY` |
+
+Both track the studio's clock, not the phone's.
+
+Screenshots at 414pt in `apps/mobile/parity-audit/`: `b1-*` (form foundation, validation, save,
+dirty tracking), `b2-*` (profile view, schedule, portfolio, collapse + reorder), `b3-*` (editor,
+policy switches, schedule editor, saved, publish-precondition 400, schedule 403), `c1-*`–`c3-*`
+(gallery, filter, piece editor, validation, retire), `d1-*`–`d4-*` (dashboard, studio-timezone
+range, task creation, thread controls, thread sort, due dates under a foreign studio zone,
+overdue empty state).
+
+## What is NOT verified
+
+**Nothing in this session has run on a phone.** That is unchanged from every previous mobile
+session and it is the whole point of the gate below. Specifically device-only:
+
+- **Every `Alert.alert`.** `react-native-web` stubs `Alert` to a no-op, so the unsaved-changes
+  dialog, the retire confirmation and the photo-permission prompt have all been *wired* and none
+  has been *seen*.
+- **The unsaved-changes guard against the iOS swipe-back gesture.** `usePreventRemove` is the
+  right hook for it; only a device proves it.
+- **Every image upload.** `expo-image-picker` needs a real photo library, so no picked photo has
+  ever reached Cloudinary or `PATCH /users/me` from this client.
+- **Keyboard avoidance.** There is no keyboard in a desktop browser.
+- The `One of one` switch renders a green thumb on web; that is a `react-native-web` default,
+  not what the phone will show.
+
+## Owner walkthrough — the phone gate
+
+Expo Go, signed in as an artist. **Anything below that fails, stops the merge.**
+
+**Getting in**
+
+1. Sign in. You should land on **MESSAGES**, and the tab bar should now read
+   **HOME · SCHEDULE · MESSAGES · TASKS · INQUIRIES** — five tabs, Home first.
+
+**HOME**
+
+2. "Welcome, «your first name»" with the name in gold. Tap **LAST 7 DAYS** / **LAST 90 DAYS** —
+   the numbers and the date line under the chips should both change.
+3. Read the date line. It must name **your studio's timezone**, and the end date must be *your
+   studio's* today. If your studio is in a different zone from the phone, this is the one to
+   look at hardest.
+4. **Needs scheduling** should say "Right now — not the range above". Tap it; it goes to
+   Inquiries.
+5. Funnel bars, conversion percentages, lost/cold rate, both response-time averages with a
+   "From N projects" line under each. **A dash, never "0%", where there's no data.**
+
+**TASKS**
+
+6. Type into **Add a task…**. Date chips (No date / Today / Tomorrow / In a week) should appear
+   as you type. Pick **Tomorrow**, tap **+**.
+7. The new task appears at the top with a **TOMORROW** pill. **Check the day is right for your
+   studio.**
+8. Tap **DUE SOONEST** — dated tasks in order, undated ones last. Tap **NAME A–Z**.
+9. Tap **OVERDUE** (red outline). Only genuinely late tasks; the DONE pile hides. Tap it off.
+
+**MESSAGES**
+
+10. Search box, three filter chips, **SORT** on the right. Type at least two characters — a
+    spinner, then results. **Search matches message text, not just names**, so search for a
+    phrase you know is inside a thread.
+11. **UNREAD** and **NEEDS ACTION** filter instantly. **SORT** opens four options with a tick on
+    the current one.
+
+**ACCOUNT → ARTIST PROFILE** (tap the avatar, top right)
+
+12. Two new rows: **Artist profile** and **Flash gallery**.
+13. Open **Artist profile**. Your photo, name, email, phone, role. Below it nine sections in
+    order: Bio · Rates · Scheduling Buffer · Social Links · Public presence · Specialties ·
+    Services Offered · Preferred Schedule · Portfolio.
+14. Tap a section title to collapse it — a one-line summary should replace the body. Tap
+    **REORDER SECTIONS**, move one with the arrows, tap **DONE REORDERING**. **Now open the same
+    profile on the web app: the order and the collapsed section must match.** That is the whole
+    point of this bit.
+
+**THE EDITOR** (tap **EDIT**)
+
+15. **Add a photo** on the avatar. Grant photo access when asked. Crop, and confirm it appears.
+    *(First real check of the picker.)*
+16. Change your bio and hourly rate. A **DISCARD / SAVE CHANGES** bar appears at the bottom.
+17. Type a letter into Hourly rate. Tap **SAVE CHANGES** — the field goes red with a message,
+    and a line appears above the buttons. Fix it; the field error clears **as you type**.
+18. Tap **SAVE CHANGES**. The bar collapses to "Saved." **Reload the web profile — the bio, rate
+    and photo must be there.**
+19. **Tap the back chevron with unsaved changes.** A "Discard changes?" dialog. Choose **Keep
+    editing**. Then try again and **swipe back from the left edge** — the same dialog must
+    appear. *(This is the one thing a browser cannot test at all.)*
+20. **Preferred Schedule**: switch a day on, type `9:30` and `17:00`, tap **SAVE SCHEDULE**.
+    Note it saves on its own — the main Save bar is not involved.
+21. **Let studio staff edit my profile** and **Let clients self-schedule with me** both save the
+    instant you tap them. If self-scheduling is greyed out with "Your studio manages this", that
+    is correct for a multi-person studio.
+22. **Public presence**: type a page URL, tap **PUBLISH**. If your studio has no location on
+    file you should get a readable sentence telling you to ask the owner — not a raw error.
+23. **Portfolio**: add a photo. It should upload and appear as a tile. **Remove one, then tap
+    SAVE CHANGES** — check the web profile agrees.
+
+**FLASH GALLERY** (Account → Flash gallery)
+
+24. A two-column grid of your pieces, each with price, session length, a status pill, and a
+    **ONE OF ONE** badge where it applies. Summary line under the title.
+25. Tap a piece's **image** — full screen, swipe between pieces, ✕ to close. Tap the **text
+    below** the image instead — that opens the editor. Two different targets, on purpose.
+26. Tap a status chip to filter. Tap it again to clear.
+27. **+ NEW**. Tap **CREATE PIECE** with the form empty: image, price and session length all
+    error. Add a photo, a title, a price and a length; create it. It should appear in the grid.
+28. Open an **AVAILABLE** piece, scroll to the bottom, tap **RETIRE THIS PIECE**. A confirmation
+    dialog. Confirm — the pill becomes **Retired**. **This cannot be undone from the phone.**
+29. Open a **BOOKED** piece: there should be no retire button, only a sentence saying why.
+
+**Last**
+
+30. Anywhere the app says something failed, read the sentence. If any of them reads like a
+    machine wrote it — a bare status code, the word "Forbidden", an untranslated field name —
+    that is a bug worth reporting, not a rough edge.
