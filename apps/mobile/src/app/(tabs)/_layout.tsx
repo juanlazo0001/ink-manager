@@ -19,10 +19,13 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        sceneStyle: { backgroundColor: colors.bg },
+        // Transparent for the same reason the root Stack is — see there.
+        sceneStyle: { backgroundColor: 'transparent' },
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.fgMuted,
         tabBarStyle: {
+          // The one chrome that stays opaque: a translucent tab bar over a
+          // photo makes its labels unreadable as content scrolls beneath.
           backgroundColor: colors.surfaceInset,
           borderTopWidth: hairline,
           borderTopColor: colors.border,

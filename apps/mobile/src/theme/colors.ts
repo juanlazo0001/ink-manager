@@ -69,6 +69,23 @@ export const colors = {
   warning: '#d9a441',
   /** --color-neutral. */
   neutral: '#9b927f',
+
+  /**
+   * --color-card-glass. The card surface used app-wide under Editorial
+   * Gold, NOT a login-only value: web's `.card-surface` marker class puts
+   * it on every card wrapper in the app (Dashboard's CardShell, Widget,
+   * Team, Settings...). It reads as translucent over the background photo
+   * — 0xd6 is 84% — which is the whole point of the treatment.
+   *
+   * It has lived under `login` in this file since the login screen was the
+   * first thing to need it. Promoted here now that the rest of the app
+   * uses it too; `login.cardGlass` still points at the same value.
+   */
+  cardGlass: '#100f0ed6',
+  /** --color-card-glass-opaque. The same surface where translucency is wrong. */
+  cardGlassOpaque: '#100f0e',
+  /** --color-border-glass. Fainter than the app-wide border, by design. */
+  cardBorder: 'rgba(201, 154, 91, 0.1)',
 } as const;
 
 /**

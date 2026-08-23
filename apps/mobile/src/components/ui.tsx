@@ -10,12 +10,18 @@ import {
   type ViewStyle,
 } from 'react-native';
 
+import { Card, Eyebrow } from '@/components/editorial';
 import { colors, hairline, radius, space, type } from '@/theme';
 
-/** Uppercase letterspaced eyebrow — the Jura role from the web app. */
-export function Eyebrow({ children, style }: { children: ReactNode; style?: StyleProp<TextStyle> }) {
-  return <Text style={[styles.eyebrow, style]}>{String(children).toUpperCase()}</Text>;
-}
+/**
+ * `Eyebrow` and `Card` used to be defined here as a plain letterspaced
+ * caption and a flat surface. Both now come from `editorial.tsx`, which
+ * carries apps/web's actual treatment — the red `+` ticks and the
+ * translucent glass card. Re-exported from here rather than moved,
+ * because every screen already imports them from this module and the
+ * point of the change is that they all pick it up.
+ */
+export { Card, Eyebrow };
 
 export function ScreenTitle({ children }: { children: ReactNode }) {
   return <Text style={styles.screenTitle}>{children}</Text>;
@@ -79,10 +85,6 @@ export function QuietButton({
   );
 }
 
-export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  return <View style={[styles.card, style]}>{children}</View>;
-}
-
 /**
  * A small tinted chip. `tone` carries the colour, so red never leaks in as
  * decoration — the only way to get red here is to ask for `danger`, which
@@ -127,9 +129,7 @@ export function StateMessage({
 }) {
   return (
     <View style={styles.stateMessage}>
-      {eyebrow ? (
-        <Eyebrow style={tone === 'alert' ? styles.eyebrowAlert : styles.eyebrowAccent}>{eyebrow}</Eyebrow>
-      ) : null}
+      {eyebrow ? <Eyebrow tone={tone === 'alert' ? 'alert' : 'accent'}>{eyebrow}</Eyebrow> : null}
       <Text style={styles.stateTitle}>{title}</Text>
       {body ? <Text style={styles.stateBody}>{body}</Text> : null}
       {action ? <QuietButton label={action.label} onPress={action.onPress} style={styles.stateAction} /> : null}
@@ -147,9 +147,6 @@ export function ScreenLoading() {
 }
 
 const styles = StyleSheet.create({
-  eyebrow: { ...type.eyebrow, color: colors.fgMuted },
-  eyebrowAccent: { color: colors.accent },
-  eyebrowAlert: { color: colors.danger },
   screenTitle: { ...type.display, color: colors.fg },
 
   goldButton: {
@@ -175,13 +172,6 @@ const styles = StyleSheet.create({
   },
   quietButtonPressed: { opacity: 0.6 },
   quietButtonLabel: { ...type.button, color: colors.fgSecondary },
-
-  card: {
-    backgroundColor: colors.surface,
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.card,
-  },
 
   chip: {
     flexDirection: 'row',

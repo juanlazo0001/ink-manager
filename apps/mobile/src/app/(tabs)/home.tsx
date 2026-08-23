@@ -147,7 +147,7 @@ export default function HomeScreen() {
               style={({ pressed }) => [styles.needsCard, pressed && styles.pressed]}
             >
               <View style={styles.needsText}>
-                <Eyebrow style={styles.accentEyebrow}>Needs scheduling</Eyebrow>
+                <Eyebrow tone="accent">Needs scheduling</Eyebrow>
                 <Text style={styles.bigNumber}>{data.needsSchedulingCount}</Text>
                 <Text style={styles.hint}>
                   {data.needsSchedulingCount === 1 ? 'project has' : 'projects have'} a paid deposit and no appointment
