@@ -1,24 +1,30 @@
 import type { PersonalTask, SystemTask, TasksResponse } from '@ink-manager/shared-types';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { NewTaskBar } from '@/components/NewTaskBar';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { PersonalTaskRow, SystemTaskRow } from '@/components/TaskRow';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { screenErrorMessage } from '@/lib/screenError';
-import { dismissSystemTask, fetchTasks, setPersonalTaskCompleted } from '@/lib/tasks';
+import { useStudioTimeZone } from '@/hooks/useStudioTimeZone';
+import { createPersonalTask, dismissSystemTask, fetchTasks, setPersonalTaskCompleted } from '@/lib/tasks';
 import {
+  isOverdue,
   mobileRouteForSystemTask,
   segmentCount,
+  sortTasks,
   splitByCompletion,
+  TASK_SORTS,
   taskSegmentsFor,
   type TaskSegment,
+  type TaskSort,
 } from '@/lib/taskDisplay';
-import { colors, hairline, space, type } from '@/theme';
+import { colors, hairline, radius, space, type } from '@/theme';
 
 /** Same cadence as the other tabs. */
 const POLL_MS = 30_000;
@@ -40,6 +46,11 @@ export default function TasksScreen() {
   const [refreshing, setRefreshing] = useState(false);
   /** Ids currently mid-write, so a row shows a spinner rather than lying. */
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [sort, setSort] = useState<TaskSort>('newest');
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const { timeZone } = useStudioTimeZone();
 
   const requestRef = useRef(0);
 
@@ -131,6 +142,32 @@ export default function TasksScreen() {
     [token],
   );
 
+  /**
+   * Creating is deliberately NOT optimistic, unlike completing.
+   *
+   * A tick has an obvious rollback — put it back. A created row has no id
+   * until the server gives it one, and inventing a placeholder means
+   * either a row that can't be completed for a moment or a temporary id
+   * leaking into the list's keys. The write is fast and the spinner is
+   * honest.
+   */
+  const addTask = useCallback(
+    async (input: { title: string; dueAt: string | null }) => {
+      if (!token) return;
+      setCreating(true);
+      setCreateError(null);
+      try {
+        const created = await createPersonalTask(token, { title: input.title, dueAt: input.dueAt });
+        setData((current) => (current ? { ...current, personal: [created, ...current.personal] } : current));
+      } catch (err) {
+        setCreateError(screenErrorMessage(err, 'tasks'));
+      } finally {
+        setCreating(false);
+      }
+    },
+    [token],
+  );
+
   const dismiss = useCallback(
     async (task: SystemTask) => {
       if (!token) return;
@@ -164,16 +201,33 @@ export default function TasksScreen() {
     const source = segment === 'assignedToMe' ? data.personal : data.assignedByMe;
     // Only the assignee may complete — the API's PATCH is assignee-only.
     const canComplete = segment === 'assignedToMe';
-    const { open, done } = splitByCompletion(source);
+    const { open: allOpen, done } = splitByCompletion(source);
+    // The overdue filter applies to open work only. A completed task that
+    // was once late is not "overdue" — it is done.
+    const filtered = overdueOnly ? allOpen.filter((t) => isOverdue(t, timeZone)) : allOpen;
+    const open = sortTasks(filtered, sort);
     const out: { title: string | null; data: Row[] }[] = [];
     if (open.length > 0) out.push({ title: null, data: open.map((task): Row => ({ kind: 'personal', task, canComplete })) });
-    if (done.length > 0) {
+    // The done pile is hidden while OVERDUE is on. The filter is about
+    // open work by definition — a completed task that was once late is
+    // not overdue, it is finished — and leaving the pile visible under an
+    // active filter reads as "these are the overdue ones".
+    if (done.length > 0 && !overdueOnly) {
       out.push({ title: `DONE (${done.length})`, data: done.map((task): Row => ({ kind: 'personal', task, canComplete })) });
     }
     return out;
-  }, [data, segment]);
+  }, [data, segment, sort, overdueOnly, timeZone]);
 
   const emptyCopy = useMemo(() => {
+    // The filter's own empty state comes first: "nothing on your list" is
+    // a different and wrong statement when the list is merely filtered.
+    if (overdueOnly && segment !== 'queue') {
+      return {
+        eyebrow: 'Nothing late',
+        title: 'Nothing is overdue',
+        body: 'Turn off the Overdue filter to see everything on your list.',
+      };
+    }
     switch (segment) {
       case 'queue':
         return { eyebrow: 'Clear', title: 'Nothing needs attention', body: 'The studio queue is empty right now.' };
@@ -186,7 +240,7 @@ export default function TasksScreen() {
       default:
         return { eyebrow: 'Clear', title: 'Nothing on your list', body: 'Tasks assigned to you will show up here.' };
     }
-  }, [segment]);
+  }, [segment, overdueOnly]);
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -201,16 +255,56 @@ export default function TasksScreen() {
         onChange={setSegment}
       />
 
+      {/* Not shown on QUEUE: system tasks are computed, have no title to
+          sort by and no due date to be late against. */}
+      {segment !== 'queue' ? (
+        <View style={styles.controls}>
+          <Pressable
+            onPress={() => setOverdueOnly((v) => !v)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: overdueOnly }}
+            style={({ pressed }) => [styles.chip, overdueOnly && styles.chipOverdue, pressed && styles.pressed]}
+          >
+            <Text style={[styles.chipLabel, overdueOnly && styles.chipLabelOverdue]}>OVERDUE</Text>
+          </Pressable>
+          <View style={styles.controlsSpacer} />
+          {TASK_SORTS.map((option) => {
+            const on = option.key === sort;
+            return (
+              <Pressable
+                key={option.key}
+                onPress={() => setSort(option.key)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}
+                style={({ pressed }) => [styles.chip, on && styles.chipOn, pressed && styles.pressed]}
+              >
+                <Text style={[styles.chipLabel, on && styles.chipLabelOn]}>{option.label.toUpperCase()}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+
       {data === null && error === null ? (
         <ScreenLoading />
       ) : (
         <SectionList
           sections={sections}
+          ListHeaderComponent={
+            // Only on MINE. A new task is always created for yourself
+            // (assigning to someone else needs tasks.assignToOthers, which
+            // an artist doesn't have), so offering it above the delegated
+            // or queue lists would put the result somewhere else.
+            segment === 'assignedToMe' ? (
+              <NewTaskBar timeZone={timeZone} onCreate={addTask} busy={creating} error={createError} />
+            ) : null
+          }
           keyExtractor={(row) => (row.kind === 'personal' ? row.task.id : `${row.task.type}:${row.task.dismissalKey}`)}
           renderItem={({ item }) =>
             item.kind === 'personal' ? (
               <PersonalTaskRow
                 task={item.task}
+                timeZone={timeZone}
                 canComplete={item.canComplete}
                 busy={busyIds.has(item.task.id)}
                 onToggleComplete={() => toggleComplete(item.task)}
@@ -238,7 +332,12 @@ export default function TasksScreen() {
           }
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           stickySectionHeadersEnabled={false}
-          contentContainerStyle={sections.length === 0 ? styles.emptyContainer : styles.listContent}
+          // Centering only applies when there is no header. With the add
+          // bar present, `flexGrow: 1` + centering would float it into the
+          // middle of an otherwise blank screen.
+          contentContainerStyle={
+            sections.length === 0 && segment !== 'assignedToMe' ? styles.emptyContainer : styles.listContent
+          }
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -282,4 +381,27 @@ const styles = StyleSheet.create({
   },
   sectionRule: { flex: 1, height: hairline, backgroundColor: colors.borderSoft },
   sectionLabel: { ...type.label, color: colors.fgMuted },
+
+  controls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingBottom: space.md,
+  },
+  controlsSpacer: { flex: 1 },
+  chip: {
+    borderWidth: hairline,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: 4,
+  },
+  chipOn: { borderColor: colors.accent, backgroundColor: colors.surfaceRaised },
+  // The one place red belongs on this screen: lateness is the alert.
+  chipOverdue: { borderColor: colors.dangerStrong },
+  chipLabel: { ...type.label, fontSize: 9, color: colors.fgMuted },
+  chipLabelOn: { color: colors.accent },
+  chipLabelOverdue: { color: colors.danger },
+  pressed: { opacity: 0.6 },
 });

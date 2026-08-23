@@ -1,5 +1,7 @@
 import type { PersonalTask, SystemTask, TasksResponse } from '@ink-manager/shared-types';
 
+import { formatDateKey, shiftDateKey, todayKey } from './studioTime';
+
 /**
  * Which segments the Tasks tab shows, and what goes in each.
  *
@@ -44,19 +46,91 @@ export function taskSegmentsFor(permissions: string[]): TaskSegmentDef[] {
 }
 
 /**
+ * The calendar date a task is due, as a `"YYYY-MM-DD"` key.
+ *
+ * `dueAt` is NOT an instant despite its ISO shape: it is a plain calendar
+ * date stored at UTC midnight (web writes it with
+ * `parseDateString(value).toISOString()`), which is one of the two
+ * conventions this codebase uses on purpose. Slicing the date portion is
+ * the documented way to read that convention back — reading it with local
+ * `Date` getters re-interprets the UTC midnight in the viewer's own zone
+ * and shows the wrong day for anyone west of UTC.
+ */
+export function dueDateKey(dueAt: string): string {
+  return dueAt.slice(0, 10);
+}
+
+/**
  * Past its due date and not yet done.
  *
- * An instant comparison against "right now", deliberately — not a
- * calendar-day question, so unlike the Schedule tab this needs no studio
- * timezone. A task due at 17:00 is overdue at 17:01 wherever anyone is
- * standing. The web app derives it identically.
+ * A CALENDAR-DAY comparison against the studio's today, not an instant
+ * comparison against "right now". That is a deliberate difference from
+ * the web app, which does `new Date(dueAt) < new Date()` — with dueAt at
+ * UTC midnight, that marks a task due today as overdue from 8pm the
+ * evening BEFORE in New York, and the row then reads "Yesterday ·
+ * OVERDUE" for a task that is not yet due at all. Flagged for web too;
+ * mobile is not going to reproduce it to match.
  */
-export function isOverdue(task: Pick<PersonalTask, 'dueAt' | 'completedAt'>, now: Date = new Date()): boolean {
-  return !!task.dueAt && !task.completedAt && new Date(task.dueAt) < now;
+export function isOverdue(
+  task: Pick<PersonalTask, 'dueAt' | 'completedAt'>,
+  timeZone: string,
+  now: Date = new Date(),
+): boolean {
+  if (!task.dueAt || task.completedAt) return false;
+  return dueDateKey(task.dueAt) < todayKey(timeZone, now);
+}
+
+/**
+ * `Today` / `Tomorrow` / `Yesterday` / `3 Apr`, relative to the STUDIO's
+ * today. Same convention and same reasoning as `isOverdue` above.
+ */
+export function dueLabel(dueAt: string, timeZone: string, now: Date = new Date()): string {
+  const key = dueDateKey(dueAt);
+  const today = todayKey(timeZone, now);
+  if (key === today) return 'Today';
+  if (key === shiftDateKey(today, 1)) return 'Tomorrow';
+  if (key === shiftDateKey(today, -1)) return 'Yesterday';
+  return formatDateKey(key, { day: 'numeric', month: 'short' });
 }
 
 export function isComplete(task: Pick<PersonalTask, 'completedAt'>): boolean {
   return task.completedAt !== null;
+}
+
+/**
+ * Web's task sort options, same three and same order.
+ *
+ * `dueSoonest` puts undated tasks LAST rather than first: a task with no
+ * date is not urgent, and sorting nulls to the top would bury everything
+ * that actually has a deadline.
+ */
+export type TaskSort = 'newest' | 'dueSoonest' | 'name';
+
+export const TASK_SORTS: { key: TaskSort; label: string }[] = [
+  { key: 'newest', label: 'Newest' },
+  { key: 'dueSoonest', label: 'Due soonest' },
+  { key: 'name', label: 'Name A–Z' },
+];
+
+export function sortTasks(tasks: PersonalTask[], sort: TaskSort): PersonalTask[] {
+  const out = [...tasks];
+  switch (sort) {
+    case 'dueSoonest':
+      return out.sort((a, b) => {
+        if (!a.dueAt && !b.dueAt) return 0;
+        if (!a.dueAt) return 1;
+        if (!b.dueAt) return -1;
+        // Compared as date KEYS, not parsed instants -- dueAt is a
+        // calendar date at UTC midnight, and string order on
+        // "YYYY-MM-DD" is chronological order.
+        return dueDateKey(a.dueAt).localeCompare(dueDateKey(b.dueAt));
+      });
+    case 'name':
+      return out.sort((a, b) => a.title.localeCompare(b.title));
+    case 'newest':
+    default:
+      return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
 }
 
 /**

@@ -2,22 +2,8 @@ import type { PersonalTask, SystemTask } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { isOverdue, systemTaskLabel } from '@/lib/taskDisplay';
+import { dueLabel, isOverdue, systemTaskLabel } from '@/lib/taskDisplay';
 import { colors, hairline, radius, space, type } from '@/theme';
-
-/** `Today` / `Tomorrow` / `3 Apr`, plus a bare `Overdue` prefix when it is. */
-function dueLabel(dueAt: string, now: Date = new Date()): string {
-  const due = new Date(dueAt);
-  const dayMs = 24 * 60 * 60 * 1000;
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate()).getTime();
-  const diffDays = Math.round((dueDay - startOfToday) / dayMs);
-
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Tomorrow';
-  if (diffDays === -1) return 'Yesterday';
-  return due.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-}
 
 /**
  * A personal task — a real row, so it can be completed.
@@ -32,14 +18,22 @@ export function PersonalTaskRow({
   canComplete,
   busy,
   onToggleComplete,
+  timeZone,
 }: {
   task: PersonalTask;
   canComplete: boolean;
   busy?: boolean;
   onToggleComplete?: () => void;
+  /**
+   * The studio's zone. Required, not optional with a device fallback:
+   * "due today" is a question about the studio's calendar, and a silent
+   * fallback to the phone's zone is how the wrong day gets shown without
+   * anyone noticing.
+   */
+  timeZone: string;
 }) {
   const complete = task.completedAt !== null;
-  const overdue = isOverdue(task);
+  const overdue = isOverdue(task, timeZone);
   // Who this involves: on MINE it is who assigned it, on DELEGATED it is
   // who it went to. Both come off the same row from different includes.
   const counterpart = task.createdBy ?? task.user ?? null;
@@ -88,7 +82,9 @@ export function PersonalTaskRow({
             // is exactly what this palette reserves red for.
             <View style={[styles.duePill, overdue && styles.duePillOverdue]}>
               <Text style={[styles.dueLabel, overdue && styles.dueLabelOverdue]}>
-                {overdue ? `OVERDUE · ${dueLabel(task.dueAt).toUpperCase()}` : dueLabel(task.dueAt).toUpperCase()}
+                {overdue
+                  ? `OVERDUE · ${dueLabel(task.dueAt, timeZone).toUpperCase()}`
+                  : dueLabel(task.dueAt, timeZone).toUpperCase()}
               </Text>
             </View>
           ) : null}

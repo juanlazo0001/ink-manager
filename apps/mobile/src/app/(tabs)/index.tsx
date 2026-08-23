@@ -1,14 +1,21 @@
 import type { ConversationListItem } from '@ink-manager/shared-types';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ConversationRow } from '@/components/ConversationRow';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { ThreadListControls } from '@/components/ThreadListControls';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { fetchConversations } from '@/lib/conversations';
+import {
+  applyControls,
+  isSearchable,
+  type ThreadFilter,
+  type ThreadSort,
+} from '@/lib/conversationListControls';
 import { screenErrorMessage } from '@/lib/screenError';
 import { colors, space } from '@/theme';
 
@@ -25,6 +32,13 @@ import { colors, space } from '@/theme';
  */
 const LIST_POLL_MS = 30_000;
 
+/**
+ * How long typing has to stop before a search is sent. Long enough not to
+ * fire a request per keystroke on a phone keyboard, short enough that the
+ * list still feels like it is responding to what was typed.
+ */
+const SEARCH_DEBOUNCE_MS = 350;
+
 export default function ConversationsScreen() {
   const router = useRouter();
   const { session } = useAuth();
@@ -33,6 +47,21 @@ export default function ConversationsScreen() {
   const [items, setItems] = useState<ConversationListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+
+  // `search` is what has been typed; `activeSearch` is what has actually
+  // been sent. Keeping them apart is what makes the debounce visible --
+  // the spinner belongs to the gap between the two.
+  const [search, setSearch] = useState('');
+  const [activeSearch, setActiveSearch] = useState('');
+  const [filter, setFilter] = useState<ThreadFilter>('all');
+  const [sort, setSort] = useState<ThreadSort>('recent');
+
+  useEffect(() => {
+    const term = isSearchable(search) ? search.trim() : '';
+    if (term === activeSearch) return;
+    const timer = setTimeout(() => setActiveSearch(term), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [search, activeSearch]);
 
   // Guards a slow response from a previous load overwriting a newer one,
   // and stops a poll landing after the screen unmounts.
@@ -45,7 +74,7 @@ export default function ConversationsScreen() {
       if (mode === 'refresh') setRefreshing(true);
 
       try {
-        const next = await fetchConversations(token);
+        const next = await fetchConversations(token, activeSearch ? { search: activeSearch } : {});
         if (seq !== requestRef.current) return;
         setItems(next);
         setError(null);
@@ -60,15 +89,16 @@ export default function ConversationsScreen() {
         if (seq === requestRef.current && mode === 'refresh') setRefreshing(false);
       }
     },
-    [token, items],
+    [token, items, activeSearch],
   );
 
   useEffect(() => {
     load('initial');
-    // Deliberately once on mount: `load` changes identity whenever `items`
-    // does, and depending on it here would refetch on every response.
+    // Deliberately keyed on the token and the ACTIVE search only: `load`
+    // changes identity whenever `items` does, and depending on it here
+    // would refetch on every response.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, activeSearch]);
 
   // Refetch on focus (coming back from a thread, where sending a message
   // has almost certainly reordered the list) and poll while focused only.
@@ -84,6 +114,9 @@ export default function ConversationsScreen() {
   useEffect(() => () => void ++requestRef.current, []);
 
   const unread = items?.reduce((n, c) => n + (c.unreadCount > 0 ? 1 : 0), 0) ?? 0;
+  const visible = useMemo(() => applyControls(items ?? [], filter, sort), [items, filter, sort]);
+  // Typed something worth searching, but the request for it hasn't landed.
+  const searching = isSearchable(search) && search.trim() !== activeSearch;
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -94,11 +127,21 @@ export default function ConversationsScreen() {
         }
       />
 
+      <ThreadListControls
+        search={search}
+        onSearchChange={setSearch}
+        searching={searching}
+        filter={filter}
+        onFilterChange={setFilter}
+        sort={sort}
+        onSortChange={setSort}
+      />
+
       {items === null && error === null ? (
         <ScreenLoading />
       ) : (
         <FlatList
-          data={items ?? []}
+          data={visible}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <ConversationRow
@@ -110,7 +153,7 @@ export default function ConversationsScreen() {
             />
           )}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
-          contentContainerStyle={(items ?? []).length === 0 ? styles.emptyContainer : undefined}
+          contentContainerStyle={visible.length === 0 ? styles.emptyContainer : undefined}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -128,6 +171,20 @@ export default function ConversationsScreen() {
                 title={error}
                 body="Nothing has been lost — this is only what this device could fetch."
                 action={{ label: 'Try again', onPress: () => load('refresh') }}
+              />
+            ) : activeSearch ? (
+              <StateMessage
+                eyebrow="No matches"
+                title={`Nothing matching "${activeSearch}"`}
+                body="Search looks at names and message text. Try fewer words."
+                action={{ label: 'Clear search', onPress: () => setSearch('') }}
+              />
+            ) : filter !== 'all' ? (
+              <StateMessage
+                eyebrow="Nothing here"
+                title={filter === 'unread' ? 'Nothing unread' : 'Nothing waiting on you'}
+                body="Switch back to All to see every thread."
+                action={{ label: 'Show all', onPress: () => setFilter('all') }}
               />
             ) : (
               <StateMessage

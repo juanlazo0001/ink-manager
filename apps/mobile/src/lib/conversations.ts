@@ -22,10 +22,26 @@ import { apiFetch } from './api';
  * on the client would at best duplicate it and at worst contradict it.
  */
 
-export function fetchConversations(token: string, signal?: AbortSignal): Promise<ConversationListItem[]> {
+/**
+ * `search` is passed through to the API rather than applied here, because
+ * it matches message CONTENT as well as names -- content this client
+ * never fetches. A local filter over thread titles would look like search
+ * and silently miss every thread whose match is inside the messages.
+ *
+ * The route ignores a term under two characters, so callers should not
+ * send one (see `isSearchable`).
+ */
+export function fetchConversations(
+  token: string,
+  params: { search?: string } = {},
+  signal?: AbortSignal,
+): Promise<ConversationListItem[]> {
   // No pagination parameters exist on this route -- it returns the whole
   // visible, non-archived list in one response.
-  return apiFetch<ConversationListItem[]>('/conversations', { token, signal });
+  const query = new URLSearchParams();
+  if (params.search) query.set('search', params.search);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return apiFetch<ConversationListItem[]>(`/conversations${suffix}`, { token, signal });
 }
 
 export function fetchThread(
