@@ -5,7 +5,7 @@ import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from '
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { NewTaskBar } from '@/components/NewTaskBar';
-import { ScreenHeader } from '@/components/ScreenHeader';
+import { TopBar } from '@/components/TopBar';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { PersonalTaskRow, SystemTaskRow } from '@/components/TaskRow';
 import { ScreenLoading, StateMessage } from '@/components/ui';
@@ -244,10 +244,7 @@ export default function TasksScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
-      <ScreenHeader
-        title="Tasks"
-        subtitle={segments.length === 1 ? undefined : `${segments.length} views`}
-      />
+      <TopBar />
 
       <SegmentedControl
         segments={segments.map((s) => ({ ...s, count: segmentCount(data, s.key) }))}

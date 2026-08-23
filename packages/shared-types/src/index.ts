@@ -7,3 +7,4 @@ export * from './inquiries';
 export * from './artists';
 export * from './flash';
 export * from './reports';
+export * from './navCounts';

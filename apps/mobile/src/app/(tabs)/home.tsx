@@ -14,7 +14,7 @@ import {
   RedRule,
   StatChip,
 } from '@/components/editorial';
-import { ScreenHeader } from '@/components/ScreenHeader';
+import { TopBar } from '@/components/TopBar';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { useStudioTimeZone } from '@/hooks/useStudioTimeZone';
@@ -96,7 +96,7 @@ export default function HomeScreen() {
   if (!ready || (!data && !error)) {
     return (
       <SafeAreaView style={styles.screen} edges={['top']}>
-        <ScreenHeader title="Home" />
+        <TopBar />
         <ScreenLoading />
       </SafeAreaView>
     );
@@ -104,7 +104,7 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
-      <ScreenHeader title="Home" subtitle={session?.studio?.name ?? undefined} />
+      <TopBar />
 
       <ScrollView
         contentContainerStyle={styles.content}

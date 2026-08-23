@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppointmentRow } from '@/components/AppointmentRow';
 import { DayStrip } from '@/components/DayStrip';
-import { ScreenHeader } from '@/components/ScreenHeader';
+import { TopBar } from '@/components/TopBar';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useStudioTimeZone } from '@/hooks/useStudioTimeZone';
 import { useAuth } from '@/context/auth';
@@ -146,7 +146,7 @@ export default function ScheduleScreen() {
   if (!timeZoneReady || !today || !activeKey) {
     return (
       <SafeAreaView style={styles.screen} edges={['top']}>
-        <ScreenHeader title="Schedule" />
+        <TopBar />
         <ScreenLoading />
       </SafeAreaView>
     );
@@ -154,7 +154,7 @@ export default function ScheduleScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
-      <ScreenHeader title="Schedule" subtitle={subtitle} />
+      <TopBar />
 
       <View style={styles.controls}>
         <View style={styles.modes}>

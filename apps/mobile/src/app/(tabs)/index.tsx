@@ -5,7 +5,7 @@ import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ConversationRow } from '@/components/ConversationRow';
-import { ScreenHeader } from '@/components/ScreenHeader';
+import { TopBar } from '@/components/TopBar';
 import { ThreadListControls } from '@/components/ThreadListControls';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -120,12 +120,7 @@ export default function ConversationsScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
-      <ScreenHeader
-        title="Messages"
-        subtitle={
-          items === null ? undefined : unread > 0 ? `${unread} thread${unread === 1 ? '' : 's'} unread` : 'All caught up'
-        }
-      />
+      <TopBar />
 
       <ThreadListControls
         search={search}

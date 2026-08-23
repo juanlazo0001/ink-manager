@@ -68,6 +68,8 @@ function RootNavigator() {
         <Stack.Screen name="profile-edit" />
         <Stack.Screen name="flash" />
         <Stack.Screen name="flash-piece" />
+        <Stack.Screen name="notifications" />
+        <Stack.Screen name="settings" />
       </Stack.Protected>
       <Stack.Protected guard={status === 'signedOut'}>
         <Stack.Screen name="login" />

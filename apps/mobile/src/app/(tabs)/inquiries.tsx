@@ -5,7 +5,7 @@ import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { InquiryRow, type InquiryRowData } from '@/components/InquiryRow';
-import { ScreenHeader } from '@/components/ScreenHeader';
+import { TopBar } from '@/components/TopBar';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -137,10 +137,7 @@ export default function InquiriesScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
-      <ScreenHeader
-        title="Inquiries"
-        subtitle={isArtist ? 'Assigned to you' : undefined}
-      />
+      <TopBar />
 
       <SegmentedControl
         segments={VIEWS.map((v) => ({ ...v, count: counts[v.key] }))}
