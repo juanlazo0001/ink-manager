@@ -80,6 +80,20 @@ export default function AccountScreen() {
           </Pressable>
         ) : null}
 
+        {profile.artist ? (
+          <Pressable
+            onPress={() => router.push('/flash')}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.link, pressed && styles.pressed]}
+          >
+            <View style={styles.linkText}>
+              <Text style={styles.linkTitle}>Flash gallery</Text>
+              <Text style={styles.linkBody}>Your flash pieces and what's been requested.</Text>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.fgMuted} />
+          </Pressable>
+        ) : null}
+
         <View style={styles.spacer} />
 
         <QuietButton label="Log out" onPress={logout} />

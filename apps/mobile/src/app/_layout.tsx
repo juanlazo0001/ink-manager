@@ -54,6 +54,8 @@ function RootNavigator() {
             card presentation does not cover as reliably. */}
         <Stack.Screen name="profile" />
         <Stack.Screen name="profile-edit" />
+        <Stack.Screen name="flash" />
+        <Stack.Screen name="flash-piece" />
       </Stack.Protected>
       <Stack.Protected guard={status === 'signedOut'}>
         <Stack.Screen name="login" />

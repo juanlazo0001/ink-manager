@@ -221,7 +221,10 @@ export function ImageGridField({
           {error}
         </Text>
       ) : null}
-      {full ? <Text style={styles.hint}>{`That's the maximum of ${max}.`}</Text> : null}
+      {/* Only worth saying when there is a count to reach. For a
+          single-image field the add tile simply disappearing already says
+          it, and the sentence reads like a scolding. */}
+      {full && (max ?? 0) > 1 ? <Text style={styles.hint}>{`That's the maximum of ${max}.`}</Text> : null}
     </View>
   );
 }
