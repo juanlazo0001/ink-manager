@@ -22930,3 +22930,176 @@ Both new assets are in the export at their exact byte sizes (`app-bg-blurred-amb
 
 The verification worktree was removed afterwards; the shared tree was left on `main`, where the
 other session put it.
+
+# Mobile session F — top nav bar + chat centre tab
+
+Branch `mobile/session-f` off `main` (`8dc3bc0`), two commits, both pushed, **unmerged**.
+
+Pre-flight passed: `a52ad06` and `695535c` are both reachable from `origin/main`, and session E is
+fully merged (zero commits ahead).
+
+Worked in a **dedicated worktree** (`ink-manager-w-session-f`) rather than the shared checkout.
+Session E's report records a concurrent session checking `main` out from under this session
+mid-work; CLAUDE.md's worktree rule exists for exactly that, and following it cost nothing.
+
+## Commits
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `a411faa` | `mobile: top nav bar` |
+| 2 | `c564b21` | `mobile: chat center tab + amended red rule` |
+
+## Part 0 — extracted values
+
+| # | Thing | Where | Value |
+| --- | --- | --- | --- |
+| 1 | Icon button | `TopBar.tsx` `iconBtnClass` | `h-11 w-11` (**44px**) `rounded-full border border-border-soft bg-surface-inset/80 text-fg-muted shadow-lg backdrop-blur-sm` |
+| 1 | Badge | `TopBar.tsx` | `absolute -right-1 -top-1 h-5 min-w-5 rounded-full bg-fg px-1 text-[11px] font-medium text-accent-fg` — **cream fill, dark text, not red** |
+| 1 | Avatar cluster | `TopBar.tsx` | pill: `rounded-full border border-border-soft bg-surface-inset/80 py-1 pl-1 pr-3 shadow-lg`; avatar `h-9 w-9 rounded-full object-cover`; name/role `hidden … sm:flex`; then `ChevronDownIcon h-3.5 w-3.5 text-fg-muted` |
+| 1 | Icon spacing | `TopBar.tsx` | container `flex items-center gap-2`, fixed `right-4 top-4` |
+| 2 | Chat FAB | `ConversationsPanel.tsx` | `h-16 w-16` (**64px**) `rounded-full bg-danger-strong text-white shadow-xl shadow-black/40`, `flex-col items-center justify-center gap-0.5` |
+| 2 | FAB halo | same | `absolute -inset-2 rounded-full border border-danger-strong/25` |
+| 2 | FAB icon / label | same | icon `h-5 w-5`; label `font-jura text-[8px] font-bold tracking-[0.14em] uppercase` reading **"Chat"** |
+| 2 | FAB badge | same | identical to the top-bar badge — `bg-fg` / `text-accent-fg`, `>99 → 99+` |
+| 5 | Tasks badge count | `TopBar.tsx` | `tasksBadgeData.system.length + personal.filter(t => !t.completedAt).length`, from `GET /tasks`, polled 60s |
+| — | Chat badge count | `useNavCounts.ts` → `navCounts.ts` | `GET /nav-counts` → `conversations`: **threads** with a message from someone else since this viewer's `lastReadAt`, cleared by `POST /conversations/:id/read` |
+
+Two details worth pulling out because they change what mobile ships:
+
+- **The FAB's label is white, not cream, and web says why**: cream on `--color-danger-strong`
+  measures 4.39:1, under the 4.5:1 AA floor for small text; white clears it at 5.16:1. At 8px it
+  is the smallest type in either client, so this is exactly where it matters.
+- **Neither the top-bar badge nor the FAB badge gates on `showSidebarBadges`.** That
+  OWNER-controlled toggle governs the sidebar's bubbles alone. Mobile matches by not gating.
+
+### 3 — notifications: there is no data source
+
+Web's bell (`aria-label="Mentions"`) opens a popover whose entire contents are one hardcoded
+string:
+
+> No mentions yet — internal mentions are coming to Conversations.
+
+No `useQuery`, no `apiFetch`, no socket subscription, no unread state, and no endpoint anywhere
+in `apps/api` that would back one. Nothing marks anything as read because there is nothing to
+mark. PARITY-AUDIT.md §11 already recorded this as "a thin surface today"; it is still true.
+
+So mobile's notifications screen shows web's own sentence and nothing else, and **the bell
+carries no unread dot** — there is no count to derive one from, and a dot that never lights is
+worse than none. Inventing a notifications API was the one thing the brief ruled out, and this is
+the honest alternative. When a real feed lands, the bell already navigates to the screen it lands
+in.
+
+### 4 — sidebar destinations, filtered
+
+| Web sidebar item | Gate | On mobile |
+| --- | --- | --- |
+| Dashboard | none | already the Home tab |
+| My Inquiries | `roles: ARTIST` | already the Inquiries tab |
+| Calendar | none | already the Schedule tab |
+| Clients | `clients.view` | **omitted** — ARTIST lacks it by default, and no mobile screen exists |
+| Team | `roles: OWNER` | **omitted** |
+| Flash Gallery | `flashGallery.manage` (ARTIST default **true**) | **in the menu** |
+| Scan | `giftCards.view` | **omitted** — ARTIST lacks it |
+
+Plus web's account menu: **Profile** and **Log out** included, **Settings** included (see below),
+"View portal as…" omitted (OWNER-only, no mobile equivalent).
+
+Omitted, not stubbed. An entry that opens nothing is worse than an entry that is not there.
+
+## What shipped
+
+**Top bar** replaces the per-screen title header on all five tabs. Hamburger left; bell and
+avatar-with-chevron right. No tasks icon — per the owner's decision its count moved to the Tasks
+tab item, which is where it navigated anyway.
+
+Two things that look like deviations and are not:
+
+- **No name/role beside the avatar.** Web marks that block `hidden … sm:flex`, and a phone is
+  below the `sm` breakpoint — so avatar-plus-chevron **is** web's phone rendering.
+- **The studio name is in the menu header, not the bar.** Web's sidebar header carries it; web's
+  bar never does. Matching the hierarchy, not inventing one.
+
+The hamburger itself is mobile's own, because web has a permanent sidebar and a phone has nowhere
+to put one.
+
+**Settings** is built, minimally and read-only, because the menu needed somewhere honest to send
+an artist. Web shows an ARTIST exactly one of its six tabs — the others are gated on
+`canViewPolicies` / `canViewServices` / `canViewIntegrations` / `canViewSystem`, none of which an
+artist holds — containing the studio logo/name/website, the sentence "You don't have permission to
+edit this.", and the locations list. Name, logo and website come from the session, which already
+holds them. Locations are the one fetch, and `GET /studios/:id/locations` is open to any
+authenticated studio member by the API's own comment.
+
+This reverses session B's decision 14 (Settings not built) and the reversal is deliberate: that
+decision was made when nothing linked to it.
+
+**Chat centre tab.** Order is Home, Schedule, CHAT, Tasks, Inquiries — the button has to be third
+of five to be centred, so the order follows from raising it. `index.tsx` is still Conversations
+and still the route the app opens on; it is titled CHAT, matching the button web reaches the same
+surface from.
+
+## Bugs found by rendering
+
+- **Settings crashed on `locations.map`** when a stub answered with an object instead of a list.
+  Guarded — a screen should degrade to its empty state, not a white screen. The real route does
+  return an array; the guard is for the day it doesn't.
+
+## Deviations
+
+1. **The red rule is amended, and CLAUDE.md now says so.** Red as a brand FILL is legitimate on
+   the chat control — web's FAB and mobile's centre button — per the owner's decision. The
+   amendment names both controls, records the white-label contrast reason, and notes the badge is
+   cream rather than red, specifically so a later session reading "red is never a fill" does not
+   revert either one. Everywhere else the punctuation rule is unchanged.
+2. **The tasks badge is on the Tab, not the bar.** Owner's decision. Same count, same treatment,
+   on the control that navigates there.
+3. **No unread dot on the bell.** See Part 0.3 — there is nothing to count.
+4. **`GET /nav-counts` is a new call for this client**, though not new API surface: it is the
+   endpoint web already uses for exactly these two badges.
+
+## Verification
+
+Preview renders at 414pt (`parity-audit/f1-*.png`, `f2-*.png`): the top bar on Home, the hamburger
+open, Settings with real locations, and the tab bar at rest, with badges, and at 99+.
+
+**One honest limitation in how the tab bar was verified.** Expo Router's `<Tabs>` is a layout for
+a route directory and renders nothing when hosted inside another navigator, so the preview is a
+faithful mock of the bar rather than the live navigator: the real `ChatTabButton`, the real
+`Badge`, the real `tabBarStyle` values, the real icons. What that proves is the treatment and the
+geometry. The navigator wiring — `tabBarButton`, the focused state, the route order — rests on
+`tsc` and on the device gate.
+
+### Standard bar, from a clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, exit 0 — 1339 packages in 1m; `package-lock.json` unchanged |
+| `packages/shared-types` typecheck | clean — `enums.generated.ts matches schema.prisma` |
+| `apps/api` `tsc` | clean, exit 0 |
+| `apps/web` `tsc -b` + `vite build` | clean, built in 11.46s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `apps/mobile` `expo export --platform ios` | clean — 3,126,093 byte bundle |
+| expo / react / react-native | **54.0.37 / 19.1.0 / 0.81.5** — pin intact |
+| React singleton in the shipped bundle | 19.1.0 once, **19.2.7 absent** |
+
+Stray processes: before `npm ci`, nine leftover node processes still referenced the repo — my own
+Expo/Metro parents and their jest-workers from earlier previews. All stopped. Session E's report
+notes the same class of problem from the API side; the lesson is that killing a listener does not
+kill the parent that respawns it.
+
+Session F content confirmed in the shipped bundle rather than assumed: "No mentions yet", "You
+don't have permission to edit this.", "CHAT", "Flash Gallery", "Notifications", "Log out".
+
+## Still not verified
+
+**Nothing has run on a phone**, unchanged. Specific to this session:
+
+- **The raised button's overhang.** It is lifted 18px above the bar with `overflow: visible`, and
+  whether the protruding part is tappable outside the bar's own bounds is a platform behaviour
+  that differs between iOS and Android and cannot be settled in a browser.
+- **Safe-area behaviour on a device with a home indicator.** The bar takes its inset from
+  `react-native-safe-area-context`, which reports zeros on web.
+- **The hamburger drawer's animation** — it is a plain fade `Modal`, not a gesture-driven drawer,
+  and how that feels is a device question.
+- **Whether `GET /nav-counts` is fast enough to poll at 60s** alongside the screens' own 30s
+  polls, on cellular.
