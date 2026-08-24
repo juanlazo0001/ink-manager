@@ -24610,3 +24610,176 @@ its branch again, and a stale Metro is a live candidate for why the toggle looke
 4. **Inquiries at your usual text size** — and if you can, turn Larger Text up further and look
    again; that is the one condition I still cannot reproduce.
 5. **A client** — compare against your screenshot top to bottom.
+
+# Mobile session R — the inquiries card, perfected
+
+**Base: `main` (`0fde710`… now `63eee38`)** — the current stack head after Q was merged. Dedicated
+worktree, two commits, pushed.
+
+Every value below was **measured off web's running client detail at a 414pt viewport**, not read off
+class names. Where the two disagree, the measurement won.
+
+---
+
+## Extracted values
+
+### Status chip — web's `StatusPill`, editorial shape, mobile-first sizing
+
+| Property | Web | Applied |
+| --- | --- | --- |
+| background | tone at **10%** alpha (`bg-{tone}/10`) | same |
+| border | 1px, tone at **50%** alpha (`border-{tone}/50`) | same |
+| text | tone at full | same |
+| dot | **4 × 4** round, tone at full | same |
+| font | Jura, **9px**, weight 400 | same |
+| tracking | **0.72px** (0.08em at 9px) | same |
+| padding | **4px 8px** | same |
+| gap | **6px** | same |
+| radius | full | same |
+
+Two exceptions that are easy to lose and are deliberate:
+
+- **The `danger` dot uses `danger-strong`, not `danger`.** Web keys the dot off a separate map; the
+  readable-as-text red vanishes at 4px.
+- **`neutral` is not a tinted tone.** Web gives it `border-border-soft bg-white/[0.02] text-neutral`
+  — a plain grey chip, because "no particular state" should not read as a colour.
+
+**The tinted fill is what mobile was missing.** Chips were an outline over the card's own
+background, which reads as a border rather than a state.
+
+### Card icon button
+
+| Property | Web | Note |
+| --- | --- | --- |
+| size | **44 × 44** | same circle the top bar uses |
+| border | **1px `rgba(201, 154, 91, 0.18)`** | exactly mobile's existing `colors.border` |
+| fill | **none** | — |
+| glyph | **16px** | stroke 1px (send) / 1.5px (plus) |
+
+**It is not the top bar's button**, despite the shared diameter: that one carries an inset fill and
+a drop shadow because it floats over content. A card action sits inside a card, so web gives it a
+bare outline. Kept as its own component so neither drifts into the other.
+
+### Row and card density
+
+| Property | Web | Mobile before | Now |
+| --- | --- | --- | --- |
+| card padding | **24px** | 24px | unchanged — already matched |
+| card radius | **10px** | 10px | unchanged |
+| row padding | **12px** top and bottom | 10px | 12px |
+| row text | **14px / 20px line** | 15/– | 14/20 |
+| row separator | **1px `rgba(201,154,91,0.18)`** | `borderSoft` | `colors.border` |
+| column header | 12px, `fgMuted`, 12px beneath | absent | added |
+
+Measured after: mobile's card is **367 wide, 24px padding, 10px radius** against web's **366 / 24 /
+10**.
+
+## Channel glyph inventory
+
+The API's `Channel` enum has **exactly six** values (`apps/api/prisma/schema.prisma`):
+
+| Channel | Glyph | Source |
+| --- | --- | --- |
+| `EMAIL` | envelope | **web's `EmailIcon`**, path for path |
+| `INSTAGRAM` | rounded square, ring, dot | **web's `InstagramIcon`** |
+| `FACEBOOK` | circle with f | **web's `FacebookIcon`** |
+| `PHONE` | handset | **drawn** — web has no phone glyph |
+| `REFERRAL` | two figures | reuses the Clients glyph — a referral *is* another client |
+| `FLASH_GALLERY` | photo | web's `PhotoIcon`, already in mobile |
+
+**There is no separate walk-in value.** `PHONE` covers it: web's staff form labels that option
+"Phone / Walk-in", and the schema's own comment says it is front desk logging a walk-in or phone
+call.
+
+Glyphs are **monochrome**. The conversations list tints its channel swatch with brand colour, but
+here the glyph sits in a quiet meta line under a description, where six brand colours would fight
+the status chip that is the row's actual signal.
+
+## What the shared-chip change touched
+
+The chip replaced **three** hand-rolled pills:
+
+| Call site | Was | Now |
+| --- | --- | --- |
+| Inquiries list (`InquiryRow`) | inline pill, coloured border only | shared chip |
+| Artist inquiry detail (`inquiry/[id]`) | inline pill, same code again | shared chip |
+| Client detail | a local `Chip` added in session Q | shared chip |
+
+**Verified against the inquiries list, as asked** (`r-02`): chips render with the tinted fill —
+`NEW` blue, `DEPOSIT PENDING` amber, `AWAITING CLIENT RESPONSE` amber — and nothing else on the row
+moved. No regression.
+
+## Answers to the brief's open questions
+
+**"Drop the column headers if web's card omits them."** Web does **not** omit them. At 414pt it
+keeps **Description** and **Status** and sets Channel and Submitted to `display: none`. So mobile
+keeps the two headers it can honour.
+
+**"Reuse the top bar's icon-button component if it fits."** It does not — see above. A separate
+`CardIconButton` was the right call.
+
+## Deliberate divergences
+
+1. **The meta line is mobile's own.** Web *hides* channel and submitted-date entirely below its
+   `sm` breakpoint. Rather than lose both on a phone, they fold into one quiet line. Mobile shows
+   **more** than web's phone rendering here, not less — by the owner's instruction.
+2. **Disabled actions answer back.** Web's actions are live; mobile's pending-M2 ones render dimmed
+   and, when tapped, say why in one line — replacing the persistent explainer sentences under each
+   button.
+
+## Flagged, not changed
+
+1. **Content divergence in this card.** Web's Inquiries card lists **all 7** of this client's
+   inquiries, including the four that are also shown in its Projects card. Mobile splits them
+   mutually exclusively (3 + 4) using session G's canonical `tabForStatus`. That is an information-
+   architecture decision rather than styling, so it is left for the owner: web repeats rows across
+   two cards; mobile does not.
+2. **`Channel` is not exported from `packages/shared-types`.** Ten enums are generated from the
+   schema and this is not one of them, so the glyph map is keyed by string and falls back rather
+   than being typed against the enum.
+3. **`Appear` overlaps rows on variable-height lists under react-native-web.** Found while
+   verifying the chips on the inquiries list. Reanimated's web `entering` absolutely-positions each
+   row; with uniform-height rows the layout still tiles (which is why session L concluded it
+   "settles correctly"), but with variable heights it does not, and rows paint over one another.
+   Proven by disabling `Appear` — the list renders perfectly (`r-02` is that render). Native's
+   layout animations do not absolutely position, so this is very likely preview-only, and the owner
+   has never reported it on device. **Left untouched: outside this session's one-component scope.**
+
+## Verification
+
+`apps/mobile/parity-audit/`:
+
+- **`r-01-card-side-by-side.png`** — web's card beside mobile's, both at 414pt. The comparison image.
+- `r-web-inquiries-card.png` / `r-mobile-inquiries-card.png` — the two halves at full size.
+- `r-02-inquiries-list-chips.png` — the shared chip on the inquiries list.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 11.93s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.84 MB |
+| React singleton | 19.2.7 absent |
+| Bundle content | ASCII-only markers per session Q's method note — all present; harness absent |
+
+**No database writes** — every check was a read or a render.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **A client → Inquiries card.** Two circular icon buttons, right-aligned, dimmed. **Tap one** — it
+   should tell you where that action lives rather than doing nothing.
+2. **The chips** — they should read as filled, not outlined.
+3. **The meta line** — a small channel glyph and the date under each description.
+4. **The inquiries tab** — same chips there. If rows ever overlap on device, that is finding 3 above
+   and worth telling me, because it would mean it is not preview-only.
