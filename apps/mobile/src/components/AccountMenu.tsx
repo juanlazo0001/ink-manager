@@ -3,7 +3,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Ornament } from '@/components/editorial';
-import { LogoutIcon, PersonIcon, PhotoIcon, ScanIcon, SettingsIcon } from '@/components/icons';
+import { ClientsIcon, LogoutIcon, PersonIcon, PhotoIcon, ScanIcon, SettingsIcon } from '@/components/icons';
 import { useAuth } from '@/context/auth';
 import { colors, hairline, radius, space, type } from '@/theme';
 
@@ -52,8 +52,10 @@ export function AccountMenu({ open, onClose }: { open: boolean; onClose: () => v
   // every permission check for that role — so this only ever hides the
   // entry from a role that genuinely cannot use it.
   const canScan = session?.profile.permissions?.includes('giftCards.view') ?? false;
+  // Web's gate for /clients (Sidebar.tsx: `permission: 'clients.view'`).
+  const canViewClients = session?.profile.permissions?.includes('clients.view') ?? false;
 
-  function go(path: '/flash' | '/profile' | '/settings' | '/scan') {
+  function go(path: '/flash' | '/profile' | '/settings' | '/scan' | '/clients') {
     onClose();
     router.push(path);
   }
@@ -83,6 +85,9 @@ export function AccountMenu({ open, onClose }: { open: boolean; onClose: () => v
                 (Sidebar.tsx). Mobile's five tabs are spoken for and
                 scanning is an occasional errand, so it lives here — but
                 behind the same permission web uses. */}
+            {canViewClients ? (
+              <MenuItem Icon={ClientsIcon} label="Clients" onPress={() => go('/clients')} />
+            ) : null}
             {canScan ? <MenuItem Icon={ScanIcon} label="Scan" onPress={() => go('/scan')} /> : null}
             <MenuItem Icon={PersonIcon} label="Profile" onPress={() => go('/profile')} />
             <MenuItem Icon={SettingsIcon} label="Settings" onPress={() => go('/settings')} />

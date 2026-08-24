@@ -18,7 +18,15 @@ import { easing, enter, stagger } from '@/theme/motion';
  * a manual shared value: it runs on the UI thread, it cancels cleanly
  * when a row unmounts mid-animation, and it costs nothing per row that a
  * FlatList recycles.
+ *
+ * Rows past `ANIMATE_BELOW` do NOT animate. Their enter happens below the
+ * fold where nobody sees it, and on a list of a hundred clients that is a
+ * hundred real animations bought for nothing. Web renders every row (no
+ * virtualization under react-native-web), which is how this surfaced: the
+ * whole list briefly absolutely-positions itself mid-flight because that
+ * is how Reanimated implements `entering` on web.
  */
+export const ANIMATE_BELOW = 12;
 export function Appear({
   children,
   index = 0,
@@ -31,7 +39,7 @@ export function Appear({
   style?: StyleProp<ViewStyle>;
   enabled?: boolean;
 }) {
-  if (!enabled) {
+  if (!enabled || index >= ANIMATE_BELOW) {
     return <Animated.View style={style}>{children}</Animated.View>;
   }
 

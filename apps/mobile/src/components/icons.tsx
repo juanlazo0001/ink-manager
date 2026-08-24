@@ -122,6 +122,18 @@ export function PhotoIcon({ size = 20, color }: IconProps) {
   );
 }
 
+/** Clients — two figures, web's `ClientsIcon` path for path. */
+export function ClientsIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Circle cx="7" cy="6.5" r="2.5" />
+      <Path d="M2.5 16c0-3 2-4.5 4.5-4.5s4.5 1.5 4.5 4.5" />
+      <Circle cx="14" cy="7" r="2" />
+      <Path d="M12.5 11.2c2 .1 3.5 1.5 3.5 4.3" />
+    </Svg>
+  );
+}
+
 /**
  * Scan — four corner brackets and a scan line, web's `ScanIcon` path for
  * path (apps/web/src/components/icons.tsx).
