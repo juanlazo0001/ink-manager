@@ -6,11 +6,11 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar, initialsOf } from '@/components/Avatar';
-import { CollapsibleSection, type SectionAction } from '@/components/CollapsibleSection';
+import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
 import { ChannelGlyph, channelLabelFor } from '@/components/ChannelGlyph';
 import { InquiryStatusChip, StatusChip } from '@/components/StatusChip';
-import { PlusIcon, SendIcon } from '@/components/icons';
+import { DownloadIcon, GiftCardIcon, PlusIcon, SendIcon } from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -33,9 +33,16 @@ import { colors, hairline, radius, space, tones, type } from '@/theme';
  * Gift Card on gift cards, Send Deposit Form on deposit forms, Send
  * Waiver on waivers. Nothing else carries one.
  *
+ * EVERY SECTION USES THE SAME HEADER: one row, `[chevron] TITLE ....
+ * [actions]`, with the actions icon-only and right-aligned. That is web's
+ * `Widget` shell exactly, including the fact that FIVE of the nine
+ * sections get no action at all — contact info, projects, appointments,
+ * notes and activity history carry none on web either.
+ *
+ * NO COUNTS. Web's header has none, and the owner asked for them gone.
+ *
  * Sections collapse, which web's do not need to — a phone cannot show
- * nine cards at once, and a collapsed card still states its count so
- * nothing is hidden, only folded.
+ * nine cards at once.
  *
  * ACTIONS THAT NEED WRITES THIS APP HAS NOT BUILT RENDER DISABLED, not
  * hidden, each with its own one-line reason. That is the owner's call:
@@ -279,7 +286,6 @@ export default function ClientScreen() {
 
           <CollapsibleSection
             title="Inquiries"
-            count={inquiries.length}
             open={!!open.inquiries}
             onToggle={() => toggle('inquiries')}
             headerActions={
@@ -317,7 +323,6 @@ export default function ClientScreen() {
 
           <CollapsibleSection
             title="Projects"
-            count={projects.length}
             open={!!open.projects}
             onToggle={() => toggle('projects')}
           >
@@ -330,10 +335,17 @@ export default function ClientScreen() {
 
           <CollapsibleSection
             title="Gift cards"
-            count={client.giftCards.length}
             open={!!open.gift}
             onToggle={() => toggle('gift')}
-            actions={[PORTAL_ACTION('Issue Gift Card', 'Issuing a gift card moves money — portal only.')]}
+            headerActions={
+              <CardActionRow>
+                <CardIconButton
+                  Icon={GiftCardIcon}
+                  label="Issue gift card"
+                  unavailableNote="Issuing a gift card moves money — portal only."
+                />
+              </CardActionRow>
+            }
           >
             {client.giftCards.length === 0 ? (
               <Empty text="No gift cards." />
@@ -364,10 +376,17 @@ export default function ClientScreen() {
 
           <CollapsibleSection
             title="Deposit forms"
-            count={deposits.length}
             open={!!open.deposits}
             onToggle={() => toggle('deposits')}
-            actions={[PORTAL_ACTION('Send Deposit Form', 'Sending a deposit form charges a client — portal only.')]}
+            headerActions={
+              <CardActionRow>
+                <CardIconButton
+                  Icon={SendIcon}
+                  label="Send deposit form"
+                  unavailableNote="Sending a deposit form charges a client — portal only."
+                />
+              </CardActionRow>
+            }
           >
             {deposits.length === 0 ? (
               <Empty text="No deposit forms." />
@@ -387,9 +406,19 @@ export default function ClientScreen() {
                       {d.giftCard ? ` · ${d.giftCard.code}` : ''}
                     </Text>
                   </View>
-                  {/* Web ends each row with a download for the signed
-                      form. Nothing on this client downloads a file yet. */}
-                  <Feather name="download" size={15} color={colors.fgMuted} style={styles.disabledIcon} />
+                  {/* Web ends each row with a download, and ONLY when the
+                      form is signed — an unsigned one has no PDF. Same
+                      condition here; nothing downloads a file on this
+                      client yet, so it renders in the disabled treatment
+                      and says so when tapped. */}
+                  {d.signedAt ? (
+                    <CardIconButton
+                      Icon={DownloadIcon}
+                      size="row"
+                      label="Download deposit form"
+                      unavailableNote="Downloading a PDF is a portal action for now."
+                    />
+                  ) : null}
                 </View>
               ))
             )}
@@ -405,10 +434,17 @@ export default function ClientScreen() {
 
           <CollapsibleSection
             title="Waivers"
-            count={client.liabilityWaivers.length}
             open={!!open.waivers}
             onToggle={() => toggle('waivers')}
-            actions={[PORTAL_ACTION('Send Waiver', 'Sending a waiver messages the client — portal only.')]}
+            headerActions={
+              <CardActionRow>
+                <CardIconButton
+                  Icon={SendIcon}
+                  label="Send waiver"
+                  unavailableNote="Sending a waiver messages the client — portal only."
+                />
+              </CardActionRow>
+            }
           >
             {client.liabilityWaivers.length === 0 ? (
               <Empty text="No waivers." />
@@ -420,6 +456,16 @@ export default function ClientScreen() {
                         the state carried by the chip. */}
                     <Text style={styles.lineTitle}>Created {stamp(w.createdAt)}</Text>
                   </View>
+                  {/* Web puts a download before the chip on a SIGNED
+                      waiver only, at its row size. */}
+                  {w.signedAt ? (
+                    <CardIconButton
+                      Icon={DownloadIcon}
+                      size="row"
+                      label="Download waiver"
+                      unavailableNote="Downloading a PDF is a portal action for now."
+                    />
+                  ) : null}
                   <StatusChip label={w.signedAt ? 'Signed' : (w.status ?? 'Pending')}
                     tone={w.signedAt ? 'success' : 'warning'}
                   />
@@ -448,11 +494,6 @@ export default function ClientScreen() {
       )}
     </SafeAreaView>
   );
-}
-
-/** An action web offers here whose write this app has not built. */
-function PORTAL_ACTION(label: string, note: string): SectionAction {
-  return { label, unavailableNote: note };
 }
 
 function QuickAction({
@@ -511,7 +552,7 @@ function InquiryRowLine({ inquiry, last }: { inquiry: ClientInquiry; last?: bool
           <Text style={styles.metaText}>{stamp(inquiry.createdAt)}</Text>
         </View>
       </View>
-      <InquiryStatusChip status={inquiry.status} />
+      <InquiryStatusChip status={inquiry.status} style={styles.inquiryChip} />
     </View>
   );
 }
@@ -535,6 +576,13 @@ function ProjectLine({ inquiry }: { inquiry: ClientInquiry }) {
           <Text style={styles.lineTitle} numberOfLines={2}>
             {inquiry.description?.trim() || inquiry.service || 'Untitled project'}
           </Text>
+          {/* A project IS an inquiry, so it carries the same channel —
+              same quiet meta line the Inquiries card uses. */}
+          <View style={styles.metaLine}>
+            <ChannelGlyph channel={inquiry.channel} />
+            {inquiry.channel ? <Text style={styles.metaDot}>·</Text> : null}
+            <Text style={styles.metaText}>{stamp(inquiry.createdAt)}</Text>
+          </View>
         </View>
         <InquiryStatusChip status={inquiry.status} />
       </View>
@@ -760,13 +808,31 @@ const styles = StyleSheet.create({
   inquiryRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
+    /*
+     * WEB'S OWN FALLBACK, borrowed one level down. `Widget`'s header row
+     * is `flex-wrap` so a header that runs out of width breaks a line
+     * rather than crushing a child; the same applies here, because the
+     * longest status chip is 170pt and a 320pt phone leaves the card only
+     * 236pt of row. Without this the description got 58pt — five lines of
+     * two syllables each. With it, the chip drops to its own line at 320
+     * and both stay whole. At 390 nothing wraps and the row is unchanged.
+     *
+     * Which of the two gives way is deliberate: web truncates
+     * DESCRIPTIONS (it slices them at 60 characters) and never truncates
+     * a status, so the status keeps its full width here too.
+     */
+    flexWrap: 'wrap',
     gap: space.md,
     paddingVertical: space.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
   inquiryRowLast: { borderBottomWidth: 0, paddingBottom: 0 },
-  inquiryText: { flex: 1 },
+  // The floor that decides when the chip wraps. Below this the row is
+  // not worth reading, so the line breaks instead.
+  inquiryText: { flex: 1, minWidth: 150 },
+  // Keeps the chip at the row's right edge on whichever line it lands.
+  inquiryChip: { marginLeft: 'auto' },
   /* Web's td: 14px over a 20px line. */
   inquiryTitle: { ...type.body, fontSize: 14, lineHeight: 20, color: colors.fg },
   metaLine: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: 3 },
@@ -812,7 +878,6 @@ const styles = StyleSheet.create({
   disabledInline: { paddingVertical: space.sm, opacity: 0.55 },
   disabledInlineLabel: { ...type.small, color: colors.fgMuted },
   disabledInlineNote: { ...type.meta, color: colors.fgMuted },
-  disabledIcon: { opacity: 0.4 },
   explainer: { ...type.small, color: colors.fgMuted, marginBottom: space.sm },
   pressed: { opacity: 0.6 },
 });

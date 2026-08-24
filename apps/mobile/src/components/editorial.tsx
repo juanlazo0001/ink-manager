@@ -111,8 +111,21 @@ export function Card({ children, style }: { children: ReactNode; style?: StylePr
  * A card's title. Web's `.sc` class at `text-[20px]` — see `type.sectionHeader`
  * for why mobile renders it as uppercase rather than true small-caps.
  */
-export function SectionHeader({ children, style }: { children: ReactNode; style?: StyleProp<TextStyle> }) {
-  return <Text style={[styles.sectionHeader, style]}>{String(children).toUpperCase()}</Text>;
+export function SectionHeader({
+  children,
+  style,
+  numberOfLines,
+}: {
+  children: ReactNode;
+  style?: StyleProp<TextStyle>;
+  /** Web's card titles carry `truncate`; pass 1 to match. */
+  numberOfLines?: number;
+}) {
+  return (
+    <Text style={[styles.sectionHeader, style]} numberOfLines={numberOfLines}>
+      {String(children).toUpperCase()}
+    </Text>
+  );
 }
 
 /**

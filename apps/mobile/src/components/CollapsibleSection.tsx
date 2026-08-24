@@ -1,151 +1,88 @@
 import Feather from '@expo/vector-icons/Feather';
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Card, SectionHeader } from '@/components/editorial';
-import { colors, hairline, radius, space, type } from '@/theme';
+import { colors, space } from '@/theme';
 
 /**
- * A card section that collapses, with an optional header action.
+ * A card section that collapses, with its actions on the title row.
  *
- * The shape apps/web's client detail uses: a card per subject, its title
- * in the serif small-caps treatment, and the section's own action sitting
- * in the header rather than loose in the body.
+ * THE HEADER IS ONE ROW: `[chevron] TITLE ......... [action] [action]`.
+ * That is web's own `Widget` shell, read off the source rather than
+ * guessed — `flex flex-wrap items-center justify-between gap-2` with the
+ * chevron and title grouped left and `actions` pushed right. Mobile had
+ * been stacking the actions BELOW the title, which cost a whole row of
+ * dead space on every card, nine times down this screen.
  *
- * `count` renders beside the title the way web's headings carry theirs,
- * so a collapsed section still says how much is inside — which is the
- * whole reason collapsing is safe on a phone.
+ * NO COUNT. Web's header renders the title and nothing else — there is no
+ * count in `Widget` at all — and the owner asked for it gone. Both agree,
+ * so it is gone.
+ *
+ * WHEN IT DOES NOT FIT, THE TITLE TRUNCATES; the actions never shrink and
+ * never wrap. Web reaches the same outcome by different means: its title
+ * carries `min-w-0 truncate` while every action carries `shrink-0`, so a
+ * narrow header eats the title, not the buttons. (Web's row is also
+ * `flex-wrap` — a fallback the owner ruled out for mobile, and one that
+ * in practice never fires there, since a `min-w-0` title shrinks before
+ * a flex line breaks.)
  */
 export function CollapsibleSection({
   title,
-  count,
   open,
   onToggle,
-  actions,
   headerActions,
   children,
 }: {
   title: string;
-  count?: number;
   open: boolean;
   onToggle: () => void;
-  actions?: SectionAction[];
   /**
-   * Icon-only actions, rendered on the header row itself. Web puts its
-   * card actions here; the text-button `actions` stack below is the older
-   * treatment, kept for sections not yet converted.
+   * Icon-only actions for the header row. Whatever web's `Widget` gets in
+   * its `actions` slot for this section — and for five of the nine
+   * client-detail sections that is nothing at all.
    */
   headerActions?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <Card>
-      <Pressable
-        onPress={onToggle}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: open }}
-        accessibilityLabel={`${title}${count === undefined ? '' : `, ${count}`}`}
-        style={({ pressed }) => [styles.head, pressed && styles.pressed]}
-      >
-        <Feather
-          name={open ? 'chevron-down' : 'chevron-right'}
-          size={15}
-          color={colors.fgMuted}
-        />
-        <SectionHeader style={styles.title}>{title}</SectionHeader>
-        {count !== undefined ? <Text style={styles.count}>{count}</Text> : null}
-      </Pressable>
+      <View style={styles.head}>
+        {/* Only the chevron and title toggle. The actions sit outside this
+            Pressable so tapping one cannot also collapse the card. */}
+        <Pressable
+          onPress={onToggle}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: open }}
+          accessibilityLabel={title}
+          style={({ pressed }) => [styles.titleTap, pressed && styles.pressed]}
+        >
+          <Feather
+            name={open ? 'chevron-down' : 'chevron-right'}
+            size={15}
+            color={colors.fgMuted}
+          />
+          <SectionHeader style={styles.title} numberOfLines={1}>
+            {title}
+          </SectionHeader>
+        </Pressable>
 
-      {headerActions ? <View style={styles.headerActions}>{headerActions}</View> : null}
-
-      {actions && actions.length > 0 ? (
-        <View style={styles.actionRow}>
-          {actions.map((a) => (
-            <SectionActionButton key={a.label} action={a} />
-          ))}
-        </View>
-      ) : null}
+        {headerActions ?? null}
+      </View>
 
       {open ? <View style={styles.body}>{children}</View> : null}
     </Card>
   );
 }
 
-export interface SectionAction {
-  label: string;
-  /** Omitted means the action exists on web but has no mobile write yet. */
-  onPress?: () => void;
-  /**
-   * Why it is inactive, in the app's own voice. Shown instead of a
-   * silent grey button — the owner asked for parity of SHAPE now, with
-   * function following, and a control that says nothing about why it is
-   * off is just broken-looking.
-   */
-  unavailableNote?: string;
-}
-
-/**
- * A section's header action.
- *
- * Rendered DISABLED rather than hidden when the write behind it is not
- * built, so the screen has web's shape today and gains its function later
- * without moving. Each carries its own one-line reason.
- */
-export function SectionActionButton({ action }: { action: SectionAction }) {
-  const enabled = !!action.onPress;
-  return (
-    <View style={styles.actionWrap}>
-      <Pressable
-        onPress={action.onPress}
-        disabled={!enabled}
-        accessibilityRole="button"
-        accessibilityState={{ disabled: !enabled }}
-        accessibilityHint={enabled ? undefined : action.unavailableNote}
-        style={({ pressed }) => [
-          styles.action,
-          !enabled && styles.actionDisabled,
-          pressed && enabled && styles.pressed,
-        ]}
-      >
-        <Text style={[styles.actionLabel, !enabled && styles.actionLabelDisabled]}>
-          {action.label.toUpperCase()}
-        </Text>
-      </Pressable>
-      {!enabled && action.unavailableNote ? (
-        <Text style={styles.actionNote}>{action.unavailableNote}</Text>
-      ) : null}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  // `minWidth: 0` is what lets the title truncate instead of forcing the
+  // row wider than the card — RN's default `minWidth: auto` would not.
+  titleTap: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: space.sm },
   title: { flex: 1 },
-  count: { ...type.meta, color: colors.fgMuted },
 
   body: { marginTop: space.md },
-
-  headerActions: { marginTop: space.md },
-  actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  actionWrap: { marginTop: space.md, gap: space.xs },
-  action: {
-    alignSelf: 'flex-start',
-    borderWidth: hairline,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.sm,
-  },
-  actionDisabled: { borderColor: colors.border, opacity: 0.55 },
-  actionLabel: {
-    fontFamily: type.button.fontFamily,
-    fontSize: 11.5,
-    lineHeight: 14,
-    letterSpacing: 1.61,
-    color: colors.accent,
-  },
-  actionLabelDisabled: { color: colors.fgMuted },
-  actionNote: { ...type.meta, color: colors.fgMuted },
 
   pressed: { opacity: 0.6 },
 });

@@ -4,16 +4,25 @@ import { Alert, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } fr
 import { colors, radius, space } from '@/theme';
 
 /**
- * A card header's action, as a circular icon button.
+ * A card's action, as a circular icon button.
  *
  * apps/web's own, measured off the running client detail rather than
- * read off class names:
+ * read off class names. Web draws these at TWO sizes and mobile keeps
+ * both, because the distinction is meaningful:
  *
- *   size    44 x 44        (the same 44pt circle the top bar uses)
- *   radius  full
- *   border  1px rgba(201, 154, 91, 0.18)   -- exactly `colors.border`
- *   fill    none
- *   glyph   16px
+ *              header (`h-11 w-11`)    row (`h-8 w-8`)
+ *   size       44 x 44                 32 x 32
+ *   glyph      16px                    16px
+ *   radius     full                    full
+ *   border     1px rgba(201, 154, 91, 0.18)  -- exactly `colors.border`
+ *   fill       none                    none
+ *   colour     `fg`                    `fgSecondary`
+ *
+ * A header action names the whole section, so it gets the full 44pt tap
+ * target; a row action belongs to one line of a list and web deliberately
+ * makes it recede. Below `md` web's header buttons are ALREADY icon-only
+ * (`md:h-auto md:w-auto` plus a `hidden md:inline` label) -- so icon-only
+ * is web's own phone form here, not a mobile invention.
  *
  * It is NOT the top bar's button, despite the shared diameter: that one
  * carries an inset fill and a drop shadow because it floats over content.
@@ -32,6 +41,7 @@ export function CardIconButton({
   label,
   onPress,
   unavailableNote,
+  size = 'header',
   style,
 }: {
   Icon: (props: { size?: number; color: string }) => React.ReactElement;
@@ -40,6 +50,8 @@ export function CardIconButton({
   onPress?: () => void;
   /** Shown when tapped, if the action is not built yet. */
   unavailableNote?: string;
+  /** `header` is web's 44pt circle; `row` its 32pt one. */
+  size?: 'header' | 'row';
   style?: StyleProp<ViewStyle>;
 }) {
   const enabled = !!onPress;
@@ -68,12 +80,16 @@ export function CardIconButton({
       accessibilityHint={enabled ? undefined : unavailableNote}
       style={({ pressed }) => [
         styles.button,
+        size === 'row' && styles.buttonRow,
         !enabled && styles.disabled,
         (pressed || pressedNote) && styles.pressed,
         style,
       ]}
     >
-      <Icon size={16} color={enabled ? colors.fg : colors.fgMuted} />
+      <Icon
+        size={16}
+        color={enabled ? (size === 'row' ? colors.fgSecondary : colors.fg) : colors.fgMuted}
+      />
     </Pressable>
   );
 }
@@ -94,6 +110,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
+  buttonRow: { width: 32, height: 32 },
   disabled: { opacity: 0.45 },
   pressed: { opacity: 0.6 },
 });

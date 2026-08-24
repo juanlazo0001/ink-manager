@@ -145,6 +145,31 @@ export function PlusIcon({ size = 20, color }: IconProps) {
   );
 }
 
+/** Gift card — web's `GiftCardIcon`, the ribboned card. */
+export function GiftCardIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Rect x="2.5" y="7" width="15" height="10.5" rx="1.5" />
+      <Line x1="10" y1="7" x2="10" y2="17.5" />
+      <Path d="M10 7c-1.1-2.6-2.9-3.7-3.9-2.9-1 .8-.2 2.9 3.9 2.9Z" strokeLinejoin="round" />
+      <Path d="M10 7c1.1-2.6 2.9-3.7 3.9-2.9 1 .8.2 2.9-3.9 2.9Z" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+/**
+ * Download — web's `DownloadIcon`, on the signed deposit-form and waiver
+ * rows. Web renders it at the ROW size (32pt circle), not the header's 44.
+ */
+export function DownloadIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Path d="M10 3v9.5m0 0 3.5-3.5M10 12.5 6.5 9" strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M4 14v1.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V14" strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Channel glyphs.
  *
