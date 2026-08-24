@@ -1,6 +1,6 @@
 import { usePathname, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
@@ -10,7 +10,6 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Avatar } from '@/components/Avatar';
 import { Ornament } from '@/components/editorial';
 import { useAuth } from '@/context/auth';
 import { isActiveDestination, visibleDestinations } from '@/lib/navDestinations';
@@ -18,8 +17,12 @@ import { colors, hairline, radius, space, type } from '@/theme';
 import { duration, easing } from '@/theme/motion';
 
 const WIDTH = 288;
-/** Web caps the logo at `max-h-28` (112px); 64 is the phone equivalent. */
-const LOGO_SIZE = 64;
+/**
+ * Web caps the logo at `max-h-28` — 112px — and lets it use the sidebar's
+ * full width. The drawer is 288 wide, so the same treatment reads at the
+ * same size here.
+ */
+const LOGO_HEIGHT = 96;
 
 /**
  * The navigation drawer — every screen that is NOT a bottom tab.
@@ -135,34 +138,35 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
         <GestureDetector gesture={swipe}>
           <Animated.View style={[styles.panel, { width: WIDTH }, panelStyle]}>
             <View style={[styles.panelInner, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-              {/* Web's sidebar header. It leads with the studio's own
-                  logo (Sidebar.tsx renders `studio.logoUrl` at
-                  `max-h-28 w-full object-contain`, with the name only as
-                  alt text), so this does the same and falls back to the
-                  name when a studio has none.
-                  Web's fallback is the Ink Manager wordmark; here it is
-                  the studio's name, per the owner's instruction — logged
-                  as a deliberate divergence.
-                  Logos are stored as base64 data URIs, exactly like
-                  avatars, so this goes through Avatar's scheme-aware
-                  renderer rather than expo-image, which cannot load a
-                  `data:` URI on iOS (session H2's root cause). */}
+              {/*
+                Web's sidebar header is `flex justify-center` around the
+                studio's logo and NOTHING ELSE — no studio name text, no
+                user line (Sidebar.tsx). Checked before removing them:
+                the name was redundant beside the logo, and the person is
+                already named in the account menu, which is the control
+                that is about them.
+
+                Name-only remains the fallback for a studio with no logo.
+
+                Rendered with RN's own Image, not expo-image: logos are
+                base64 data URIs and expo-image cannot load that scheme on
+                iOS (session H2). `contain` because a logo has its own
+                aspect ratio and must not be cropped to a box.
+              */}
               <View style={styles.header}>
                 {logoUrl ? (
-                  <Avatar
-                    url={logoUrl}
-                    initials={studioName}
-                    size={LOGO_SIZE}
+                  <Image
+                    source={{ uri: logoUrl }}
                     style={styles.logo}
-                    labelStyle={styles.logoFallbackLabel}
+                    resizeMode="contain"
+                    accessible
+                    accessibilityLabel={studioName}
                   />
-                ) : null}
-                <Text style={styles.studio} numberOfLines={2}>
-                  {studioName}
-                </Text>
-                <Text style={styles.person} numberOfLines={1}>
-                  {session?.profile.name ?? session?.profile.email}
-                </Text>
+                ) : (
+                  <Text style={styles.studio} numberOfLines={2}>
+                    {studioName}
+                  </Text>
+                )}
               </View>
 
               <Ornament style={styles.ornament} />
@@ -226,11 +230,21 @@ const styles = StyleSheet.create({
   },
   panelInner: { flex: 1 },
 
-  header: { paddingHorizontal: space.lg, paddingTop: space.lg, paddingBottom: space.md },
-  logo: { borderRadius: radius.input, borderWidth: 0, marginBottom: space.sm },
-  logoFallbackLabel: { ...type.meta, color: colors.fgMuted },
-  studio: { ...type.heading, color: colors.fg },
-  person: { ...type.meta, color: colors.fgMuted, marginTop: 4 },
+  header: {
+    paddingHorizontal: space.lg,
+    paddingTop: space.lg,
+    paddingBottom: space.md,
+    // Centred, as web's `justify-center` header is.
+    alignItems: 'center',
+  },
+  // `resizeMode="contain"` on the Image does the work; a logo has its own
+  // aspect ratio and must not be cropped or stretched to this box.
+  // (Inspecting the rendered <img> on web is misleading — react-native-web
+  // leaves that element at opacity 0 as an alt placeholder and paints the
+  // picture on a layer behind it, where background-size correctly reads
+  // `contain`.)
+  logo: { width: '100%', height: LOGO_HEIGHT },
+  studio: { ...type.heading, color: colors.fg, textAlign: 'center' },
   ornament: { marginBottom: space.sm },
 
   items: { paddingHorizontal: space.sm, paddingBottom: space.lg },

@@ -10,7 +10,13 @@ import { apiFetch } from './api';
  */
 export interface ShareableLink {
   label: string;
-  url: string;
+  /**
+   * NULLABLE, and that nullability is the whole story of one crash.
+   * apps/web renders these rows with `disabled={!link.url}`, which is
+   * proof the API returns entries whose url is not there yet. Typing
+   * this `string` and trusting it is what let a null reach the draft.
+   */
+  url: string | null;
   /** A short right-aligned qualifier web shows beside some links. */
   hint?: string | null;
 }
@@ -42,6 +48,10 @@ export function fetchShareableLinks(
  * Web's first item, "Prefilled intake link", is deliberately NOT here:
  * it mints a PrefillDraft token, which is a write, and the composer
  * renders it disabled instead.
+ *
+ * Rows with NO url are kept rather than filtered, because web keeps them
+ * — it just disables them. Hiding them would silently shorten a menu the
+ * two clients are supposed to agree on.
  */
 export function insertableLinks(links: ShareableLinks | null): ShareableLink[] {
   if (!links) return [];

@@ -79,7 +79,21 @@ export function Composer({
   /** CLIENT threads only — whose links the insert menu offers. */
   clientId?: string | null;
 }) {
-  const [body, setBody] = useState('');
+  const [bodyState, setBodyState] = useState('');
+  /*
+   * Every write to the draft goes through this, and it can only ever
+   * store a string. A link row with no url used to set the draft to null,
+   * and the next render died on `body.trim()` — the crash the owner hit.
+   * The url is guarded at its source too; this is the backstop, because
+   * `body` is read by three different expressions on every render.
+   */
+  const body = bodyState ?? '';
+  const setBody = (next: string | ((current: string) => string)) => {
+    setBodyState((current) => {
+      const value = typeof next === 'function' ? next(current ?? '') : next;
+      return value ?? '';
+    });
+  };
   const [pickerOpen, setPickerOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
@@ -137,7 +151,10 @@ export function Composer({
     }
   }
 
-  function insertLink(url: string) {
+  function insertLink(url: string | null | undefined) {
+    // A row with no url is rendered disabled, so this should not fire —
+    // but it stays a no-op rather than a crash if it ever does.
+    if (!url) return;
     setBody((current) => appendLink(current, url));
     setLinksOpen(false);
   }
@@ -297,13 +314,20 @@ export function Composer({
 
             {insertableLinks(links).map((link) => (
               <Pressable
-                key={`${link.label}-${link.url}`}
+                key={`${link.label}-${link.url ?? 'none'}`}
+                disabled={!link.url}
                 onPress={() => insertLink(link.url)}
-                style={({ pressed }) => [styles.option, pressed && styles.pressed]}
+                accessibilityState={{ disabled: !link.url }}
+                style={({ pressed }) => [
+                  styles.option,
+                  !link.url && styles.optionDisabledRow,
+                  pressed && link.url && styles.pressed,
+                ]}
               >
-                <Feather name="link" size={16} color={colors.fgSecondary} />
-                <Text style={styles.optionLabel}>{link.label}</Text>
+                <Feather name="link" size={16} color={link.url ? colors.fgSecondary : colors.fgMuted} />
+                <Text style={link.url ? styles.optionLabel : styles.optionOff}>{link.label}</Text>
                 {link.hint ? <Text style={styles.optionNote}>{link.hint}</Text> : null}
+                {!link.url ? <Text style={styles.optionNote}>not ready</Text> : null}
               </Pressable>
             ))}
 

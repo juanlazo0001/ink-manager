@@ -5,10 +5,9 @@ import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from '
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { NewTaskBar } from '@/components/NewTaskBar';
-import { PillMenu } from '@/components/PillMenu';
+import { GroupedPillMenu, PillMenu, type MenuGroup } from '@/components/PillMenu';
 import { PillRow } from '@/components/Pill';
 import { TopBar } from '@/components/TopBar';
-import { SegmentedControl } from '@/components/SegmentedControl';
 import { PersonalTaskRow, SystemTaskRow } from '@/components/TaskRow';
 import { SkeletonList } from '@/components/Skeleton';
 import { StateMessage } from '@/components/ui';
@@ -20,6 +19,7 @@ import {
   filterTasks,
   isOverdue,
   taskFiltersFor,
+  TASK_FILTERS,
   type TaskFilter,
   mobileRouteForSystemTask,
   segmentCount,
@@ -200,6 +200,50 @@ export default function TasksScreen() {
     [token, data],
   );
 
+  /*
+   * Everything that narrows the list, in one control. The scope group is
+   * the old MINE / DELEGATED / QUEUE segments, counts and all — they were
+   * a whole row of chrome for three mutually exclusive lists, which a
+   * dropdown states just as clearly. Status is a separate group because
+   * "overdue" refines a scope rather than replacing it.
+   */
+  const filterGroups = useMemo<MenuGroup<string>[]>(() => {
+    const out: MenuGroup<string>[] = [
+      {
+        title: 'Scope',
+        mode: 'single',
+        options: segments.map((seg) => ({
+          value: seg.key,
+          label: seg.label,
+          count: segmentCount(data, seg.key),
+        })),
+      },
+    ];
+    // The queue is computed work with no due date, so nothing there can
+    // be late — the status group would offer a filter that never matches.
+    if (segment !== 'queue') {
+      out.push({
+        title: 'Status',
+        mode: 'multi',
+        options: taskFiltersFor({
+          segment,
+          isSoloStudio: session?.profile.isSoloStudio ?? false,
+        })
+          .filter((f) => f.value !== 'all')
+          .map((f) => ({ value: f.value, label: f.label })),
+      });
+    }
+    return out;
+  }, [segments, data, segment, session?.profile.isSoloStudio]);
+
+  /** What the Filter pill reads: the scope, plus a status when set. */
+  const triggerText = useMemo(() => {
+    const scope = segments.find((seg) => seg.key === segment)?.label ?? 'Filter';
+    if (filter === 'all') return scope;
+    const status = TASK_FILTERS.find((f) => f.value === filter)?.label;
+    return status ? `${scope} · ${status}` : scope;
+  }, [segments, segment, filter]);
+
   const sections = useMemo(() => {
     if (!data) return [];
     if (segment === 'queue') {
@@ -255,12 +299,6 @@ export default function TasksScreen() {
     <SafeAreaView style={styles.screen} edges={['top']}>
       <TopBar />
 
-      <SegmentedControl
-        segments={segments.map((s) => ({ ...s, count: segmentCount(data, s.key) }))}
-        value={segment}
-        onChange={setSegment}
-      />
-
       {/* One Filter, one Sort — web's own two controls, via the PillMenu
           it extracted for exactly this. Previously a standing OVERDUE
           toggle plus four sort pills, which with the scope segments above
@@ -270,13 +308,21 @@ export default function TasksScreen() {
           sort by and no due date to be late against. */}
       {segment !== 'queue' ? (
         <PillRow style={styles.controls}>
-          <PillMenu
+          <GroupedPillMenu
             label="Filter"
             icon="filter"
-            value={filter}
-            options={taskFiltersFor({ segment, isSoloStudio: session?.profile.isSoloStudio ?? false })}
-            onChange={setFilter}
-            active={filter !== 'all'}
+            groups={filterGroups}
+            isSelected={(group, value) =>
+              group.mode === 'single' ? value === segment : filter === value
+            }
+            onSelect={(group, value) => {
+              if (group.mode === 'single') setSegment(value as TaskSegment);
+              // A status toggles off when tapped again, so the same row
+              // both applies and clears it.
+              else setFilter((current) => (current === value ? 'all' : (value as TaskFilter)));
+            }}
+            triggerText={triggerText}
+            active={segment !== 'assignedToMe' || filter !== 'all'}
           />
           <PillMenu
             label="Sort"

@@ -159,6 +159,23 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     letterSpacing: 1.61,
     color: colors.fgSecondary,
+    /*
+     * The last shrinkable child, and therefore the last way this control
+     * could ever truncate.
+     *
+     * Session P pinned the pill and the badge but not this, so if
+     * anything upstream ever constrained the row, the LABEL was the only
+     * thing that could give — and with numberOfLines={1} that means an
+     * ellipsis, which is precisely the reported symptom. Pinned here, a
+     * row that runs out of width overflows into the scroll it already
+     * has, instead of eating the word.
+     *
+     * Measured with Jura actually loaded, at the shipped size and
+     * tracking, with two-digit badges: both pills end at 291px, so this
+     * fits a 320pt screen with 29px to spare. There is no width in the
+     * supported range where truncation is the correct outcome.
+     */
+    flexShrink: 0,
   },
   labelSelected: { color: colors.fg },
   labelAlert: { color: colors.danger },
