@@ -23831,3 +23831,260 @@ degrades to no prefix and no attachment indicator rather than showing anything w
   index, and only a device with a long thread will show that.
 - Everything still carried from H2: the data-URI avatar fix, camera capture, upload progress, and
   `react-native-svg`.
+
+# Mobile sessions J+K+L+M+N — owner parity build-out
+
+Branch `mobile/session-jklmn`, dedicated worktree, six commits, all pushed.
+`apps/mobile/OWNER-PARITY-AUDIT.md` was the spec.
+
+## Base — a flagged deviation
+
+The brief said: base on `main` if `mobile/session-h2` is merged, otherwise branch off h2.
+**h2 is not merged.** But branching off h2 directly would have discarded `mobile/session-h3` (the
+`lastMessage` author/attachments API change the owner asked for) and `mobile/session-i` (the audit
+that is this run's own spec). So this branches off **`mobile/session-i`**, the tip of a chain that
+is **fully linear and contains h2**: `h2 → h3 → i`, each an ancestor of the next, zero merge
+commits between `origin/main` and the tip. Verified, not assumed.
+
+## Commits
+
+| # | Commit | Part |
+| --- | --- | --- |
+| 1 | `c915d93` | `mobile: motion foundation` (J) |
+| 2 | `490b729` | `mobile: owner small wins` (K) |
+| 3 | `20b5a89` | `mobile: clients` (L) |
+| 4 | `3a5d609` | `mobile: owner inquiry detail` (M, partial) |
+| 5 | `6db181d` | `mobile: team + permissions` (N, partial) |
+| 6 | *(this)* | REPORT.md + verification renders |
+
+## J — the motion canon
+
+Web has good tokens and applies them unevenly; mobile had no motion at all. The canon takes web's
+**tokens verbatim** and adds the **policy web lacks**.
+
+| Concern | apps/web | Mobile canon | Same? |
+| --- | --- | --- | --- |
+| Fast / base / slow | 120 / 200 / 300ms | 120 / 200 / 300ms | **identical** |
+| Standard curve | `cubic-bezier(0.4, 0, 0.2, 1)` (measured live) | `Easing.bezier(0.4, 0, 0.2, 1)` | **identical** |
+| List/card enter | `fade-slide-up`: opacity 0→1, translateY 6px→0, 200ms ease-out | same, 6pt | **identical** |
+| Enter stagger | none | 18ms/item, capped at 8 | mobile-only |
+| Enter beyond fold | n/a | **not animated past row 12** | mobile-only |
+| Bar fill | `width` over 0.2s standard curve | same | **identical** |
+| Press feedback | hover (no analog) | `opacity: 0.6` | native equivalent |
+| Skeleton | `animate-pulse`, 2s, `bg-surface` | same, one shared driver per screen | **identical** |
+| Loading policy | inconsistent: skeleton ×4, "Loading…" ×4, spinner ×1, nothing ×5 | **known shape → skeleton; single record → spinner** | deliberate divergence |
+| Popover enter | `scale-fade-in` 200ms | not used yet | gap |
+
+**No new dependency.** `react-native-reanimated@4.1.7` and `react-native-worklets@0.5.1` were
+already installed, and `babel-preset-expo` auto-adds the worklets plugin because both resolve *from
+the preset's own directory* — unlike `expo-router`, whose failure to resolve from there is the
+whole reason `babel.config.js` exists. Verified by resolution test, then by running: zero console
+errors, animations live.
+
+### J's diagnosis — verdict: **mobile, not the API**
+
+Owner inquiry rows didn't navigate because of a deliberate guard:
+
+```
+onPress={isArtist ? () => router.push(...) : undefined}
+```
+
+added because mobile only had the ARTIST detail screen, which reads
+`GET /inquiries/assigned-to-me/:id`. The staff route is a **different payload, not a subset**.
+
+**It is NOT the API list/detail scoping inconsistency** (PARITY-AUDIT.md Finding B). Verified as the
+owner against dev: `GET /inquiries/:id` returns **200** with the full record. So M was never
+blocked — the screen simply didn't exist. It does now, and owner rows navigate.
+
+### The toggle defect did not reproduce
+
+The brief asked me to fix a "badge/label collision" on the Inquiries/Projects toggle. **It does not
+reproduce.** Measured with real owner data (INQUIRIES 68 / PROJECTS 32) and with fabricated 3- and
+4-digit counts, at **both 414pt and 375pt**: labels stay single-line, no clipping, both pills end at
+x=291 well inside the viewport. Nothing was "fixed", because nothing was broken. `j-01`, `j-02`.
+
+## K — small wins
+
+**Response time.** `formatHours` is now web's own function, branch for branch: minutes under an
+hour, hours under 48, decimal days beyond. Mobile rounded fractional hours to one decimal at every
+scale, so a two-minute average printed **"0h"** — reading as instantaneous — while web showed
+**"2m"** from the same payload. Now `2m`. `k-01`.
+
+**Artist utilization** draws a bar per artist scaled to the busiest, as web does, reusing the
+funnel's own `FunnelBar` rather than adding a second bar treatment.
+
+**The delegation view needed no work.** Mobile already ships MINE / DELEGATED / QUEUE segments
+reading `data.assignedByMe`, gated on `tasks.assignToOthers`. **The owner audit called this "the
+cheapest owner win" and that was my error** — read off the `Row` union type without checking the
+segment builder. Verified live: MINE 9, DELEGATED 4, QUEUE 99+.
+
+**Scan** is a real camera flow — `expo-camera`, because it ships inside Expo Go for SDK 54 (
+vision-camera would need a dev client this project has no Apple account for). QR-only, a latch so a
+code in frame resolves once rather than once per frame, manual entry, and web's exact wording for
+recognised-but-unsupported codes. Verified end to end against dev: typing a real code resolved and
+opened the card. `k-03`, `k-02`.
+
+## L — clients
+
+The audit's biggest unlock, and the reason is structural: **gift cards, deposit forms and waivers
+have no standalone page anywhere in the product.** Web reaches them from client detail, appointment
+detail and `/scan` only.
+
+List with web's semantics (client-side search, because `GET /clients` has no search parameter and
+web filters loaded rows too; `includeArchived` is a real server parameter, so it refetches). Detail
+with contact (multiple labelled phones/emails), inquiries and projects split by the canonical table
+session G already built, gift cards tapping through to the card, deposit forms flattened off their
+inquiries, waivers, and banners for archived / merged / transferred records. SMS consent is stated
+as a plain fact — A2P rules turn on it. `l-01`, `l-02`.
+
+## M — partial: the container, not the flows
+
+**Built:** the owner inquiry detail (`staff-inquiry/[id]`), mirroring web's section order —
+pipeline, assignment, estimate, deposits, appointment, intake answers, closing state. The pipeline
+is derived from **timestamps, not `status`**, because status moves backwards while the facts under
+it do not, and it marks the **current** stage, so the stepper answers "what next". `m-01` against
+the audit's `owner-03`: assignment, price, time, and all three estimate timestamps match web
+exactly.
+
+**Not built: the estimate builder, scheduling, and checkout.** This is a scope decision under the
+run's own contract, taken deliberately rather than by running out of room:
+
+- Sending an estimate is a **real SMS or email to a real client**, composed via
+  `estimateDraftToRequestFields` + `estimateDraftToSessionsPayload` (line items and session plan),
+  server-validated, through `POST /inquiries/:id/send-estimate` with a `channel`.
+- `POST /inquiries/:id/revise-estimate` is the post-send path, OWNER/FRONT_DESK +
+  `inquiries.enterEstimate`.
+- Checkout is money.
+
+The contract says money and security get **no unattended creativity**, and mirroring web's drafting,
+validation and confirm semantics is a session's work each, not a corner of one. Their contracts are
+recorded above so the next session starts from a finished investigation.
+
+## N — partial: team + permissions
+
+Staff and artist rosters plus the matrix, from web's own two calls. The matrix communicates the one
+thing that matters most about it: **OWNER is not in it.** The payload's matrix has exactly three
+keys — FRONT_DESK, ARTIST, CUSTOMER — because `hasPermission()` returns true for OWNER before it
+consults anything. Web says so in a banner; mobile shows that banner verbatim. `n-01`.
+
+The 52 keys with their labels and descriptions were copied from web **by script, not retyped**.
+
+**Owner Settings tabs were not built** — see skipped, below.
+
+---
+
+## DECISIONS log
+
+**Money and security — flagged, as the contract requires:**
+
+1. **Gift card screen is READ-ONLY.** The API offers redeem, void, exempt, re-issue and holder
+   edits. Every one moves money. Mirroring web's redemption needs its own investigation of confirm
+   steps and partial-redemption semantics. **Not decided, not built.**
+2. **Client detail is READ-ONLY.** Web offers Issue Gift Card, Send Deposit Form, Send Waiver,
+   Merge, Merge-into, Not-a-duplicate, Edit, Archive. Money or destructive, each with its own
+   confirm flow. **Not decided, not built.**
+3. **Permission matrix is READ-ONLY.** Toggling a permission is a security control. The write is
+   one `PATCH /studios/:id/permissions` carrying the whole flattened matrix
+   (`{role, permissionKey, allowed}` for all 52 × 3). **Not decided, not built.**
+4. **Checkout not started at all**, for the same reason.
+
+**Ordinary judgment calls:**
+
+5. Based on `mobile/session-i` rather than h2 — see Base, above.
+6. **Loading policy diverges from web on purpose**: skeleton where the shape is known, spinner for
+   single records. Web is internally inconsistent, so "match web" had no single answer.
+7. **The current pipeline stage is gold, not web's red.** Red is punctuation in this design system
+   (CLAUDE.md); "the next ordinary step" is neither an error nor destructive.
+8. Enter animation capped at the first screenful — a hundred-row list otherwise animates a hundred
+   rows nobody can see.
+9. Scan lives in the account menu, not a tab: mobile's five tabs are spoken for and scanning is an
+   errand. Behind web's own `giftCards.view` gate; Clients behind `clients.view`; Team behind
+   `team.manage`.
+10. `expo-camera` over vision-camera — Expo Go compatibility, per `apps/mobile/README.md`.
+
+## API gaps hit (flagged, not worked around)
+
+1. **No shared types for clients, gift cards, or staff inquiry detail.** `shared-types` stops at
+   `StaffInquiryListItem` (the list row). apps/web and apps/mobile now describe the same three
+   payloads independently — exactly the drift `shared-types` exists to prevent.
+2. **The permission key list is hand-maintained in three places** — api, web, and now mobile. Web's
+   own file says "kept in sync manually since this is a small monorepo without a shared types
+   package", which is no longer true.
+3. `GET /clients` has **no search parameter**; both clients filter locally, so search cannot see
+   beyond the loaded page.
+4. Client detail returns `inquiries` and `liabilityWaivers` but **no appointments**, and deposit
+   forms only nested inside inquiries.
+
+## Fixtures
+
+**None. No writes were made to any database this session** — dev included. Every verification was a
+read (`GET`) or a render. The dev studio already had 112 inquiries, 130 clients, 95 gift cards and
+42 deposit forms, so nothing needed seeding. No temp scripts remain; the preview harness was
+deleted before the final commit and is confirmed absent from the shipped bundle.
+
+## Skipped, and why
+
+| Skipped | Why |
+| --- | --- |
+| Estimate builder | Real client message + server-validated draft; contract forbids deciding it unattended |
+| Scheduling | Buffer-conflict semantics need web-side investigation this run couldn't finish |
+| Checkout | Money |
+| All client/gift-card write actions | Money or destructive |
+| Permission toggling | Security |
+| Owner Settings tabs (Policies, Defaults, Services, Integrations, System) | Six tabs of forms; ran out of run before it could be done to the standard the rest holds |
+| Studio-wide calendar | Not reached |
+
+## Verification
+
+414pt renders in `apps/mobile/parity-audit/`: `j-01` toggle (not reproducing), `j-02` owner
+inquiries, `j-03` motion canon, `k-01` utilization bars + `2m`, `k-02` gift card, `k-03` scan,
+`l-01` clients, `l-02` client detail, `m-01` owner inquiry detail, `n-01` permission matrix.
+
+**One honest limitation:** Reanimated warns *"Selected easing is not currently supported on web,
+using linear instead"* — so every preview under-represents the real curve. Native gets the intended
+easing. And the enter animation briefly absolutely-positions rows on web (that is how Reanimated
+implements `entering` there), which is what surfaced the beyond-the-fold waste; settled layout was
+always correct.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 13.02s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — **4.59 MB** (was 3.44; camera + reanimated) |
+| Pins | expo 54.0.37 / rn 0.81.5 / svg 15.12.1 / reanimated 4.1.7 / worklets 0.5.1 / camera 17.0.10 / clipboard 8.0.8 / react 19.1.0 |
+| React singleton | 19.2.7 **absent** |
+| Bundle content | permissions banner, scan, pipeline, client search all present; harness absent |
+
+---
+
+## Device gate — one walkthrough
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Scan the QR with Expo Go, sign in as an **owner**.
+
+1. **Does it open at all.** Two new native modules this run (`expo-camera`, and Reanimated's
+   worklets actually running for the first time). If it launches, both are fine.
+2. **Home** — pull to refresh and watch the funnel bars *grow* rather than snap. Response Time's
+   second figure should read **2m**, not 0h. Artist Utilization should be bars.
+3. **Any list** (Inquiries, Chat, Clients) — the first screenful should fade-and-rise, not appear.
+   Skeletons, not a spinner, while loading.
+4. **Inquiries → tap any row.** This never worked for an owner before. It should open the owner
+   detail with a pipeline stepper.
+5. **Menu → Clients** → search → open someone with gift cards. Tap a gift card.
+6. **Menu → Scan** → allow the camera → point it at any gift-card QR. It should open that card.
+   Typing the code by hand should do the same.
+7. **Menu → Team** → Permissions → pick a role, open a group. The gold banner must say *"Owner
+   always has full access."*
+
+Everything above is **read-only** except nothing — no screen added this run writes anything.
+
+**Worth watching for:** list scrolling while rows animate, and whether the camera preview is smooth.
