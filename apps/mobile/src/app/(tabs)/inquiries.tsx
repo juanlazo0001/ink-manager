@@ -181,14 +181,16 @@ export default function InquiriesScreen() {
             <Appear index={index}>
             <InquiryRow
               inquiry={item}
-              // Artists only: the detail screen is built on the artist
-              // route family, and the staff one is a different response
-              // shape with no mobile screen yet -- a staff row would open
-              // something that cannot load.
+              // Two detail screens, because there are two payloads:
+              // ARTIST reads GET /inquiries/assigned-to-me/:id, OWNER and
+              // FRONT_DESK read GET /inquiries/:id, and they are different
+              // shapes rather than one being a subset of the other. Owner
+              // rows used to be inert for want of the second screen --
+              // session J's diagnosis -- not because the API refused them.
               onPress={
                 isArtist
                   ? () => router.push({ pathname: '/inquiry/[id]', params: { id: item.id } })
-                  : undefined
+                  : () => router.push({ pathname: '/staff-inquiry/[id]', params: { id: item.id } })
               }
             />
             </Appear>
