@@ -25188,3 +25188,174 @@ Restart any `expo start` already running from the primary checkout first — the
 4. **The remove buttons** should be red, and still red while disabled.
 5. **If you have a 320pt-class phone**: a long email address should stay whole, with the tag and bin
    dropping to their own line beneath it.
+
+# Mobile session T2 — contact info refinements
+
+**Base: `main` at `151c0d8`** (S and T merged). Worktree, two commits, pushed.
+
+---
+
+## 1 — Phone formatting
+
+### What web has, and the trap in it
+
+Web has **no display formatter**. `apps/web/src/lib/format.ts` exports `formatPhoneInput`, an
+**as-you-type** formatter, and `ClientDetail.tsx` reuses it for display. Its rules:
+
+- strip every non-digit;
+- treat a leading `1` on an eleven-digit run as the country code — the same convention
+  `apps/api/src/lib/phone.ts`'s `normalizePhone` uses server-side;
+- lay ten digits out as `(AAA) NNN-NNNN`;
+- render partial input progressively (`(305`, `(305) 299`);
+- **`.slice(0, 10)` anything longer.**
+
+Those last two are correct for a field being typed into and wrong for a value being displayed. Hand
+web a UK number and it does this:
+
+```
++44 20 7946 0958   ->   (442) 079-4609
+```
+
+A plausible-looking number that **is not the client's**, with nothing to indicate digits were
+dropped. That is web's live behaviour today, not a hypothetical.
+
+### What mobile does
+
+`apps/mobile/src/lib/format.ts` — the mobile counterpart to web's, and the one place a phone number
+becomes something a person reads. Web's NANP rules mirrored exactly, **plus the fallback the brief
+asked for**: anything not NANP-shaped is returned **exactly as stored**. Formatting is a
+presentation nicety; showing someone a different number from the one on file is a defect.
+
+Two conditions gate the formatting — length, and an explicit non-`+1` international prefix:
+
+| Input | Output | Why |
+| --- | --- | --- |
+| `3052997957` | `(305) 299-7957` | NANP, bare |
+| `305-299-7957` | `(305) 299-7957` | NANP, punctuated |
+| `(305) 299-7957` | `(305) 299-7957` | idempotent |
+| `13052997957` | `(305) 299-7957` | 11 digits, leading 1 |
+| `+1 305 299 7957` | `(305) 299-7957` | +1 country code |
+| `+1 (305) 299-7957` | `(305) 299-7957` | fully punctuated |
+| **`+44 20 7946 0958`** | **`+44 20 7946 0958`** | UK, 12 digits — untouched |
+| **`+33 6 12 34 56 78`** | **`+33 6 12 34 56 78`** | France, 11 digits — untouched |
+| **`+52 55 1234 5678`** | **`+52 55 1234 5678`** | **ten digits behind `+52`** |
+| `12345` | `12345` | too short |
+| `abc` | `abc` | no digits |
+| `305-299-7957 ext 12` | `305-299-7957 ext 12` | extension |
+| `""` / `null` / `undefined` | `""` | empty |
+
+The Mexico row is the one worth keeping: it is **ten digits**, so length alone would have let it
+through and produced `(525) 512-3456`. The `+`-prefix guard is what catches it.
+
+### Every render site
+
+| Site | Now |
+| --- | --- |
+| Client detail — header line | formatted |
+| Client detail — contact rows | formatted (phones only; emails pass through) |
+| Clients list — row secondary line | formatted |
+| Artist profile | formatted |
+| **`buildCustomerDetailsText`** — the Copy payload | **formatted** |
+| Profile **editor** field | **deliberately raw** |
+
+`buildCustomerDetailsText` carried a comment from session P saying numbers were copied raw because
+"mobile has no equivalent helper". That gap is closed and the comment replaced.
+
+The profile editor is the one exclusion: display formatting inside a text field fights the person
+typing (that is what web's *input* formatter is for, and mobile's editor has no equivalent yet).
+
+One thing fixed on the way past: the remove button's spoken label was built from the **raw** value,
+so a screen reader announced "Remove 3052997957" while the screen read "(305) 299-7957". It now
+speaks what is shown.
+
+## 2 — Primary tag placement
+
+The tag sits **immediately after the value**, one `space.sm` gap, and the row **no longer wraps**.
+
+Session T wrapped this row to keep a long address whole; that put the tag on its own line, away from
+the value it marks. The owner's rule reverses it, and the implementation is one line: **the value is
+the only shrinkable thing in the row**. It truncates first, so the tag can never wrap away from its
+number or collide with it. The remove button holds the right edge via `marginLeft: 'auto'`.
+
+Verified at 320pt with the 31-character address: the value truncates (`yoanliz.guzman.…`), the tag
+stays put beside it, and the row stays one line.
+
+## 3 — Icon geometry
+
+**One size token, and the variant is gone rather than defaulted** — so a per-card size cannot come
+back by accident.
+
+Web draws row-level actions at `h-8 w-8` in `fg-secondary` and section actions at `h-11 w-11`;
+mobile mirrored that split from session S until this round. Two reasons it goes:
+
+1. Inside one card, two button sizes read as two unrelated controls — which is what the owner saw.
+2. **32pt is under the 44pt iOS minimum tap target.** The split was costing accessibility as well as
+   consistency.
+
+Measured after, at 320pt — every icon button on the entire screen:
+
+| Button | Size | Right edge |
+| --- | --- | --- |
+| Add phone | 44 × 44 | 302 |
+| Add email | 44 × 44 | 302 |
+| Remove (each of four rows) | 44 × 44 | 302 |
+| New inquiry | 44 × 44 | 302 |
+| Issue gift card | 44 × 44 | 302 |
+| Download deposit form | 44 × 44 | 302 |
+
+**One consistent right-aligned column at x = 302**, across every card on the screen. The only two
+that sit elsewhere are correct: "Send inquiry via email" (the first of two side-by-side icons, so
+the second holds the edge) and the waiver download (followed by its status chip, as web orders it).
+
+Alignment is by baseline as asked — each add button centres on its group eyebrow, each remove on its
+entry row — with no vertical stacking anywhere.
+
+**Consequence worth flagging:** this also enlarged the **deposit-form and waiver download buttons**
+from 32 to 44. That follows from "one shared size token, not per-card sizes" but is a change outside
+the Contact Info card, so it is called out rather than buried — `t2-02` shows those rows.
+
+## Verification
+
+`apps/mobile/parity-audit/`:
+
+- **`t2-01-contact-refinements.png`** — the card before (session T) and after, both at 320pt.
+- `t2-02-full-scroll-320-390.png` — the whole screen at both widths, including the resized downloads.
+- `t2-03-contact-rows-320.png` — the rows close up: formatted number, UK number untouched, tag
+  beside the value, one icon column.
+
+The formatter's fifteen cases were run directly against the shipped module, not retyped — the table
+above is that run's output.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 15.57s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4,844,833 bytes (4.84 MB), unchanged |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | `Add phone`, `Add email`, `Remove `, `Merge with another client`, the remove note, `formatPhone` all present; harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **A client → Contact Info.** Numbers should read `(305) 299-7957`, not raw digits — on the header
+   line, in the rows, in the clients list, and in **Copy → Copy customer details** (paste it
+   somewhere).
+2. **The Primary tag** should sit right beside the number or address it marks, not out at the edge.
+3. **The icons** — add and remove should be the same size as the Inquiries card's buttons, all on
+   one right-hand column down the whole screen.
+4. **Deposit forms / waivers** — those download buttons are bigger now too. Worth a look, since that
+   is the part of the change that reaches beyond this card.
+5. **If any client has a non-US number**, it should appear exactly as stored rather than reshaped.
