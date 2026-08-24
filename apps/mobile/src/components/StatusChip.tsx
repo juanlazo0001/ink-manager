@@ -1,0 +1,117 @@
+import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+
+import { statusLabel, statusTone } from '@/lib/inquiryDisplay';
+import { colors, radius, space, tones, type } from '@/theme';
+
+/**
+ * The one status chip.
+ *
+ * Extracted from apps/web's `StatusPill` in its editorial shape, at the
+ * MOBILE-FIRST sizing web itself uses below the `sm` breakpoint — which
+ * is to say, web's own phone rendering, measured off the running app
+ * rather than read off the class names:
+ *
+ *   padding    4px 8px          (px-2 py-1)
+ *   radius     full
+ *   font       Jura, 9px, weight 400
+ *   tracking   0.72px           (0.08em at 9px)
+ *   gap        6px              (gap-1.5)
+ *   dot        4x4 round        (h-1 w-1)
+ *   border     1px, tone at 50% alpha
+ *   background tone at 10% alpha        <- the tinted fill
+ *   text       tone at full
+ *
+ * The TINTED FILL is the part mobile was missing: chips here were drawn
+ * with a coloured border over the card's own background, which reads as
+ * an outline rather than a status. `bg-{tone}/10` is what gives web's
+ * chips their weight.
+ *
+ * Two details that are easy to get wrong and are deliberate here:
+ *
+ *   The DANGER dot is `danger-strong`, not `danger`. Web keys the dot off
+ *   a separate map, and the readable-as-text red is too soft for a 4px
+ *   dot.
+ *
+ *   NEUTRAL is not a tinted tone at all. Web gives it
+ *   `border-border-soft bg-white/[0.02] text-neutral` — a plain grey
+ *   chip, because "no particular state" should not read as a colour.
+ */
+
+/** A hex tone at a given alpha, since the palette is stored as hex. */
+function withAlpha(hex: string, alpha: number): string {
+  const value = hex.replace('#', '');
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+export type ChipTone = keyof typeof tones;
+
+/** Web's alphas, named so the intent survives a later edit. */
+const FILL_ALPHA = 0.1;
+const BORDER_ALPHA = 0.5;
+
+export function StatusChip({
+  tone,
+  label,
+  style,
+}: {
+  tone: ChipTone;
+  label: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const color = tones[tone] ?? tones.neutral;
+  const isNeutral = tone === 'neutral';
+
+  // Web's own exception: the danger dot uses the stronger red.
+  const dotColor = tone === 'danger' ? colors.dangerStrong : color;
+
+  return (
+    <View
+      style={[
+        styles.chip,
+        isNeutral
+          ? { borderColor: colors.borderSoft, backgroundColor: 'rgba(255, 255, 255, 0.02)' }
+          : { borderColor: withAlpha(color, BORDER_ALPHA), backgroundColor: withAlpha(color, FILL_ALPHA) },
+        style,
+      ]}
+    >
+      <View style={[styles.dot, { backgroundColor: isNeutral ? tones.neutral : dotColor }]} />
+      <Text
+        style={[styles.label, { color }]}
+        numberOfLines={2}
+        maxFontSizeMultiplier={1.3}
+      >
+        {label.toUpperCase()}
+      </Text>
+    </View>
+  );
+}
+
+/** The same chip, keyed off an inquiry/project status. */
+export function InquiryStatusChip({ status, style }: { status: string; style?: StyleProp<ViewStyle> }) {
+  return <StatusChip tone={statusTone(status) as ChipTone} label={statusLabel(status)} style={style} />;
+}
+
+const styles = StyleSheet.create({
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    // Never squeezed by a row that runs out of width.
+    flexShrink: 0,
+    gap: 6,
+    paddingHorizontal: space.sm,
+    paddingVertical: space.xs,
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  // `mt-px` on web — the dot sits a hair low against uppercase Jura.
+  dot: { width: 4, height: 4, borderRadius: radius.pill, marginTop: 1 },
+  label: {
+    fontFamily: type.eyebrow.fontFamily,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.72,
+  },
+});

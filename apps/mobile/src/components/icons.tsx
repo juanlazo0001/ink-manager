@@ -122,6 +122,94 @@ export function PhotoIcon({ size = 20, color }: IconProps) {
   );
 }
 
+/* ------------------------------------------------------------------ *
+ * Card header actions — web's own glyphs, path for path.
+ * ------------------------------------------------------------------ */
+
+/** Send — the paper plane on web's "Send Inquiry via Email". */
+export function SendIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Path d="M17.5 2.5 2.5 8.8l5.8 2.4 2.4 5.8L17.5 2.5Z" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+/** Plus — web's "New Inquiry". */
+export function PlusIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Line x1="10" y1="4" x2="10" y2="16" strokeLinecap="round" />
+      <Line x1="4" y1="10" x2="16" y2="10" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Channel glyphs.
+ *
+ * One per value of the API's `Channel` enum — EMAIL, INSTAGRAM, FACEBOOK,
+ * PHONE, REFERRAL, FLASH_GALLERY. Four are apps/web's own paths; PHONE
+ * has no web equivalent and is drawn to match the set's weight; REFERRAL
+ * reuses the two-figure Clients glyph, since a referral IS another client.
+ *
+ * Deliberately MONOCHROME. The conversations list tints its channel
+ * swatches with brand colour, but this glyph sits in a quiet meta line
+ * under a description, where six brand colours would compete with the
+ * status chip that is the row's actual signal.
+ * ------------------------------------------------------------------ */
+
+/** Email — web's `EmailIcon`. */
+export function EmailIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Rect x="2.5" y="4.5" width="15" height="11" rx="2" />
+      <Path d="M3.5 5.75 10 10.75l6.5-5" strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+/** Instagram — web's `InstagramIcon`. */
+export function InstagramIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Rect x="3" y="3" width="14" height="14" rx="4" />
+      <Circle cx="10" cy="10" r="3.25" />
+      <Circle cx="14.25" cy="5.75" r="0.75" fill={color} stroke="none" />
+    </Svg>
+  );
+}
+
+/** Facebook — web's `FacebookIcon`. */
+export function FacebookIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Circle cx="10" cy="10" r="7.5" />
+      <Path
+        d="M11.75 7.25h-1a1.25 1.25 0 0 0-1.25 1.25v1h2.25l-.3 1.75h-1.95V15"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+/**
+ * Phone — a handset. No web equivalent exists (web labels this channel
+ * "Phone / Walk-in" in a select and never draws it), so this is drawn to
+ * the set's 1.5 stroke and 20-unit box.
+ */
+export function PhoneIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Path
+        d="M6.5 3.5h-2A1.5 1.5 0 0 0 3 5.2c.4 6 5.3 10.9 11.3 11.3a1.5 1.5 0 0 0 1.7-1.5v-2a1 1 0 0 0-.8-1l-2.3-.5a1 1 0 0 0-1 .4l-.7.9a10.5 10.5 0 0 1-4.5-4.5l.9-.7a1 1 0 0 0 .4-1l-.5-2.3a1 1 0 0 0-1-.8Z"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
 /** Menu — three rules, web's `MenuIcon` path for path. */
 export function MenuIcon({ size = 20, color }: IconProps) {
   return (

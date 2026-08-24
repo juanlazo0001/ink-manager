@@ -7,13 +7,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { CollapsibleSection, type SectionAction } from '@/components/CollapsibleSection';
+import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
+import { ChannelGlyph, channelLabelFor } from '@/components/ChannelGlyph';
+import { InquiryStatusChip, StatusChip } from '@/components/StatusChip';
+import { PlusIcon, SendIcon } from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { buildCustomerDetailsText, clientName, fetchClient, type ClientDetail, type ClientInquiry } from '@/lib/clients';
 import { fetchConversations } from '@/lib/conversations';
 import { formatMoney } from '@/lib/giftCards';
-import { statusLabel, statusTone } from '@/lib/inquiryDisplay';
+import { statusLabel } from '@/lib/inquiryDisplay';
 import { tabForStatus } from '@/lib/inquiryTabs';
 import { screenErrorMessage } from '@/lib/screenError';
 import { colors, hairline, radius, space, tones, type } from '@/theme';
@@ -278,17 +282,36 @@ export default function ClientScreen() {
             count={inquiries.length}
             open={!!open.inquiries}
             onToggle={() => toggle('inquiries')}
-            // Web carries BOTH here: Send Inquiry (texts the client an
-            // intake link) and New Inquiry (logs one on their behalf).
-            actions={[
-              PORTAL_ACTION('Send Inquiry via Email', 'Sends the client an intake link — portal only.'),
-              PORTAL_ACTION('New Inquiry', 'Logging an inquiry is done in the portal.'),
-            ]}
+            headerActions={
+              <CardActionRow>
+                <CardIconButton
+                  Icon={SendIcon}
+                  label="Send inquiry via email"
+                  unavailableNote="Sending an intake link lives in the portal for now."
+                />
+                <CardIconButton
+                  Icon={PlusIcon}
+                  label="New inquiry"
+                  unavailableNote="Logging an inquiry lives in the portal for now."
+                />
+              </CardActionRow>
+            }
           >
             {inquiries.length === 0 ? (
               <Empty text="No open inquiries." />
             ) : (
-              inquiries.map((i) => <InquiryRowLine key={i.id} inquiry={i} />)
+              <>
+                {/* Web keeps these two column headers at phone width and
+                    hides Channel and Submitted -- the row below folds
+                    those into its meta line instead of dropping them. */}
+                <View style={styles.columnHead}>
+                  <Text style={styles.columnLabel}>Description</Text>
+                  <Text style={styles.columnLabel}>Status</Text>
+                </View>
+                {inquiries.map((i, index) => (
+                  <InquiryRowLine key={i.id} inquiry={i} last={index === inquiries.length - 1} />
+                ))}
+              </>
             )}
           </CollapsibleSection>
 
@@ -332,7 +355,7 @@ export default function ClientScreen() {
                       {` · ${g.appointmentId ? 'Attached' : 'Unattached'}`}
                     </Text>
                   </View>
-                  <Chip label={g.status} tone={giftCardTone(g.status)} />
+                  <StatusChip label={g.status} tone={giftCardTone(g.status)} />
                   <Feather name="chevron-right" size={16} color={colors.fgMuted} />
                 </Pressable>
               ))
@@ -397,8 +420,7 @@ export default function ClientScreen() {
                         the state carried by the chip. */}
                     <Text style={styles.lineTitle}>Created {stamp(w.createdAt)}</Text>
                   </View>
-                  <Chip
-                    label={w.signedAt ? 'Signed' : (w.status ?? 'Pending')}
+                  <StatusChip label={w.signedAt ? 'Signed' : (w.status ?? 'Pending')}
                     tone={w.signedAt ? 'success' : 'warning'}
                   />
                 </View>
@@ -460,19 +482,36 @@ function QuickAction({
   );
 }
 
-/** Web's inquiries table: description, channel, submitted, status chip. */
-function InquiryRowLine({ inquiry }: { inquiry: ClientInquiry }) {
+/**
+ * One inquiry row.
+ *
+ * Web's anatomy at phone width: description on the left, status chip on
+ * the right, a hairline between rows, and generous vertical rhythm
+ * (12px above and below, 14/20 text). Measured, not guessed.
+ *
+ * The meta line is mobile's own: web HIDES channel and submitted-date
+ * entirely below its `sm` breakpoint, and rather than lose both, they
+ * fold into one quiet line under the description — a monochrome channel
+ * glyph and the date. Recorded as a deliberate divergence: it shows more
+ * than web's phone rendering, not less.
+ */
+function InquiryRowLine({ inquiry, last }: { inquiry: ClientInquiry; last?: boolean }) {
   return (
-    <View style={styles.line}>
-      <View style={styles.lineText}>
-        <Text style={styles.lineTitle} numberOfLines={2}>
+    <View
+      style={[styles.inquiryRow, last && styles.inquiryRowLast]}
+      accessibilityLabel={`${inquiry.description?.trim() || 'Untitled inquiry'}, ${channelLabelFor(inquiry.channel)}, ${statusLabel(inquiry.status)}`}
+    >
+      <View style={styles.inquiryText}>
+        <Text style={styles.inquiryTitle}>
           {inquiry.description?.trim() || inquiry.service || 'Untitled inquiry'}
         </Text>
-        <Text style={styles.lineMeta}>
-          {[inquiry.channel, stamp(inquiry.createdAt)].filter(Boolean).join(' · ')}
-        </Text>
+        <View style={styles.metaLine}>
+          <ChannelGlyph channel={inquiry.channel} />
+          {inquiry.channel ? <Text style={styles.metaDot}>·</Text> : null}
+          <Text style={styles.metaText}>{stamp(inquiry.createdAt)}</Text>
+        </View>
       </View>
-      <StatusChip status={inquiry.status} />
+      <InquiryStatusChip status={inquiry.status} />
     </View>
   );
 }
@@ -497,7 +536,7 @@ function ProjectLine({ inquiry }: { inquiry: ClientInquiry }) {
             {inquiry.description?.trim() || inquiry.service || 'Untitled project'}
           </Text>
         </View>
-        <StatusChip status={inquiry.status} />
+        <InquiryStatusChip status={inquiry.status} />
       </View>
 
       {(sessions.length > 0 ? sessions : deposits.length > 0 ? deposits : [null]).map((_, index) => {
@@ -506,30 +545,12 @@ function ProjectLine({ inquiry }: { inquiry: ClientInquiry }) {
         return (
           <View key={number} style={styles.sessionLine}>
             <Text style={styles.sessionLabel}>Session {number}</Text>
-            <Chip
-              label={deposit ? (deposit.paidAt ? 'Deposit paid' : 'Deposit sent') : 'Deposit not yet generated'}
+            <StatusChip label={deposit ? (deposit.paidAt ? 'Deposit paid' : 'Deposit sent') : 'Deposit not yet generated'}
               tone={deposit?.paidAt ? 'success' : 'neutral'}
             />
           </View>
         );
       })}
-    </View>
-  );
-}
-
-/** An inquiry/project status, in the tone the rest of the app uses. */
-function StatusChip({ status }: { status: string }) {
-  return <Chip label={statusLabel(status)} tone={statusTone(status)} />;
-}
-
-function Chip({ label, tone }: { label: string; tone: keyof typeof tones | 'neutral' }) {
-  const color = tones[tone as keyof typeof tones] ?? tones.neutral;
-  return (
-    <View style={[styles.chip, { borderColor: color }]}>
-      <View style={[styles.chipDot, { backgroundColor: color }]} />
-      <Text style={[styles.chipLabel, { color }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
-        {label.toUpperCase()}
-      </Text>
     </View>
   );
 }
@@ -563,7 +584,7 @@ function ContactLine({
         {value}
       </Text>
       {label ? <Text style={styles.contactLabel}>{label}</Text> : null}
-      {primary ? <Chip label="Primary" tone="neutral" /> : null}
+      {primary ? <StatusChip label="Primary" tone="neutral" /> : null}
     </View>
   );
 }
@@ -725,6 +746,32 @@ const styles = StyleSheet.create({
   lineMeta: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
   empty: { ...type.small, color: colors.fgMuted, paddingVertical: space.sm },
+
+  /* Web's column headers: 12px, muted, 12px of space beneath. */
+  columnHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingBottom: space.md,
+  },
+  columnLabel: { ...type.meta, color: colors.fgMuted, fontSize: 12 },
+
+  /* Web's row: 12px above and below, hairline between, none after the
+     last -- a trailing rule under a card's final row is a stray line. */
+  inquiryRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.md,
+    paddingVertical: space.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  inquiryRowLast: { borderBottomWidth: 0, paddingBottom: 0 },
+  inquiryText: { flex: 1 },
+  /* Web's td: 14px over a 20px line. */
+  inquiryTitle: { ...type.body, fontSize: 14, lineHeight: 20, color: colors.fg },
+  metaLine: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: 3 },
+  metaDot: { ...type.meta, color: colors.fgMuted },
+  metaText: { ...type.meta, color: colors.fgMuted },
 
   consentLine: { ...type.small, color: colors.fgSecondary, marginBottom: space.xs },
 

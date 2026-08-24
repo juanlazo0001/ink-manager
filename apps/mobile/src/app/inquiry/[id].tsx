@@ -9,6 +9,7 @@ import { DetailField, DetailSection, FieldDivider } from '@/components/DetailSec
 import { InquiryRespondSheet, type RespondMode } from '@/components/InquiryRespondSheet';
 import { PhotoStrip, PhotoViewer } from '@/components/PhotoViewer';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { InquiryStatusChip } from '@/components/StatusChip';
 import { GoldButton, QuietButton, ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { ApiError } from '@/lib/api';
@@ -145,7 +146,6 @@ export default function InquiryDetailScreen() {
     );
   }
 
-  const tone = tones[statusTone(inquiry.status)];
   const dimmed = isClosedStatus(inquiry.status);
   const estimate = visibility.canSeePricing
     ? formatEstimateRange(inquiry.priceEstimateLow ?? null, inquiry.priceEstimateHigh ?? null)
@@ -183,10 +183,7 @@ export default function InquiryDetailScreen() {
         ) : null}
 
         <View style={[styles.hero, dimmed && styles.dimmed]}>
-          <View style={[styles.statusPill, { borderColor: tone }]}>
-            <View style={[styles.statusDot, { backgroundColor: tone }]} />
-            <Text style={[styles.statusLabel, { color: tone }]}>{statusLabel(inquiry.status).toUpperCase()}</Text>
-          </View>
+          <InquiryStatusChip status={inquiry.status} />
           <Text style={styles.description}>{inquiry.description}</Text>
         </View>
 

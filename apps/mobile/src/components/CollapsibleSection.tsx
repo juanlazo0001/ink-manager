@@ -22,6 +22,7 @@ export function CollapsibleSection({
   open,
   onToggle,
   actions,
+  headerActions,
   children,
 }: {
   title: string;
@@ -29,6 +30,12 @@ export function CollapsibleSection({
   open: boolean;
   onToggle: () => void;
   actions?: SectionAction[];
+  /**
+   * Icon-only actions, rendered on the header row itself. Web puts its
+   * card actions here; the text-button `actions` stack below is the older
+   * treatment, kept for sections not yet converted.
+   */
+  headerActions?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -48,6 +55,8 @@ export function CollapsibleSection({
         <SectionHeader style={styles.title}>{title}</SectionHeader>
         {count !== undefined ? <Text style={styles.count}>{count}</Text> : null}
       </Pressable>
+
+      {headerActions ? <View style={styles.headerActions}>{headerActions}</View> : null}
 
       {actions && actions.length > 0 ? (
         <View style={styles.actionRow}>
@@ -116,6 +125,7 @@ const styles = StyleSheet.create({
 
   body: { marginTop: space.md },
 
+  headerActions: { marginTop: space.md },
   actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   actionWrap: { marginTop: space.md, gap: space.xs },
   action: {

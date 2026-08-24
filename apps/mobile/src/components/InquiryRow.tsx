@@ -11,6 +11,7 @@ import {
   statusTone,
 } from '@/lib/inquiryDisplay';
 import { relativeStamp } from '@/lib/time';
+import { InquiryStatusChip } from '@/components/StatusChip';
 import { colors, hairline, radius, space, tones, type } from '@/theme';
 
 /**
@@ -119,10 +120,7 @@ export function InquiryRow({ inquiry, onPress }: { inquiry: InquiryRowData; onPr
       <View style={styles.metaLine}>
         {/* Tone carries the meaning: warning = someone must act, danger =
             genuinely lost. Red arrives here only via CLOSED_LOST. */}
-        <View style={[styles.statusPill, { borderColor: tone }]}>
-          <View style={[styles.statusDot, { backgroundColor: tone }]} />
-          <Text style={[styles.statusLabel, { color: tone }]}>{statusLabel(inquiry.status).toUpperCase()}</Text>
-        </View>
+        <InquiryStatusChip status={inquiry.status} />
 
         <Text style={styles.channel}>{channelLabel(inquiry.channel).toUpperCase()}</Text>
 
