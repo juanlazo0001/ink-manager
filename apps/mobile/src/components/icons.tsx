@@ -122,6 +122,17 @@ export function PhotoIcon({ size = 20, color }: IconProps) {
   );
 }
 
+/** Team — a badge/roster glyph, matching web's Team nav icon family. */
+export function TeamIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Rect x="4" y="2.5" width="12" height="15" rx="1.5" />
+      <Circle cx="10" cy="8" r="2" />
+      <Path d="M6.5 14.5c0-2 1.6-3 3.5-3s3.5 1 3.5 3" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
 /** Clients — two figures, web's `ClientsIcon` path for path. */
 export function ClientsIcon({ size = 20, color }: IconProps) {
   return (

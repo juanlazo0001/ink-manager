@@ -3,7 +3,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Ornament } from '@/components/editorial';
-import { ClientsIcon, LogoutIcon, PersonIcon, PhotoIcon, ScanIcon, SettingsIcon } from '@/components/icons';
+import { ClientsIcon, LogoutIcon, PersonIcon, PhotoIcon, ScanIcon, SettingsIcon, TeamIcon } from '@/components/icons';
 import { useAuth } from '@/context/auth';
 import { colors, hairline, radius, space, type } from '@/theme';
 
@@ -54,8 +54,10 @@ export function AccountMenu({ open, onClose }: { open: boolean; onClose: () => v
   const canScan = session?.profile.permissions?.includes('giftCards.view') ?? false;
   // Web's gate for /clients (Sidebar.tsx: `permission: 'clients.view'`).
   const canViewClients = session?.profile.permissions?.includes('clients.view') ?? false;
+  // Web's Sidebar gates /team on `team.manage`.
+  const canViewTeam = session?.profile.permissions?.includes('team.manage') ?? false;
 
-  function go(path: '/flash' | '/profile' | '/settings' | '/scan' | '/clients') {
+  function go(path: '/flash' | '/profile' | '/settings' | '/scan' | '/clients' | '/team') {
     onClose();
     router.push(path);
   }
@@ -89,6 +91,7 @@ export function AccountMenu({ open, onClose }: { open: boolean; onClose: () => v
               <MenuItem Icon={ClientsIcon} label="Clients" onPress={() => go('/clients')} />
             ) : null}
             {canScan ? <MenuItem Icon={ScanIcon} label="Scan" onPress={() => go('/scan')} /> : null}
+            {canViewTeam ? <MenuItem Icon={TeamIcon} label="Team" onPress={() => go('/team')} /> : null}
             <MenuItem Icon={PersonIcon} label="Profile" onPress={() => go('/profile')} />
             <MenuItem Icon={SettingsIcon} label="Settings" onPress={() => go('/settings')} />
             <View style={styles.divider} />
