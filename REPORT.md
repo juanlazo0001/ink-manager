@@ -24991,3 +24991,200 @@ Restart any `expo start` already running from the primary checkout first — the
 4. **Deposit forms and waivers**: the small download circle appears only on **signed** rows.
 5. **If you have a 320pt-class phone** (SE 1st gen / older mini): the inquiry rows are the thing to
    look at — the long status chips should sit on their own line rather than crushing the text.
+
+# Mobile session T — borderless chips, and the contact card
+
+**Base: `mobile/session-s` at `6ea7e2d`**, not `main`. S is still unmerged (`main` is at `e7b4c26`,
+carrying R), so this stacks on S. Worktree cut from S rather than from origin/main; two commits,
+pushed.
+
+---
+
+## 1 — Chips lose the stroke
+
+### What web actually does
+
+**Web's chips ARE bordered.** From `apps/web/src/components/StatusPill.tsx`:
+
+```
+className="… rounded-full border px-2 py-1 …"
+success: 'border-success/50 bg-success/10 text-success'
+neutral: 'border-border-soft bg-white/[0.02] text-neutral'
+```
+
+So this is a **genuine, owner-directed divergence**, not a correction — recorded in the component's
+own header so it does not get "fixed" back to web later.
+
+### Neutral had to change with it
+
+Web's neutral is `bg-white/[0.02]` — a 2% fill that works *only because the border draws the shape*.
+Remove the stroke and the chip disappears into the card. Neutral now takes the **same tone-at-10%
+rule as every other tone**, so it stays grey and reads as "no particular state" while actually being
+visible. `t-01` shows the difference plainly: every neutral chip in the BEFORE strip (COLD LEAD,
+TRANSFERRED, REDEEMED, DEPOSIT SENT, DUE FRI) is a hairline outline over nothing; in the AFTER they
+have a body.
+
+### The sweep — every place a chip renders
+
+| Call site | Before | Now |
+| --- | --- | --- |
+| Inquiries list (`InquiryRow`) | shared chip | inherits |
+| Inquiry detail | shared chip | inherits |
+| Client detail — inquiries, projects, session deposits, gift cards, waivers | shared chip | inherits |
+| **Tasks — the overdue pill** | **its own bordered pill, no fill** | **migrated to the shared chip** |
+| Appointments — status badge | dot + label, **no pill at all** | nothing to change |
+| Appointments — CONSULTATION | dashed accent pill, a *type* marker not a status | left alone |
+| Contact info — Primary | a neutral status chip (wrong) | **its own tag** — see below |
+
+**No call site overrides the chip with its own border** — verified by rendering all fifteen inquiry
+statuses plus every other family side by side (`t-01`).
+
+Two things the sweep turned up that the brief's premise did not assume:
+
+1. **The tasks overdue chip was not on the shared component.** It was the last bordered pill outside
+   `StatusChip`, and an *outline with no fill* — so "remove the border" would have left bare text.
+   Leaving it bordered would have put two contradictory chip treatments in the same list. It now
+   uses the shared chip (`danger` when overdue, `neutral` otherwise) and inherits everything.
+2. **Appointment badges are not chips.** Dot plus coloured label, no container. Nothing to remove,
+   and nothing was changed.
+
+Two **dead local pill styles** left behind by session R's migration (`inquiry/[id].tsx`'s
+`statusPill`/`statusDot`/`statusLabel`, `client/[id].tsx`'s `chip`/`chipDot`/`chipLabel`) are gone —
+nothing referenced them.
+
+## 2 — Contact Info
+
+### The Primary tag — extracted, and it was in the wrong family
+
+```
+ml-2 rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent
+```
+
+| Property | Value |
+| --- | --- |
+| background | **accent at 15%** — `rgba(201, 154, 91, 0.15)` |
+| text | `accent` (`#c99a5b`) |
+| size | **10px**, semibold |
+| padding | **8px / 2px** |
+| radius | full |
+| dot | **none** |
+| border | **none** |
+| case | **"Primary"** — sentence case, not uppercase |
+
+**Mobile had been rendering this as a neutral `StatusChip`** — uppercase, dotted, bordered. That is
+the wrong visual family: "this is the one we use" is a property of the row, not a state of the
+client, and web keys it off the *accent* rather than a tone precisely to say so. It is now its own
+component and cannot inherit chip changes by accident.
+
+### Everything else in the card
+
+| Item | Source | Result |
+| --- | --- | --- |
+| Header | Web's `Widget` gives this section **no action** | chevron + title only. No drag handle — mobile has no reorder |
+| SMS consent | `text-xs font-medium`, state in its own colour | label + **green "Given {date}"** or muted "Not yet given" — mobile had been dropping the colour *and* the date |
+| Opted-out | web's separate `text-warning` paragraph | added verbatim; mobile had collapsed it to the word "Opted out" |
+| Group heads | `flex items-center justify-between` | eyebrow left, add control right |
+| Row label | `ml-1.5 text-xs text-fg-muted` | **in parentheses**, as web writes it |
+| Merge | `rounded-full border border-border px-4 py-2` + 16px search glyph | kept, **with its words** |
+
+### Divergences, all owner-directed
+
+1. **Add is icon-only.** Web writes "+ Add phone" / "+ Add email" as accent text links. Each group
+   gets **its own drawn combo glyph** — handset-plus and envelope-plus, both derived from the set's
+   existing `PhoneIcon`/`EmailIcon` coordinates — because two identical plus buttons would give the
+   two groups the same control with nothing to tell them apart.
+2. **Remove is icon-only**, web's `TrashIcon`, keeping web's danger red. That meant teaching
+   `CardIconButton` a `tone`, and the red **survives being disabled** (at reduced opacity): a
+   destructive control that greys out entirely reads as a different button.
+3. **Merge is centred**; web right-aligns it (`mt-6 flex justify-end`).
+
+All three write paths stay disabled with the toast, per the brief.
+
+## 3 — Density at 320pt
+
+The brief's 30-character test address (`yoanliz.guzman.tattoo@gmail.com`, 31 chars) **lost its
+domain**: the value truncated to `yoanliz.guzman.ta…`, because the row needs ~250pt for value + tag
++ button and a 320pt phone gives the card **236**.
+
+The row wraps now — **web's own `li` is `flex flex-wrap items-center justify-between gap-2`**, so
+this is web's mechanism, not an invention, and it is the same rule session S applied to the inquiry
+row. The value keeps line one; the tag and button drop to a right-aligned line two. At 390 nothing
+wraps.
+
+Measured after: the address renders **whole at 320pt**, `scrollWidth` equal to laid-out width, not
+truncated (`t-03`).
+
+**One thing the preview cannot prove.** The value is set to truncate in the **middle**
+(`ellipsizeMode="middle"`) so that a pathologically long address keeps its domain rather than its
+prefix. iOS honours that; **react-native-web only ever truncates at the tail**, so the browser
+render shows tail truncation. Flagged rather than claimed — the device gate is where it shows.
+
+## Flagged, not built
+
+**Web offers "Make primary" on every non-primary contact row** — `text-xs font-medium
+text-fg-secondary`, sitting left of Remove. It is not in this brief's row spec (value + Primary tag
++ remove icon), and adding a third element would have cut into the 320pt budget the density test
+exists to protect, so it is **not built**. Its exact treatment is recorded here so it is one line to
+add if wanted.
+
+## A verification-method correction worth keeping
+
+Session Q recorded that bundle greps "fail on strings containing an em dash". The mechanism is
+sharper than that, and now confirmed: **Hermes stores any string literal containing a non-ASCII
+character as UTF-16LE**, so an *ASCII substring* of such a literal never matches either.
+
+`Merging is destructive` reported ABSENT on a plain grep and is present exactly once as UTF-16LE —
+because the full literal is `Merging is destructive — portal only.`. The working probe:
+
+```python
+data.count(probe.encode('utf-16-le'))   # 1
+data.count(probe.encode('ascii'))       # 0
+```
+
+So the rule is not "avoid em dashes in your marker" but "**a marker inside a literal that contains
+any non-ASCII character must be searched as UTF-16LE**".
+
+## Verification
+
+`apps/mobile/parity-audit/`:
+
+- **`t-01-chip-sweep.png`** — every chip family, bordered above and borderless below. All fifteen
+  inquiry statuses, gift cards, waivers, project deposits, tasks, the appointment badge, and the
+  Primary tag.
+- **`t-02-contact-info.png`** — the card before (session S), after (session T), and **web's own
+  screenshot beneath both**.
+- `t-03-contact-rows-320.png` — the rows at 320pt: combo glyphs, Primary tag, red trash, the wrap.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 19.43s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.84 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | `Add phone`, `Add email`, both remove notes, `Merge with another client`, `SMS Consent: `, `Opted out of SMS `, `Overdue` present; `Merging is destructive` present as UTF-16LE (see above); harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **Any list with chips** — inquiries, a client's cards, tasks. They should read as soft filled
+   lozenges with no outline. The grey ones are the ones to check: they should still be visible.
+2. **A client → Contact Info.** The Primary tag should be a small warm gold tag, sentence case, no
+   dot — noticeably not a status chip.
+3. **The two add buttons** — a handset with a plus, an envelope with a plus. Tap one; it should say
+   where the action lives.
+4. **The remove buttons** should be red, and still red while disabled.
+5. **If you have a 320pt-class phone**: a long email address should stay whole, with the tag and bin
+   dropping to their own line beneath it.
