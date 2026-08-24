@@ -24783,3 +24783,211 @@ Restart any `expo start` already running from the primary checkout first — the
 3. **The meta line** — a small channel glyph and the date under each description.
 4. **The inquiries tab** — same chips there. If rows ever overlap on device, that is finding 3 above
    and worth telling me, because it would mean it is not preview-only.
+
+# Mobile session S — the card pattern finalized, and propagated
+
+**Base: `main` at `e7b4c26`** — session R merged. Dedicated worktree, two commits, pushed.
+
+---
+
+## What web actually does — checked in source, not inferred
+
+`apps/web/src/components/Widget.tsx` is the shell behind all nine client-detail sections, and it
+settles both of the brief's open questions outright:
+
+```
+<div className="flex flex-wrap items-center justify-between gap-2">
+  <div className="flex min-w-0 items-center gap-1">
+    [drag handle] [chevron] <h2 className="sc truncate text-[19px]">{title}</h2>
+  </div>
+  {actions && <div className="flex flex-wrap shrink-0 items-center gap-2">{actions}</div>}
+</div>
+```
+
+1. **Actions are inline with the title.** One row, title grouped left, actions pushed right. The
+   owner's earlier web screenshot was correct.
+2. **There is no count.** Not in `Widget`, not at any call site. So "remove the count" is not a
+   divergence from web — **web never had one**, and the two agree.
+
+A third thing came out of the same read, and it decided the brief's fallback question: **web's own
+phone form for these buttons is already icon-only.**
+
+```
+className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border
+           md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+<span className="hidden whitespace-nowrap text-sm font-semibold md:inline">New Inquiry</span>
+```
+
+Below `md`, a 44pt bordered circle with a 16px glyph and no label. Above it, a labelled pill. So
+session R's 44pt circle was not a mobile invention — it is what web renders at phone width, and it
+is already the smallest form web has.
+
+## The per-section action inventory
+
+Read off all nine `<Widget>` call sites in `ClientDetail.tsx`. **Five of the nine get no header
+action at all**, which is why propagating the pattern *removed* more controls than it added:
+
+| Section | Web header action | Web row action |
+| --- | --- | --- |
+| Contact Info | — | — |
+| **Inquiries** | Send Inquiry · New Inquiry | — |
+| Projects | — | — |
+| **Gift Cards** | Issue Gift Card | — |
+| **Deposit Forms** | Send Deposit Form | **Download**, signed rows only |
+| Appointments | — | — |
+| **Waivers** | Send Waiver | **Download**, signed rows only |
+| Notes | — | — |
+| Activity History | — | — |
+
+Mobile had been giving Gift Cards, Deposit Forms and Waivers a **full-width text button plus a
+persistent explainer sentence**. All three are now one icon on the title row.
+
+### Two sizes, not one
+
+Web draws these at **two** sizes and mobile now keeps both, because the distinction carries meaning:
+
+| | Header (`h-11 w-11`) | Row (`h-8 w-8`) |
+| --- | --- | --- |
+| size | **44 × 44** | **32 × 32** |
+| glyph | 16px | 16px |
+| colour | `fg` | `fg-secondary` |
+| border | 1px `rgba(201,154,91,0.18)` | same |
+
+A header action names the whole section and gets the full 44pt tap target; a row action belongs to
+one line and web deliberately makes it recede.
+
+**The download's condition is web's, not a simplification**: `{form.signedAt && ...}`. An unsigned
+form has no PDF, so no button — visible in `s-03`, where Session 2 has no icon and the two signed
+rows do.
+
+## The 320pt fit test
+
+Measured in the real face (Fraunces 500, 17px, 1.02px tracking), against the actual row budget at
+320pt: card inner width **236**, minus the 15pt chevron, its 8pt gap, and the buttons with their
+gaps — **109pt with two icons, 161pt with one**.
+
+| Title | Needs | Two icons (109) | One icon (161) | Actually assigned |
+| --- | --- | --- | --- | --- |
+| NOTES | 65 | fits | fits | none |
+| WAIVERS | 89 | fits | fits | **one — 72pt spare** |
+| PROJECTS | 99 | fits | fits | none |
+| **INQUIRIES** | **103** | **fits — 6pt spare** | fits | **two** |
+| GIFT CARDS | 116 | — | fits | **one — 45pt spare** |
+| CONTACT INFO | 145 | — | fits | none |
+| APPOINTMENTS | 155 | — | fits | none |
+| **DEPOSIT FORMS** | **158** | — | **fits — 3pt spare** | **one** |
+| ACTIVITY HISTORY | 185 | — | over by 24 | none |
+
+**Nothing truncates at 320pt.** Confirmed by rendering as well as arithmetic — every header's
+`scrollWidth` equals its laid-out width.
+
+**On the worst case the brief named:** ACTIVITY HISTORY with two icons would need 185 of 109 and
+overflow by 76pt. That combination does not exist — web gives that section no actions — but had it
+existed, the fallback would be **web's own**: `min-w-0 truncate` on the title, with `shrink-0` on
+every action. Web truncates the title and never shrinks the button, and 44pt is also the iOS
+minimum tap target, so shrinking it is the one thing that should not happen. No shrink was needed.
+
+The two tight cases are worth keeping in mind before any section is renamed: **INQUIRIES clears by
+6pt and DEPOSIT FORMS by 3pt.**
+
+## What the collapse actually bought
+
+Measured at 320pt, same method both times — the top of each section's header row:
+
+| Section | Before | After | Recovered |
+| --- | --- | --- | --- |
+| Contact info | 350 | 350 | — |
+| Inquiries | 937 | 937 | — |
+| Projects | 1520 | 1370 | 150 |
+| Gift cards | 1848 | 1768 | 80 |
+| Deposit forms | 2188 | 2066 | 122 |
+| Appointments | 2576 | 2412 | 164 |
+| Waivers | 2724 | 2560 | 164 |
+| Notes | 3010 | 2804 | 206 |
+| **Activity history** | **3238** | **3032** | **206** |
+
+**206pt off the scroll** — roughly a third of a phone screen — of which ~136pt is the header
+collapse (34pt per action card: a 22pt title row plus a 12pt gap plus a 44pt button row becomes one
+44pt row) and the rest is the row fix below.
+
+## One thing the 320pt render exposed, and the fix
+
+The Inquiries row was **broken at 320pt**, and only at 320pt. The card gives a row **236pt**; the
+longest status chip (`AWAITING CLIENT RESPONSE`) is **170pt**; the description was left **58pt** —
+five lines of two syllables each, a **199pt-tall row** for one inquiry.
+
+The row is `flexWrap` now, with a **150pt floor** on the text and the chip pinned to the right edge
+of whichever line it lands on. At 320 the long chip drops to its own line; at 390 nothing wraps and
+the row is unchanged. Row height **199 → 105**.
+
+That fallback is **web's own idiom, borrowed one level down** — `Widget`'s header row is
+`flex-wrap` for exactly this reason. And which of the two gives way is deliberate: **web slices
+descriptions at 60 characters and never truncates a status**, so the status keeps its full width
+here too.
+
+## Deliberate divergences
+
+1. **No wrap in the header** — web's header row is `flex-wrap`; the owner ruled wrapping out. In
+   practice web never wraps there either, since a `min-w-0` title shrinks before a flex line breaks,
+   so this is a divergence in mechanism only. Mobile truncates the title instead, which is web's
+   other half of the same rule.
+2. **Projects rows carry the channel glyph.** A project *is* an inquiry, so session R's meta line
+   applies; web shows no channel on its projects rows.
+3. **Disabled actions answer back** rather than sitting inert — unchanged from R, now on every
+   section.
+
+## Flagged, not changed
+
+1. **The header quick-action row wraps to two lines at 320pt** (Message · Copy · Edit · More).
+   Pre-existing, above the section list, and outside this session's scope.
+2. Session R's three open items stand: web repeats project rows across two cards while mobile
+   splits them, `Channel` is not exported from `shared-types`, and `Appear` overlaps
+   variable-height rows under react-native-web.
+
+## Verification
+
+`apps/mobile/parity-audit/`:
+
+- **`s-01-before-after-320.png`** — the per-section before/after strip at 320pt. The comparison image.
+- `s-02-full-scroll-320-390.png` — the full client-detail scroll at both widths.
+- `s-03-row-actions-320.png` — the row-level download buttons and their signed-only condition.
+- `q-web-client-reference.png` (already in the repo) — web's own client detail, the ground truth for
+  the inline header and the absent count.
+
+Rendered through a temporary preview route against a local fixture API, with the app's real fonts
+loaded — a browser measurement in a fallback face is what made session P's toggle finding wrong, and
+that mistake is not repeated. **Harness and fixture are both removed**; the route registration was
+reverted and the bundle check confirms neither leaked.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 19.67s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.84 MB |
+| React singleton | mobile resolves 19.1.0; bundle carries 19.1.0, **not** the root's 19.2.7 |
+| Bundle content | `Issue gift card`, `Send deposit form`, `Send waiver`, `Download deposit form`, `Download waiver`, `Downloading a PDF is a portal action for now.` all present; harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **Open a client.** Every section header should be **one row**: chevron, title, then its icons on
+   the right. No numbers anywhere.
+2. **Count the icons.** Inquiries has two; gift cards, deposit forms and waivers have one each; the
+   other five have none — that is web's inventory, not an omission.
+3. **Tap a dimmed icon** — it should tell you where the action lives.
+4. **Deposit forms and waivers**: the small download circle appears only on **signed** rows.
+5. **If you have a 320pt-class phone** (SE 1st gen / older mini): the inquiry rows are the thing to
+   look at — the long status chips should sit on their own line rather than crushing the text.
