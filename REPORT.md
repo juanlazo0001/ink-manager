@@ -24088,3 +24088,151 @@ Scan the QR with Expo Go, sign in as an **owner**.
 Everything above is **read-only** except nothing — no screen added this run writes anything.
 
 **Worth watching for:** list scrolling while rows animate, and whether the camera preview is smooth.
+
+# Mobile session O — nav split: hamburger drawer + identity menu
+
+Branch `mobile/session-o`, dedicated worktree, two commits, pushed.
+
+**Base: `mobile/session-jklmn`** — it is unmerged (`origin/main` is still at `35063d7`), so this
+branches off it, as the brief specified.
+
+| # | Commit | What |
+| --- | --- | --- |
+| 1 | `491cf78` | `mobile: nav split -- hamburger drawer + identity menu` |
+| 2 | *(this)* | REPORT.md |
+
+## The split
+
+The account menu had grown to carry **four destinations plus identity** — two jobs in one control.
+Now:
+
+| Control | Owns | Contents |
+| --- | --- | --- |
+| **Hamburger** (top-left) | going places | Clients · Team & Permissions · Flash Gallery · Scan |
+| **Avatar** (top-right) | being someone | Profile · Settings · Log out |
+| **Bottom tabs** | unchanged | Home · Inquiries · Chat · Schedule · Tasks |
+
+**No duplication:** the drawer contains only non-tab screens. A destination reachable from two
+places teaches that neither is the real one.
+
+## Two gates were wrong, and are now web's
+
+Building the manifest meant reading web's `Sidebar.tsx` entry by entry, which caught two mistakes
+this app had already shipped:
+
+| Destination | What mobile had | What web actually does |
+| --- | --- | --- |
+| **Team** | `permission: 'team.manage'` | **`roles: ['OWNER']` + `hideForSoloStudio`** |
+| **Flash Gallery** | *ungated* | **`permission: 'flashGallery.manage'`** |
+| Clients | `clients.view` | `clients.view` ✓ |
+| Scan | `giftCards.view` | `giftCards.view` ✓ |
+
+Neither was harmless. A FRONT_DESK granted `team.manage` would have seen an entry web deliberately
+hides; a **solo studio owner** would have been offered a roster of one; and an artist without
+`flashGallery.manage` saw a destination the API refuses.
+
+**Verified against all three shapes:**
+
+| Role | Drawer shows |
+| --- | --- |
+| Owner | Clients · Team & Permissions · Flash Gallery · Scan |
+| Artist | **Flash Gallery only** — the one key among these an ARTIST holds by default |
+| Solo owner | Clients · Flash Gallery · Scan — **Team correctly gone** |
+
+## The manifest
+
+`lib/navDestinations.ts` — `{ id, label, href, Icon, permission?, roles?, hideForSoloStudio? }`,
+plus `visibleDestinations(profile)` and `isActiveDestination(pathname, d)`. Adding a destination is
+a line; the drawer's layout never changes. That matters because the account menu became a nav by
+being edited four times in a row.
+
+Entries are **hidden, not disabled**, matching web — an entry that opens a 403 is worse than one
+that is not there. An OWNER passes every permission gate without the manifest saying so, because
+the API returns every key for that role.
+
+## The drawer
+
+Slide-in on the **motion canon's own tokens** (`duration.base`, the standard curve) rather than a
+bespoke timing, so it moves like everything else built in session J. Studio-name header, the app's
+ornament rule, the established icon set, and an active-route marker as a gold leading rule.
+
+**Active matching is prefix-based**, verified as a pure rule:
+
+```
+/clients      -> Clients: ACTIVE
+/clients/abc  -> Clients: ACTIVE
+/client/abc   -> Clients: ACTIVE   <- the singular detail route a bare prefix test misses
+/team         -> Team & Permissions: ACTIVE
+/scan         -> Clients: no       <- no false positive
+```
+
+**Dismiss three ways** — scrim tap, swipe left, Back — because a drawer that closes only one way
+feels stuck.
+
+### Two things it needed that were missing
+
+1. **`GestureHandlerRootView` was never mounted.** gesture-handler has shipped with expo-router all
+   along, but nothing in this app had gestured, so the provider had never been added. Without it
+   the swipe is silently inert. Now mounted at the root.
+2. **The Modal had to outlive `open`.** React Native unmounts a `Modal` the instant `visible` goes
+   false, which cut the slide-*out* off at frame zero and made dismissing read as the panel
+   vanishing. The panel now drives its own mount and only unmounts when the animation lands.
+   Verified: after a scrim dismiss the Modal is gone, not stuck open.
+
+## The identity menu
+
+Now Profile / Settings / Log out, and its header names **the person** rather than the studio.
+
+The studio name **moved into the drawer**, which is web's hierarchy rather than a new one: web puts
+the studio in the SIDEBAR header above the nav and never in the top bar. The account menu only ever
+held it because mobile had no sidebar to put it in. It does now.
+
+`TopBar`'s `IconButton` takes its glyph as a prop — it had hardcoded the bell from when the bell was
+its only caller. The hamburger reuses the same 44pt circular treatment session F extracted from
+web's `iconBtnClass`, unchanged.
+
+## Verification
+
+414pt renders in `apps/mobile/parity-audit/`: `o-01` drawer as owner, `o-02` drawer as artist,
+`o-03` the slimmed avatar menu (with the hamburger visible top-left).
+
+Role gating was verified **offline**, from a constructed profile rather than the dev API — what is
+under test is `visibleDestinations`, a pure function of `{role, permissions, isSoloStudio}`, so a
+live session would have added nothing but a dependency on one studio's configuration.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 17.48s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.78 MB |
+| React singleton | 19.2.7 absent |
+| Bundle content | drawer strings present; harness absent |
+
+## Not verified — for the device gate
+
+- **The swipe.** A browser cannot drive a gesture-handler pan, so swipe-to-dismiss, its
+  third-of-the-width threshold and its velocity throw are all unexercised. This is the one part of
+  the session that has never run.
+- **`GestureHandlerRootView` on device** — newly mounted at the root of every screen.
+- Whether the drawer's slide reads as smooth over a scrolling list.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+1. **Tap the hamburger, top-left.** The drawer should slide in from the left, not appear.
+2. **Close it three ways**: tap the dimmed area right of the panel, **swipe the panel left**, and
+   press Back. All three should slide it out, not blink it away.
+3. **Open Clients from the drawer, then reopen the drawer** — Clients should be marked active with
+   a gold rule. Open a client, reopen the drawer: still Clients.
+4. **Tap the avatar, top-right.** Profile / Settings / Log out only — no destinations, and your own
+   name at the top rather than the studio's.
+5. If you can sign in as an artist, the drawer should show **Flash Gallery only**.
