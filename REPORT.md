@@ -24440,3 +24440,173 @@ npx expo start
 4. **A client** — nine sections in web's order, collapsing; tap **Copy → Copy customer details** and
    paste it somewhere.
 5. **A client conversation → "+" → Insert a link.**
+
+# Mobile session Q — polish round 2 (owner device findings on P)
+
+**Base: `mobile/session-p`.** The P stack is **still unmerged** — `origin/main` remains at `0fde710`
+(session O), and P plus this session sit on top of it. Flagged for the owner's decision, as asked.
+
+Dedicated worktree, four commits, pushed.
+
+| # | Commit | Covers |
+| --- | --- | --- |
+| 1 | `1e3a30e` | Composer crash · two-control tasks · drawer header · toggle (items 1–4) |
+| 2 | `5a0e44e` | Client detail exact replication (item 5) |
+| 3 | *(renders)* | Verification screenshots, incl. web's reference |
+| 4 | *(this)* | REPORT.md |
+
+---
+
+## 4 — Composer crash · **root cause**
+
+`insertLink(link.url)` was called with a **null url**, which ran `appendLink('', null)`. That
+returned `null`, which became the draft, and the next render died on `body.trim()` —
+*"Cannot read property 'trim' of null"*, exactly the reported error.
+
+**apps/web guards this exact case**: its own link rows carry `disabled={!link.url}`. That guard is
+proof the API returns entries whose url is not ready, and **it was dropped when I mirrored the
+menu** — the type said `url: string`, so nothing objected.
+
+Fixed at four layers, because one guard is what failed last time:
+
+1. The type now admits `url: string | null`.
+2. `appendLink` always returns a string.
+3. `insertLink` no-ops on a missing url.
+4. The draft setter cannot store a non-string, whatever a caller hands it.
+
+Urlless rows now render **disabled** with a "not ready" note — as web renders them — rather than
+being hidden.
+
+**Why it shipped:** the dev client's links all had urls, so only the happy path was ever rendered.
+Every quick-action path (library, camera, links, open/cancel/insert) was exercised this time.
+
+## 1 — Tasks: two controls
+
+The segments are gone. **Filter** now holds a **Scope** group (Mine / Delegated / Queue, carrying
+the counts that used to sit on the segment badges) and a **Status** group (toggleable), and **Sort**
+holds the rest. The row is exactly two controls.
+
+Scope is single-select because those are three different lists, not three overlapping conditions;
+status is multi because "overdue" refines a scope rather than replacing it. Selecting a scope closes
+the sheet (it is a navigation); toggling a status leaves it open (it is a refinement). The queue
+offers no status group at all — computed work has no due date to be late against.
+
+## 2 — Drawer header
+
+**Checked web before cutting anything.** Its sidebar header is `flex justify-center` around the
+logo and **nothing else** — no studio name, no user line. So:
+
+- Logo **centered** and 96pt tall (web caps at 112 on a wider rail), `contain`.
+- Studio name **removed when a logo exists**; it remains the fallback when there is none.
+- The person line is **gone** — web has none, and the account menu already names them.
+
+One measurement trap worth recording: inspecting the rendered `<img>` on web reports
+`object-fit: fill`, which looks like a bug. It is not — react-native-web leaves that element at
+`opacity: 0` as an alt placeholder and paints the picture on a layer behind it, where
+`background-size` correctly reads `contain`.
+
+## 3 — Toggle · **third report, and why two rounds missed it**
+
+> **A browser never applies OS text scaling, and my earlier harness never loaded the real font.**
+
+The P round measured with a **fallback face**, not Jura. This round loads the app's own fonts
+(`useAppFonts`) and measures inside hard-bounded device widths. With **Jura at the shipped size and
+tracking, two-digit badges**:
+
+| Width | 2nd pill right edge | Room to spare | Truncated? |
+| --- | --- | --- | --- |
+| **320** | 291 | **29px** | no |
+| 375 | 291 | 84px | no |
+| 390 | 291 | 99px | no |
+| 430 | 291 | 139px | no |
+
+So the control **fits the narrowest supported phone with room to spare** and does not truncate at
+any width. The brief asked me to propose a degradation if two labels plus badges fundamentally
+cannot fit at 320 — they can, so none is proposed.
+
+**But P left one path open.** It pinned the pill and the badge with `flexShrink: 0` and **not the
+label** — leaving the label the only shrinkable child, and therefore the only thing that could
+ellipsize under any upstream constraint, with `numberOfLines={1}` turning that into exactly the
+reported "INQUIRIES…". The label is pinned now, so a row that runs out of width overflows into the
+scroll it already has instead of eating the word. Verified visually at all four widths (`q-01`).
+
+**Honest caveat:** I could not reproduce the clipping even under the requested conditions. Two
+things could still explain the device: text scaling above the 1.3 cap on a 320pt device (347px
+needed vs 320 available), or a build that predates P — I twice flagged that Metro was serving a
+stale branch after I switched the primary checkout underneath a running `expo start`.
+
+## 5 — Client detail: section-by-section diff
+
+Diffed against web's live rendering of the **same client** (`q-web-client-reference.png` vs
+`q-02`/`q-03`).
+
+| Section | Verdict | Detail |
+| --- | --- | --- |
+| **Header card** | **changed** | Added avatar, name, email and phone lines, the client code chip (`referralCode`) with its own copy button, and the overflow control beside Message/Copy/Edit |
+| **Contact Info** | **changed** | SMS consent line moved to the top where web leads with it; phones/emails gained Primary chips and web's inline "+ Add"; "Merge with another client" added (disabled) |
+| **Inquiries** | **changed** | Gained description/channel/submitted and a status chip per row; first action relabelled to web's exact "Send Inquiry via Email" |
+| **Projects** | **changed** | Gained per-session lines with the deposit chip (Deposit paid / Deposit not yet generated) |
+| **Gift Cards** | **changed** | Gained code, expiry and web's Attached column; ACTIVE/VOID/REDEEMED in web's colours |
+| **Deposit Forms** | **changed** | Gained session, deposit vs total, signed, paid, and the settling gift card |
+| **Appointments** | **blocked** | Not on this endpoint — see below |
+| **Waivers** | **changed** | Now labelled by creation date with state in the chip, as web labels them |
+| **Notes** | **changed** | Web's explainer copy, verbatim |
+| **Activity History** | **blocked** | No audit trail on this endpoint |
+| Section set, order, collapse, serif small-caps headers, per-section actions | **already matched** | Shipped in P |
+
+Counts verified against web's own render: Inquiries 3, Projects 4, Gift cards 9, Deposit forms 5,
+Waivers 2.
+
+### What web has that the API cannot give mobile — flagged, not faked
+
+1. **Appointments table** — no appointments on `GET /clients/:id`.
+2. **Activity history** — no audit trail on that endpoint.
+3. **The projects BOOKING chip** (Scheduled / Not yet booked / Completed) needs appointment state,
+   so the session line shows its deposit chip and stops rather than guessing.
+4. **Deposit-form download** — nothing downloads a file on mobile yet; the icon renders inert.
+
+Write actions remain disabled with their reasons, pending M2.
+
+---
+
+## A verification-method correction worth keeping
+
+My bundle-content check reported four strings "ABSENT" that were demonstrably rendering. The
+pattern: **every absent string contained an em dash**, every present one was pure ASCII.
+`grep -a -F` cannot match Hermes' encoding of non-ASCII literals. Nothing was missing from the
+bundle. Re-verified with ASCII-only markers, all present. **Future bundle checks should use
+ASCII-only markers** — otherwise this check quietly produces false negatives.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 12.18s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.82 MB |
+| React singleton | 19.2.7 absent |
+| Bundle content (ASCII markers) | `Send Inquiry via Email`, `Deposit not yet generated`, `No activity recorded yet.`, `SMS Consent:`, `Attached` all present; harness absent |
+
+**No database writes this session** — every check was a read or a render.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+**Restart any `expo start` you already have running from the primary checkout first** — I switched
+its branch again, and a stale Metro is a live candidate for why the toggle looked unfixed last time.
+
+1. **Open a client conversation → "+" → Insert a link.** This crashed before; it must open, and
+   cancel, and insert.
+2. **Tasks** — exactly two controls. Filter should hold Mine/Delegated/Queue *with their counts*,
+   plus Overdue.
+3. **The drawer** — logo centered and large, no studio name beside it, no person line.
+4. **Inquiries at your usual text size** — and if you can, turn Larger Text up further and look
+   again; that is the one condition I still cannot reproduce.
+5. **A client** — compare against your screenshot top to bottom.
