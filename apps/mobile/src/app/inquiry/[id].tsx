@@ -358,18 +358,6 @@ const styles = StyleSheet.create({
 
   hero: { paddingHorizontal: space.lg, paddingTop: space.xl, gap: space.md },
   dimmed: { opacity: 0.55 },
-  statusPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.xs,
-    borderWidth: hairline,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.sm,
-    paddingVertical: 2,
-    alignSelf: 'flex-start',
-  },
-  statusDot: { width: 5, height: 5, borderRadius: radius.pill },
-  statusLabel: { ...type.label, fontSize: 9 },
   description: { ...type.display, fontSize: 22, lineHeight: 28, color: colors.fg },
 
   photos: { gap: space.sm, paddingTop: space.xl },

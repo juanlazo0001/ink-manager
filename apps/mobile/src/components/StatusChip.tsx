@@ -17,9 +17,13 @@ import { colors, radius, space, tones, type } from '@/theme';
  *   tracking   0.72px           (0.08em at 9px)
  *   gap        6px              (gap-1.5)
  *   dot        4x4 round        (h-1 w-1)
- *   border     1px, tone at 50% alpha
  *   background tone at 10% alpha        <- the tinted fill
  *   text       tone at full
+ *
+ * ONE DELIBERATE DIVERGENCE, owner-directed: WEB'S CHIPS ARE BORDERED
+ * (`border-{tone}/50`, and `border-border-soft` for neutral) and mobile's
+ * are not. The tinted fill alone carries the chip here. Do not "restore"
+ * the stroke from web — it was removed on purpose.
  *
  * The TINTED FILL is the part mobile was missing: chips here were drawn
  * with a coloured border over the card's own background, which reads as
@@ -32,9 +36,11 @@ import { colors, radius, space, tones, type } from '@/theme';
  *   a separate map, and the readable-as-text red is too soft for a 4px
  *   dot.
  *
- *   NEUTRAL is not a tinted tone at all. Web gives it
- *   `border-border-soft bg-white/[0.02] text-neutral` — a plain grey
- *   chip, because "no particular state" should not read as a colour.
+ *   NEUTRAL now takes the SAME 10% rule as every other tone. Web gives it
+ *   `bg-white/[0.02]`, which works there only because a border draws the
+ *   shape; at 2% with no stroke the chip disappears into the card. Its
+ *   grey is still the neutral tone, so it reads as "no particular state"
+ *   exactly as before — it is simply visible.
  */
 
 /** A hex tone at a given alpha, since the palette is stored as hex. */
@@ -48,9 +54,8 @@ function withAlpha(hex: string, alpha: number): string {
 
 export type ChipTone = keyof typeof tones;
 
-/** Web's alphas, named so the intent survives a later edit. */
+/** Web's fill alpha. Its border alpha is deliberately unused — see above. */
 const FILL_ALPHA = 0.1;
-const BORDER_ALPHA = 0.5;
 
 export function StatusChip({
   tone,
@@ -62,22 +67,15 @@ export function StatusChip({
   style?: StyleProp<ViewStyle>;
 }) {
   const color = tones[tone] ?? tones.neutral;
-  const isNeutral = tone === 'neutral';
 
   // Web's own exception: the danger dot uses the stronger red.
   const dotColor = tone === 'danger' ? colors.dangerStrong : color;
 
   return (
     <View
-      style={[
-        styles.chip,
-        isNeutral
-          ? { borderColor: colors.borderSoft, backgroundColor: 'rgba(255, 255, 255, 0.02)' }
-          : { borderColor: withAlpha(color, BORDER_ALPHA), backgroundColor: withAlpha(color, FILL_ALPHA) },
-        style,
-      ]}
+      style={[styles.chip, { backgroundColor: withAlpha(color, FILL_ALPHA) }, style]}
     >
-      <View style={[styles.dot, { backgroundColor: isNeutral ? tones.neutral : dotColor }]} />
+      <View style={[styles.dot, { backgroundColor: dotColor }]} />
       <Text
         style={[styles.label, { color }]}
         numberOfLines={2}
@@ -104,7 +102,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.sm,
     paddingVertical: space.xs,
     borderRadius: radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
   },
   // `mt-px` on web — the dot sits a hair low against uppercase Jura.
   dot: { width: 4, height: 4, borderRadius: radius.pill, marginTop: 1 },

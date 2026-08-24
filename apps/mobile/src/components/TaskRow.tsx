@@ -2,6 +2,7 @@ import type { PersonalTask, SystemTask } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { StatusChip } from '@/components/StatusChip';
 import { dueLabel, isOverdue, systemTaskLabel } from '@/lib/taskDisplay';
 import { colors, hairline, radius, space, type } from '@/theme';
 
@@ -78,15 +79,26 @@ export function PersonalTaskRow({
 
         <View style={styles.metaLine}>
           {task.dueAt ? (
-            // Red belongs here. An overdue task is a genuine alert, which
-            // is exactly what this palette reserves red for.
-            <View style={[styles.duePill, overdue && styles.duePillOverdue]}>
-              <Text style={[styles.dueLabel, overdue && styles.dueLabelOverdue]}>
-                {overdue
-                  ? `OVERDUE · ${dueLabel(task.dueAt, timeZone).toUpperCase()}`
-                  : dueLabel(task.dueAt, timeZone).toUpperCase()}
-              </Text>
-            </View>
+            /*
+             * The shared chip, not a local pill.
+             *
+             * This was the last bordered pill outside StatusChip, and it
+             * was an OUTLINE with no fill -- so when the border came off
+             * the shared chip, keeping this one would have left the app
+             * with two contradictory chip treatments in the same list.
+             * It now takes the tinted fill like every other chip.
+             *
+             * Red belongs here. An overdue task is a genuine alert, which
+             * is exactly what this palette reserves red for.
+             */
+            <StatusChip
+              tone={overdue ? 'danger' : 'neutral'}
+              label={
+                overdue
+                  ? `Overdue · ${dueLabel(task.dueAt, timeZone)}`
+                  : dueLabel(task.dueAt, timeZone)
+              }
+            />
           ) : null}
 
           {counterpartName ? (
@@ -213,16 +225,6 @@ const styles = StyleSheet.create({
   noDestination: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
   metaLine: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 3, flexWrap: 'wrap' },
-  duePill: {
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.sm,
-    paddingVertical: 2,
-  },
-  duePillOverdue: { borderColor: colors.dangerStrong },
-  dueLabel: { ...type.label, fontSize: 9, color: colors.fgSecondary },
-  dueLabelOverdue: { color: colors.danger },
   counterpart: { ...type.meta, color: colors.fgMuted, flexShrink: 1 },
 
   dismiss: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center', marginTop: 1 },

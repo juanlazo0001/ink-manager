@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Alert, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { colors, radius, space } from '@/theme';
+import { colors, radius, space, tones } from '@/theme';
 
 /**
  * A card's action, as a circular icon button.
@@ -42,6 +42,7 @@ export function CardIconButton({
   onPress,
   unavailableNote,
   size = 'header',
+  tone = 'default',
   style,
 }: {
   Icon: (props: { size?: number; color: string }) => React.ReactElement;
@@ -52,6 +53,12 @@ export function CardIconButton({
   unavailableNote?: string;
   /** `header` is web's 44pt circle; `row` its 32pt one. */
   size?: 'header' | 'row';
+  /**
+   * `danger` for a destructive control. Web writes its Remove links in
+   * `text-danger`, and losing that colour when the words became a glyph
+   * would strip the row's only warning that the button deletes something.
+   */
+  tone?: 'default' | 'danger';
   style?: StyleProp<ViewStyle>;
 }) {
   const enabled = !!onPress;
@@ -86,12 +93,20 @@ export function CardIconButton({
         style,
       ]}
     >
-      <Icon
-        size={16}
-        color={enabled ? (size === 'row' ? colors.fgSecondary : colors.fg) : colors.fgMuted}
-      />
+      <Icon size={16} color={glyphColor(enabled, size, tone)} />
     </Pressable>
   );
+}
+
+/**
+ * Red survives being disabled, at reduced opacity like everything else.
+ * A destructive control that greys out entirely reads as a different
+ * button, and this one still answers when tapped.
+ */
+function glyphColor(enabled: boolean, size: 'header' | 'row', tone: 'default' | 'danger'): string {
+  if (tone === 'danger') return tones.danger;
+  if (!enabled) return colors.fgMuted;
+  return size === 'row' ? colors.fgSecondary : colors.fg;
 }
 
 /** The row these sit in — right-aligned, as web aligns them. */

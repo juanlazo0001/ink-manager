@@ -2,7 +2,7 @@ import Feather from '@expo/vector-icons/Feather';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar, initialsOf } from '@/components/Avatar';
@@ -10,7 +10,16 @@ import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
 import { ChannelGlyph, channelLabelFor } from '@/components/ChannelGlyph';
 import { InquiryStatusChip, StatusChip } from '@/components/StatusChip';
-import { DownloadIcon, GiftCardIcon, PlusIcon, SendIcon } from '@/components/icons';
+import {
+  DownloadIcon,
+  GiftCardIcon,
+  MailPlusIcon,
+  PhonePlusIcon,
+  PlusIcon,
+  SearchIcon,
+  SendIcon,
+  TrashIcon,
+} from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -242,46 +251,69 @@ export default function ClientScreen() {
             <Banner icon="log-out" text={`Transferred to ${client.transferredToStudio.name}.`} />
           ) : null}
 
+          {/* Web's Widget gives this section NO header action, so neither
+              does this one. Its controls all live in the body. */}
           <CollapsibleSection title="Contact info" open={!!open.contact} onToggle={() => toggle('contact')}>
             {/* Web leads this card with the consent line, before the
-                numbers it governs. */}
+                numbers it governs — label, then the state in its own
+                colour, with the date it was given. */}
             <Text style={styles.consentLine}>
-              SMS Consent:{' '}
-              {client.smsOptedOutAt ? 'Opted out' : client.smsConsentGivenAt ? 'Given' : 'Not yet given'}
+              <Text style={styles.consentLabel}>SMS Consent: </Text>
+              {client.smsConsentGivenAt ? (
+                <Text style={styles.consentGiven}>Given {stamp(client.smsConsentGivenAt)}</Text>
+              ) : (
+                <Text style={styles.consentMissing}>Not yet given</Text>
+              )}
             </Text>
 
-            <SubHead>Phones</SubHead>
+            {/* Web's own second line, and its wording. An opt-out is not
+                the absence of consent — outbound texts are refused. */}
+            {client.smsOptedOutAt ? (
+              <Text style={styles.consentOptedOut}>
+                Opted out of SMS {stamp(client.smsOptedOutAt)} — outbound texts to this client are
+                refused until they text START.
+              </Text>
+            ) : null}
+
+            <GroupHead
+              title="Phones"
+              addIcon={PhonePlusIcon}
+              addLabel="Add phone"
+              addNote="Adding a number is done in the portal."
+            />
             {client.phones.length > 0 ? (
               client.phones.map((p) => (
-                <ContactLine key={p.id} value={p.phone} label={p.label} primary={p.isPrimary} />
+                <ContactLine key={p.id} value={p.phone} label={p.label} primary={p.isPrimary} kind="phone" />
               ))
             ) : client.phone ? (
-              <ContactLine value={client.phone} label={null} primary />
+              <ContactLine value={client.phone} label={null} primary kind="phone" />
             ) : (
               <Empty text="No phone on file." />
             )}
-            <DisabledInline label="+ Add phone" note="Adding a number is done in the portal." />
 
-            <SubHead>Emails</SubHead>
+            <GroupHead
+              title="Emails"
+              addIcon={MailPlusIcon}
+              addLabel="Add email"
+              addNote="Adding an address is done in the portal."
+            />
             {client.emails.length > 0 ? (
               client.emails.map((e) => (
-                <ContactLine key={e.id} value={e.email} label={e.label} primary={e.isPrimary} />
+                <ContactLine key={e.id} value={e.email} label={e.label} primary={e.isPrimary} kind="email" />
               ))
             ) : client.email ? (
-              <ContactLine value={client.email} label={null} primary />
+              <ContactLine value={client.email} label={null} primary kind="email" />
             ) : (
               <Empty text="No email on file." />
             )}
-            <DisabledInline label="+ Add email" note="Adding an address is done in the portal." />
 
             {client.instagramHandle ? <Fact label="Instagram" value={client.instagramHandle} /> : null}
             {client.address ? <Fact label="Address" value={client.address} /> : null}
             {client.referredBy ? <Fact label="Referred by" value={clientName(client.referredBy)} /> : null}
 
-            <DisabledInline
-              label="Merge with another client"
-              note="Merging is destructive — portal only."
-            />
+            {/* The card's one primary action, and the one place web gives
+                a control WORDS rather than a glyph — so it keeps them. */}
+            <MergeButton />
           </CollapsibleSection>
 
           <CollapsibleSection
@@ -616,29 +648,119 @@ function DisabledInline({ label, note }: { label: string; note: string }) {
   );
 }
 
-/** A phone or email, with web's Primary chip and its Remove control. */
+/**
+ * A phone or email row: the value, its optional label in parentheses,
+ * web's Primary tag, then the remove control.
+ *
+ * The value truncates in the MIDDLE. Running a long address off the end
+ * would hide the domain, which is the half that identifies it — web never
+ * has to make this choice because its rows wrap onto a second line, and
+ * a row carrying a tag and a button cannot afford to.
+ */
 function ContactLine({
   value,
   label,
   primary,
+  kind,
 }: {
   value: string;
   label: string | null;
   primary: boolean;
+  kind: 'phone' | 'email';
 }) {
   return (
     <View style={styles.contactLine}>
-      <Text style={styles.contactValue} selectable numberOfLines={1}>
+      <Text style={styles.contactValue} selectable numberOfLines={1} ellipsizeMode="middle">
         {value}
+        {label ? <Text style={styles.contactLabel}> ({label})</Text> : null}
       </Text>
-      {label ? <Text style={styles.contactLabel}>{label}</Text> : null}
-      {primary ? <StatusChip label="Primary" tone="neutral" /> : null}
+      <View style={styles.contactActions}>
+        {primary ? <PrimaryTag /> : null}
+        <CardIconButton
+          Icon={TrashIcon}
+          size="row"
+          tone="danger"
+          label={`Remove ${value}`}
+          unavailableNote={
+            kind === 'phone'
+              ? 'Removing a number is done in the portal.'
+              : 'Removing an address is done in the portal.'
+          }
+        />
+      </View>
     </View>
   );
 }
 
-function SubHead({ children }: { children: string }) {
-  return <Text style={styles.subHead}>{children.toUpperCase()}</Text>;
+/**
+ * Web's Primary tag, extracted from `ClientDetail.tsx`:
+ *
+ *   ml-2 rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent
+ *
+ * Note what it is NOT: no dot, no border, no uppercase, and the fill is
+ * the ACCENT at 15% rather than a tone at 10%. It is deliberately not a
+ * status chip — "this is the one we use" is a property of the row, not a
+ * state of the client — and mobile had been rendering it as a neutral
+ * StatusChip, which put it in the wrong visual family entirely.
+ */
+function PrimaryTag() {
+  return (
+    <View style={styles.primaryTag}>
+      <Text style={styles.primaryTagLabel}>Primary</Text>
+    </View>
+  );
+}
+
+/**
+ * A contact group's heading: web's eyebrow on the left, its add control
+ * on the right.
+ *
+ * OWNER-DIRECTED DIVERGENCE: web writes these as the text links
+ * "+ Add phone" / "+ Add email"; here they are icon-only, at the same
+ * 32pt row size the download buttons use.
+ */
+function GroupHead({
+  title,
+  addIcon,
+  addLabel,
+  addNote,
+}: {
+  title: string;
+  addIcon: (props: { size?: number; color: string }) => React.ReactElement;
+  addLabel: string;
+  addNote: string;
+}) {
+  return (
+    <View style={styles.groupHead}>
+      <Text style={styles.subHead}>{title.toUpperCase()}</Text>
+      <CardIconButton Icon={addIcon} size="row" label={addLabel} unavailableNote={addNote} />
+    </View>
+  );
+}
+
+/**
+ * Web's merge control: `rounded-full border border-border px-4 py-2` with
+ * a 16px search glyph and the words. It is the one control on this card
+ * web gives words rather than a glyph, so it keeps them.
+ *
+ * Web right-aligns it (`flex justify-end`); centred here, per the owner.
+ */
+function MergeButton() {
+  return (
+    <View style={styles.mergeRow}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Merge with another client"
+        accessibilityState={{ disabled: true }}
+        accessibilityHint="Merging is destructive — portal only."
+        onPress={() => Alert.alert('Merge with another client', 'Merging is destructive — portal only.')}
+        style={({ pressed }) => [styles.merge, pressed && styles.pressed]}
+      >
+        <SearchIcon size={16} color={colors.fgMuted} />
+        <Text style={styles.mergeLabel}>Merge with another client</Text>
+      </Pressable>
+    </View>
+  );
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
@@ -767,7 +889,18 @@ const styles = StyleSheet.create({
   },
   bannerText: { ...type.small, color: colors.fgMuted, flex: 1 },
 
-  subHead: { ...type.meta, color: colors.accent, marginTop: space.sm, marginBottom: space.xs },
+  /* Web: `flex items-center justify-between`, the eyebrow left and the
+     add control right. The eyebrow keeps its own vertical rhythm; the
+     32pt button is taller than it, so the row centres on the button. */
+  groupHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.sm,
+    marginTop: space.md,
+    marginBottom: space.xs,
+  },
+  subHead: { ...type.meta, color: colors.accent },
 
   fact: {
     flexDirection: 'row',
@@ -839,31 +972,78 @@ const styles = StyleSheet.create({
   metaDot: { ...type.meta, color: colors.fgMuted },
   metaText: { ...type.meta, color: colors.fgMuted },
 
+  /* Web: `text-xs font-medium text-fg-secondary`, with the state in its
+     own colour -- success when given, muted when not, warning on an
+     opt-out. */
   consentLine: { ...type.small, color: colors.fgSecondary, marginBottom: space.xs },
+  consentLabel: { color: colors.fgSecondary },
+  consentGiven: { color: tones.success },
+  consentMissing: { color: colors.fgMuted },
+  consentOptedOut: { ...type.small, color: tones.warning, marginBottom: space.xs },
 
   contactLine: {
     flexDirection: 'row',
     alignItems: 'center',
+    /*
+     * Web's own `li` is `flex flex-wrap items-center justify-between
+     * gap-2`, and the wrap is load-bearing at phone width: a 30-character
+     * address plus the Primary tag plus the remove button needs ~250pt,
+     * and a 320pt phone gives this row 236. Without it the address
+     * truncated at "yoanliz.guzman.ta..." -- losing the domain, which is
+     * the half that identifies it.
+     *
+     * With it, the value keeps the first line whole and the tag and
+     * button drop to a second, right-aligned. At 390 nothing wraps.
+     */
+    flexWrap: 'wrap',
     gap: space.sm,
     paddingVertical: space.sm,
     borderBottomWidth: hairline,
     borderBottomColor: colors.borderSoft,
   },
-  contactValue: { ...type.body, color: colors.fg, flexShrink: 1 },
-  contactLabel: { ...type.meta, color: colors.fgMuted },
-
-  chip: {
+  contactValue: { ...type.body, color: colors.fg, flex: 1, minWidth: 150 },
+  /* Tag and remove travel together, and stay at the row's right edge on
+     whichever line they land. */
+  contactActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    flexShrink: 0,
-    borderWidth: hairline,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.sm,
-    paddingVertical: 2,
+    gap: space.sm,
+    marginLeft: 'auto',
   },
-  chipDot: { width: 5, height: 5, borderRadius: radius.pill },
-  chipLabel: { ...type.meta, fontSize: 9, letterSpacing: 1 },
+  contactLabel: { ...type.meta, color: colors.fgMuted },
+
+  /* Web's Primary tag, verbatim:
+       bg-accent/15  text-accent  rounded-full  px-2 py-0.5  text-[10px] font-semibold
+     No dot, no border, no uppercase -- deliberately NOT a status chip. */
+  primaryTag: {
+    flexShrink: 0,
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    backgroundColor: 'rgba(201, 154, 91, 0.15)',
+  },
+  primaryTagLabel: {
+    fontFamily: type.button.fontFamily,
+    fontSize: 10,
+    lineHeight: 14,
+    color: colors.accent,
+  },
+
+  /* Web: `mt-6 flex justify-end` around a
+     `rounded-full border border-border px-4 py-2 text-sm font-semibold`.
+     Centred rather than right-aligned, per the owner. */
+  mergeRow: { marginTop: space.lg, alignItems: 'center' },
+  merge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    borderWidth: hairline,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+  },
+  mergeLabel: { ...type.small, color: colors.fgSecondary },
 
   project: { paddingVertical: space.xs },
   sessionLine: {

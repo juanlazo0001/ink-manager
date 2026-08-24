@@ -170,6 +170,82 @@ export function DownloadIcon({ size = 20, color }: IconProps) {
   );
 }
 
+/** Trash — web's `TrashIcon`, on the contact card's remove control. */
+export function TrashIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Path
+        d="M4 6h12M8 6V4.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V6M6 6l.6 9.4a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9L14 6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Line x1="8.5" y1="8.75" x2="8.5" y2="13.25" strokeLinecap="round" />
+      <Line x1="11.5" y1="8.75" x2="11.5" y2="13.25" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+/** Search — web's `SearchIcon`, on "Merge with another client". */
+export function SearchIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Circle cx="9" cy="9" r="6" />
+      <Line x1="17" y1="17" x2="13.2" y2="13.2" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Add-a-contact combo glyphs.
+ *
+ * Web writes these as the text links "+ Add phone" and "+ Add email";
+ * the owner asked for icon-only. A bare plus twice over would give the
+ * two groups the same button, so each is its own glyph: the set's
+ * existing handset and envelope, shrunk into the lower-left of the box,
+ * with a plus in the corner the shape vacates.
+ *
+ * Drawn rather than borrowed — web has no combo glyph — but every
+ * coordinate is derived from `PhoneIcon` and `EmailIcon` so the family
+ * still reads as one set.
+ * ------------------------------------------------------------------ */
+
+/** The plus in the top-right corner of both combo glyphs. Stroke is
+ *  inherited from the parent `Svg`, as every other glyph here does. */
+function CornerPlus() {
+  return (
+    <>
+      <Line x1="15.25" y1="2.75" x2="15.25" y2="7.25" strokeLinecap="round" />
+      <Line x1="13" y1="5" x2="17.5" y2="5" strokeLinecap="round" />
+    </>
+  );
+}
+
+/** Add a phone number. */
+export function PhonePlusIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      {/* PhoneIcon's path, scaled to 0.78 about the lower-left. */}
+      <Path
+        d="M5.9 6.6h-1.6A1.2 1.2 0 0 0 3.1 7.9c.3 4.7 4.1 8.5 8.8 8.8a1.2 1.2 0 0 0 1.3-1.2v-1.6a.8.8 0 0 0-.6-.8l-1.8-.4a.8.8 0 0 0-.8.3l-.5.7a8.2 8.2 0 0 1-3.5-3.5l.7-.5a.8.8 0 0 0 .3-.8l-.4-1.8a.8.8 0 0 0-.8-.6Z"
+        strokeLinejoin="round"
+      />
+      <CornerPlus />
+    </Svg>
+  );
+}
+
+/** Add an email address. */
+export function MailPlusIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      {/* EmailIcon's rect and flap, shortened to clear the corner plus. */}
+      <Rect x="2.5" y="6.5" width="12" height="9" rx="2" />
+      <Path d="M3.4 7.6 8.5 11.6l5.1-4" strokeLinecap="round" strokeLinejoin="round" />
+      <CornerPlus />
+    </Svg>
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Channel glyphs.
  *
