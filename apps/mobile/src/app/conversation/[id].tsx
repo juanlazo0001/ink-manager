@@ -466,6 +466,8 @@ export default function ConversationScreen() {
           }
           sending={sending}
           token={token}
+          // The links belong to the client, so only a CLIENT thread has any.
+          clientId={header?.clientId ?? null}
           replyPreview={
             replyTo
               ? {

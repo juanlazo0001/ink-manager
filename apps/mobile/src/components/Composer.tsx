@@ -7,6 +7,12 @@ import { AttachmentTray } from '@/components/AttachmentTray';
 import { channelLabel } from '@/components/ConversationRow';
 import { Eyebrow } from '@/components/ui';
 import { useAttachments } from '@/hooks/useAttachments';
+import {
+  appendLink,
+  fetchShareableLinks,
+  insertableLinks,
+  type ShareableLinks,
+} from '@/lib/shareableLinks';
 import { captureImage, ensureCameraPermission, ensureLibraryPermission, pickImage } from '@/lib/upload';
 import { channelColor, colors, hairline, radius, space, type } from '@/theme';
 
@@ -51,6 +57,7 @@ export function Composer({
   editingMessageId,
   editingInitialBody,
   onCancelEdit,
+  clientId,
 }: {
   isClientThread: boolean;
   sendState: ComposerSendState;
@@ -69,10 +76,14 @@ export function Composer({
   editingMessageId?: string | null;
   editingInitialBody?: string;
   onCancelEdit?: () => void;
+  /** CLIENT threads only — whose links the insert menu offers. */
+  clientId?: string | null;
 }) {
   const [body, setBody] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
+  const [linksOpen, setLinksOpen] = useState(false);
+  const [links, setLinks] = useState<ShareableLinks | null>(null);
   const attachments = useAttachments(token);
 
   const editing = !!editingMessageId;
@@ -107,6 +118,28 @@ export function Composer({
     onSend(body.trim(), editing ? [] : attachments.uploadedUrls);
     setBody('');
     attachments.clear();
+  }
+
+  /*
+   * Links are fetched on demand rather than with the thread: most sends
+   * are plain messages, and this is a per-client round trip that would
+   * otherwise happen every time anyone opened a conversation.
+   */
+  async function openLinks() {
+    setSourceOpen(false);
+    setLinksOpen(true);
+    if (links || !token || !clientId) return;
+    try {
+      setLinks(await fetchShareableLinks(token, clientId));
+    } catch {
+      // The sheet stays open and shows its empty state; a failed link
+      // lookup is not worth an alert over an optional convenience.
+    }
+  }
+
+  function insertLink(url: string) {
+    setBody((current) => appendLink(current, url));
+    setLinksOpen(false);
   }
 
   async function addFromLibrary() {
@@ -233,7 +266,52 @@ export function Composer({
               <Text style={styles.optionLabel}>Take photo</Text>
             </Pressable>
 
+            {/* Web's composer can drop a shareable link into the draft.
+                CLIENT threads only, because the links belong to a client. */}
+            {clientId ? (
+              <Pressable onPress={openLinks} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
+                <Feather name="link" size={16} color={colors.fgSecondary} />
+                <Text style={styles.optionLabel}>Insert a link</Text>
+              </Pressable>
+            ) : null}
+
             <Pressable onPress={() => setSourceOpen(false)} style={styles.done}>
+              <Text style={styles.doneLabel}>CANCEL</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={linksOpen} transparent animationType="slide" onRequestClose={() => setLinksOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setLinksOpen(false)}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <Eyebrow style={styles.sheetEyebrow}>Insert a link</Eyebrow>
+
+            {/* Web's first entry mints a PrefillDraft token, which is a
+                write, so it is shown and disabled rather than omitted. */}
+            <View style={[styles.option, styles.optionDisabledRow]}>
+              <Feather name="user-plus" size={16} color={colors.fgMuted} />
+              <Text style={styles.optionOff}>Prefilled intake link</Text>
+              <Text style={styles.optionNote}>portal only</Text>
+            </View>
+
+            {insertableLinks(links).map((link) => (
+              <Pressable
+                key={`${link.label}-${link.url}`}
+                onPress={() => insertLink(link.url)}
+                style={({ pressed }) => [styles.option, pressed && styles.pressed]}
+              >
+                <Feather name="link" size={16} color={colors.fgSecondary} />
+                <Text style={styles.optionLabel}>{link.label}</Text>
+                {link.hint ? <Text style={styles.optionNote}>{link.hint}</Text> : null}
+              </Pressable>
+            ))}
+
+            {insertableLinks(links).length === 0 ? (
+              <Text style={styles.sheetNote}>No shareable links for this client yet.</Text>
+            ) : null}
+
+            <Pressable onPress={() => setLinksOpen(false)} style={styles.done}>
               <Text style={styles.doneLabel}>CANCEL</Text>
             </Pressable>
           </Pressable>
@@ -378,7 +456,8 @@ const styles = StyleSheet.create({
   option: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.md - 2 },
   optionLabel: { ...type.body, color: colors.fgSecondary, flex: 1 },
   optionLabelActive: { color: colors.fg },
-  optionOff: { color: colors.fgMuted },
+  optionOff: { ...type.body, color: colors.fgMuted, flex: 1 },
+  optionDisabledRow: { opacity: 0.6 },
   optionNote: { ...type.meta, color: colors.fgMuted },
   sheetNote: { ...type.small, color: colors.fgMuted, marginTop: space.md },
   done: { marginTop: space.lg, alignItems: 'center', paddingVertical: space.md },
