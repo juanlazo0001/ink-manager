@@ -7,22 +7,25 @@ import { colors, radius, space, tones } from '@/theme';
  * A card's action, as a circular icon button.
  *
  * apps/web's own, measured off the running client detail rather than
- * read off class names. Web draws these at TWO sizes and mobile keeps
- * both, because the distinction is meaningful:
+ * read off class names:
  *
- *              header (`h-11 w-11`)    row (`h-8 w-8`)
- *   size       44 x 44                 32 x 32
- *   glyph      16px                    16px
- *   radius     full                    full
- *   border     1px rgba(201, 154, 91, 0.18)  -- exactly `colors.border`
- *   fill       none                    none
- *   colour     `fg`                    `fgSecondary`
+ *   size    44 x 44
+ *   glyph   16px
+ *   radius  full
+ *   border  1px rgba(201, 154, 91, 0.18)   -- exactly `colors.border`
+ *   fill    none
  *
- * A header action names the whole section, so it gets the full 44pt tap
- * target; a row action belongs to one line of a list and web deliberately
- * makes it recede. Below `md` web's header buttons are ALREADY icon-only
- * (`md:h-auto md:w-auto` plus a `hidden md:inline` label) -- so icon-only
- * is web's own phone form here, not a mobile invention.
+ * Below `md` web's header buttons are ALREADY icon-only (`md:h-auto
+ * md:w-auto` plus a `hidden md:inline` label) -- so icon-only is web's
+ * own phone form here, not a mobile invention.
+ *
+ * ONE SIZE, EVERYWHERE. Web draws row-level actions smaller (`h-8 w-8`,
+ * in `fg-secondary`) than section actions (`h-11 w-11`), and mobile
+ * mirrored that split until the owner saw it on the device: a card whose
+ * header buttons and row buttons are different sizes reads as two
+ * unrelated controls, and 32pt is under the 44pt iOS tap-target floor
+ * anyway. There is now a single size token and no variant to pick, so a
+ * per-card size cannot come back by accident.
  *
  * It is NOT the top bar's button, despite the shared diameter: that one
  * carries an inset fill and a drop shadow because it floats over content.
@@ -41,7 +44,6 @@ export function CardIconButton({
   label,
   onPress,
   unavailableNote,
-  size = 'header',
   tone = 'default',
   style,
 }: {
@@ -51,8 +53,6 @@ export function CardIconButton({
   onPress?: () => void;
   /** Shown when tapped, if the action is not built yet. */
   unavailableNote?: string;
-  /** `header` is web's 44pt circle; `row` its 32pt one. */
-  size?: 'header' | 'row';
   /**
    * `danger` for a destructive control. Web writes its Remove links in
    * `text-danger`, and losing that colour when the words became a glyph
@@ -87,13 +87,12 @@ export function CardIconButton({
       accessibilityHint={enabled ? undefined : unavailableNote}
       style={({ pressed }) => [
         styles.button,
-        size === 'row' && styles.buttonRow,
         !enabled && styles.disabled,
         (pressed || pressedNote) && styles.pressed,
         style,
       ]}
     >
-      <Icon size={16} color={glyphColor(enabled, size, tone)} />
+      <Icon size={16} color={glyphColor(enabled, tone)} />
     </Pressable>
   );
 }
@@ -103,10 +102,9 @@ export function CardIconButton({
  * A destructive control that greys out entirely reads as a different
  * button, and this one still answers when tapped.
  */
-function glyphColor(enabled: boolean, size: 'header' | 'row', tone: 'default' | 'danger'): string {
+function glyphColor(enabled: boolean, tone: 'default' | 'danger'): string {
   if (tone === 'danger') return tones.danger;
-  if (!enabled) return colors.fgMuted;
-  return size === 'row' ? colors.fgSecondary : colors.fg;
+  return enabled ? colors.fg : colors.fgMuted;
 }
 
 /** The row these sit in — right-aligned, as web aligns them. */
@@ -125,7 +123,6 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
-  buttonRow: { width: 32, height: 32 },
   disabled: { opacity: 0.45 },
   pressed: { opacity: 0.6 },
 });

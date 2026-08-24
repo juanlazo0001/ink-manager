@@ -24,6 +24,7 @@ import {
 } from '@/lib/artistProfile';
 import { saveWidgetLayout } from '@/lib/artists';
 import { colors, hairline, radius, space, type } from '@/theme';
+import { formatPhone } from '@/lib/format';
 
 /**
  * The artist's own profile, read-only.
@@ -150,7 +151,7 @@ export default function ProfileScreen() {
               {displayName}
             </Text>
             <Text style={styles.contact}>{artist.user.email}</Text>
-            {artist.user.phone ? <Text style={styles.contact}>{artist.user.phone}</Text> : null}
+            {artist.user.phone ? <Text style={styles.contact}>{formatPhone(artist.user.phone)}</Text> : null}
             <View style={styles.badges}>
               {session?.profile.role ? <Chip label={session.profile.role.replace('_', ' ')} /> : null}
               {/* Derived ONLY from the real membership row. Artist.isGuest

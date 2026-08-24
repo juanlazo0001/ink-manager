@@ -13,6 +13,7 @@ import { useAuth } from '@/context/auth';
 import { clientName, fetchClients, filterClients, type ClientListItem } from '@/lib/clients';
 import { screenErrorMessage } from '@/lib/screenError';
 import { colors, hairline, radius, space, type } from '@/theme';
+import { formatPhone } from '@/lib/format';
 
 /**
  * The client list.
@@ -132,7 +133,10 @@ export default function ClientsScreen() {
 
 function ClientRow({ client, onPress }: { client: ClientListItem; onPress: () => void }) {
   const name = clientName(client);
-  const secondary = client.email ?? client.phone ?? 'No contact details';
+  // `formatPhone` returns '' for a missing number, not null, so the
+  // fallback has to be reached before formatting rather than after it.
+  const secondary =
+    client.email ?? (client.phone ? formatPhone(client.phone) : null) ?? 'No contact details';
   return (
     <Pressable
       onPress={onPress}

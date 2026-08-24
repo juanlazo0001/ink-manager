@@ -1,6 +1,7 @@
 import type { InquiryStatus } from '@ink-manager/shared-types';
 
 import { apiFetch } from './api';
+import { formatPhone } from './format';
 
 /**
  * Clients — `GET /clients` and `GET /clients/:id`.
@@ -143,14 +144,13 @@ export function filterClients(rows: ClientListItem[], search: string): ClientLis
  * client's name, then every phone, then every email, each with its label
  * in parentheses when it has one.
  *
- * Phone formatting is web's `formatPhoneInput`; mobile has no equivalent
- * helper, so numbers are copied as stored — noted rather than
- * approximated, since a mangled phone number pasted into a message is
- * worse than an unformatted one.
+ * Phones go through `formatPhone`, so what lands on the clipboard reads
+ * the way the screen does. Session P had to copy them raw because mobile
+ * had no formatter; it has one now.
  */
 export function buildCustomerDetailsText(client: ClientDetail): string {
   const lines = [clientName(client)];
-  for (const p of client.phones) lines.push(`${p.phone}${p.label ? ` (${p.label})` : ''}`);
+  for (const p of client.phones) lines.push(`${formatPhone(p.phone)}${p.label ? ` (${p.label})` : ''}`);
   for (const e of client.emails) lines.push(`${e.email}${e.label ? ` (${e.label})` : ''}`);
   return lines.join('\n');
 }

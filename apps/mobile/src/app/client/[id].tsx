@@ -25,6 +25,7 @@ import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { buildCustomerDetailsText, clientName, fetchClient, type ClientDetail, type ClientInquiry } from '@/lib/clients';
 import { fetchConversations } from '@/lib/conversations';
+import { formatPhone } from '@/lib/format';
 import { formatMoney } from '@/lib/giftCards';
 import { statusLabel } from '@/lib/inquiryDisplay';
 import { tabForStatus } from '@/lib/inquiryTabs';
@@ -181,7 +182,7 @@ export default function ClientScreen() {
                 ) : null}
                 {client.phones[0]?.phone ?? client.phone ? (
                   <Text style={styles.headerContact} numberOfLines={1}>
-                    {client.phones[0]?.phone ?? client.phone}
+                    {formatPhone(client.phones[0]?.phone ?? client.phone)}
                   </Text>
                 ) : null}
                 {client.referralCode ? (
@@ -446,7 +447,6 @@ export default function ClientScreen() {
                   {d.signedAt ? (
                     <CardIconButton
                       Icon={DownloadIcon}
-                      size="row"
                       label="Download deposit form"
                       unavailableNote="Downloading a PDF is a portal action for now."
                     />
@@ -493,7 +493,6 @@ export default function ClientScreen() {
                   {w.signedAt ? (
                     <CardIconButton
                       Icon={DownloadIcon}
-                      size="row"
                       label="Download waiver"
                       unavailableNote="Downloading a PDF is a portal action for now."
                     />
@@ -668,26 +667,29 @@ function ContactLine({
   primary: boolean;
   kind: 'phone' | 'email';
 }) {
+  // Formatted once: the row shows it, and the remove button SPEAKS it.
+  // A screen reader announcing "Remove 3052997957" while the screen reads
+  // "(305) 299-7957" is the same number described two ways.
+  const shown = kind === 'phone' ? formatPhone(value) : value;
+
   return (
     <View style={styles.contactLine}>
       <Text style={styles.contactValue} selectable numberOfLines={1} ellipsizeMode="middle">
-        {value}
+        {shown}
         {label ? <Text style={styles.contactLabel}> ({label})</Text> : null}
       </Text>
-      <View style={styles.contactActions}>
-        {primary ? <PrimaryTag /> : null}
-        <CardIconButton
-          Icon={TrashIcon}
-          size="row"
-          tone="danger"
-          label={`Remove ${value}`}
-          unavailableNote={
-            kind === 'phone'
-              ? 'Removing a number is done in the portal.'
-              : 'Removing an address is done in the portal.'
-          }
-        />
-      </View>
+      {primary ? <PrimaryTag /> : null}
+      <CardIconButton
+        Icon={TrashIcon}
+        tone="danger"
+        style={styles.contactRemove}
+        label={`Remove ${shown}`}
+        unavailableNote={
+          kind === 'phone'
+            ? 'Removing a number is done in the portal.'
+            : 'Removing an address is done in the portal.'
+        }
+      />
     </View>
   );
 }
@@ -733,7 +735,7 @@ function GroupHead({
   return (
     <View style={styles.groupHead}>
       <Text style={styles.subHead}>{title.toUpperCase()}</Text>
-      <CardIconButton Icon={addIcon} size="row" label={addLabel} unavailableNote={addNote} />
+      <CardIconButton Icon={addIcon} label={addLabel} unavailableNote={addNote} />
     </View>
   );
 }
@@ -981,35 +983,29 @@ const styles = StyleSheet.create({
   consentMissing: { color: colors.fgMuted },
   consentOptedOut: { ...type.small, color: tones.warning, marginBottom: space.xs },
 
+  /*
+   * ONE LINE, NEVER WRAPPING. The Primary tag belongs to the value it
+   * marks, so it sits immediately after it with a single gap; the remove
+   * button is the row's own control and holds the right edge, in line
+   * with the add button in the group heading above.
+   *
+   * Session T wrapped this row instead, to keep a long address whole.
+   * The owner's call reverses that: the VALUE gives way, truncating
+   * before the tag can ever wrap or collide with it. `flexShrink` on the
+   * value and nothing else is what enforces it.
+   */
   contactLine: {
     flexDirection: 'row',
     alignItems: 'center',
-    /*
-     * Web's own `li` is `flex flex-wrap items-center justify-between
-     * gap-2`, and the wrap is load-bearing at phone width: a 30-character
-     * address plus the Primary tag plus the remove button needs ~250pt,
-     * and a 320pt phone gives this row 236. Without it the address
-     * truncated at "yoanliz.guzman.ta..." -- losing the domain, which is
-     * the half that identifies it.
-     *
-     * With it, the value keeps the first line whole and the tag and
-     * button drop to a second, right-aligned. At 390 nothing wraps.
-     */
-    flexWrap: 'wrap',
     gap: space.sm,
-    paddingVertical: space.sm,
+    paddingVertical: space.xs,
     borderBottomWidth: hairline,
     borderBottomColor: colors.borderSoft,
   },
-  contactValue: { ...type.body, color: colors.fg, flex: 1, minWidth: 150 },
-  /* Tag and remove travel together, and stay at the row's right edge on
-     whichever line they land. */
-  contactActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    marginLeft: 'auto',
-  },
+  // The only shrinkable thing in the row.
+  contactValue: { ...type.body, color: colors.fg, flexShrink: 1 },
+  // Holds the right edge, in one column with the group heading's add button.
+  contactRemove: { marginLeft: 'auto' },
   contactLabel: { ...type.meta, color: colors.fgMuted },
 
   /* Web's Primary tag, verbatim:

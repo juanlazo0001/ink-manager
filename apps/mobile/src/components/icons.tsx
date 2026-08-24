@@ -157,10 +157,7 @@ export function GiftCardIcon({ size = 20, color }: IconProps) {
   );
 }
 
-/**
- * Download — web's `DownloadIcon`, on the signed deposit-form and waiver
- * rows. Web renders it at the ROW size (32pt circle), not the header's 44.
- */
+/** Download — web's `DownloadIcon`, on signed deposit-form and waiver rows. */
 export function DownloadIcon({ size = 20, color }: IconProps) {
   return (
     <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
