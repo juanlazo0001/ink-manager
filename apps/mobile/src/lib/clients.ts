@@ -121,3 +121,21 @@ export function filterClients(rows: ClientListItem[], search: string): ClientLis
     [clientName(c), c.email ?? '', c.phone ?? ''].some((f) => f.toLowerCase().includes(q)),
   );
 }
+
+/**
+ * What web's "Copy customer details" puts on the clipboard, line for
+ * line (`buildCustomerDetailsText` in apps/web's ClientDetail): the
+ * client's name, then every phone, then every email, each with its label
+ * in parentheses when it has one.
+ *
+ * Phone formatting is web's `formatPhoneInput`; mobile has no equivalent
+ * helper, so numbers are copied as stored — noted rather than
+ * approximated, since a mangled phone number pasted into a message is
+ * worse than an unformatted one.
+ */
+export function buildCustomerDetailsText(client: ClientDetail): string {
+  const lines = [clientName(client)];
+  for (const p of client.phones) lines.push(`${p.phone}${p.label ? ` (${p.label})` : ''}`);
+  for (const e of client.emails) lines.push(`${e.email}${e.label ? ` (${e.label})` : ''}`);
+  return lines.join('\n');
+}
