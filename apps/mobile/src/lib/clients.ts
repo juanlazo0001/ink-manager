@@ -47,8 +47,19 @@ export interface ClientInquiry {
   createdAt: string;
   priceEstimateLow: number | null;
   priceEstimateHigh: number | null;
-  depositForms: { id: string; paidAt: string | null; depositAmount: number; totalCharged: number }[];
-  plannedSessions: { id: string }[];
+  depositForms: ClientDepositForm[];
+  plannedSessions: { id: string; sessionNumber?: number }[];
+}
+
+/** A row of web's Deposit Forms table. */
+export interface ClientDepositForm {
+  id: string;
+  sessionNumber: number | null;
+  depositAmount: number;
+  totalCharged: number;
+  signedAt: string | null;
+  paidAt: string | null;
+  giftCard: { id: string; code: string } | null;
 }
 
 export interface ClientGiftCard {
@@ -57,6 +68,8 @@ export interface ClientGiftCard {
   amountCents: number;
   status: string;
   expiresAt: string | null;
+  /** Web's "Attached" column is simply whether it is tied to an appointment. */
+  appointmentId: string | null;
 }
 
 export interface ClientWaiver {
@@ -67,6 +80,8 @@ export interface ClientWaiver {
 }
 
 export interface ClientDetail extends ClientListItem {
+  /** The short client code web shows as a chip beside the name. */
+  referralCode: string | null;
   phones: ClientPhone[];
   emails: ClientEmail[];
   inquiries: ClientInquiry[];

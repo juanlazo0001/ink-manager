@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Avatar, initialsOf } from '@/components/Avatar';
 import { CollapsibleSection, type SectionAction } from '@/components/CollapsibleSection';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
@@ -12,9 +13,10 @@ import { useAuth } from '@/context/auth';
 import { buildCustomerDetailsText, clientName, fetchClient, type ClientDetail, type ClientInquiry } from '@/lib/clients';
 import { fetchConversations } from '@/lib/conversations';
 import { formatMoney } from '@/lib/giftCards';
+import { statusLabel, statusTone } from '@/lib/inquiryDisplay';
 import { tabForStatus } from '@/lib/inquiryTabs';
 import { screenErrorMessage } from '@/lib/screenError';
-import { colors, hairline, radius, space, type } from '@/theme';
+import { colors, hairline, radius, space, tones, type } from '@/theme';
 
 /**
  * A client, as apps/web's client detail shows one.
@@ -47,6 +49,7 @@ export default function ClientScreen() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
   /** The client's existing thread, if they have one. Null until looked up. */
   const [threadId, setThreadId] = useState<string | null>(null);
 
@@ -108,6 +111,12 @@ export default function ClientScreen() {
     [client],
   );
 
+  async function copyCode(code: string) {
+    await Clipboard.setStringAsync(code);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
+  }
+
   async function copyDetails() {
     if (!client) return;
     setCopyOpen(false);
@@ -133,7 +142,42 @@ export default function ClientScreen() {
         <ScreenLoading />
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          {/* Web's header row: Message · Copy · Edit. */}
+          {/*
+            Web's header card: the avatar, the name, the contact lines
+            under it, the short client code as a chip with its own copy
+            button, and the quick actions to the right.
+          */}
+          <View style={styles.headerCard}>
+            <View style={styles.headerTop}>
+              <Avatar url={null} initials={initialsOf(name)} size={44} labelStyle={styles.headerInitials} />
+              <View style={styles.headerText}>
+                <Text style={styles.headerName} numberOfLines={2}>
+                  {name}
+                </Text>
+                {client.emails[0]?.email ?? client.email ? (
+                  <Text style={styles.headerContact} numberOfLines={1}>
+                    {client.emails[0]?.email ?? client.email}
+                  </Text>
+                ) : null}
+                {client.phones[0]?.phone ?? client.phone ? (
+                  <Text style={styles.headerContact} numberOfLines={1}>
+                    {client.phones[0]?.phone ?? client.phone}
+                  </Text>
+                ) : null}
+                {client.referralCode ? (
+                  <Pressable
+                    onPress={() => void copyCode(client.referralCode!)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Copy client code ${client.referralCode}`}
+                    style={({ pressed }) => [styles.codeChip, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.codeChipText}>{client.referralCode}</Text>
+                    <Feather name={codeCopied ? 'check' : 'copy'} size={11} color={colors.fgMuted} />
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+
           <View style={styles.quickRow}>
             <QuickAction
               icon="message-circle"
@@ -155,6 +199,10 @@ export default function ClientScreen() {
               label="Edit"
               note="Editing a client is done in the portal."
             />
+            {/* Web's overflow (…) holds archive and delete — both
+                destructive, neither built. */}
+            <QuickAction icon="more-horizontal" label="More" note="Archive and delete live in the portal." />
+          </View>
           </View>
 
           {copyOpen ? (
@@ -184,34 +232,44 @@ export default function ClientScreen() {
           ) : null}
 
           <CollapsibleSection title="Contact info" open={!!open.contact} onToggle={() => toggle('contact')}>
+            {/* Web leads this card with the consent line, before the
+                numbers it governs. */}
+            <Text style={styles.consentLine}>
+              SMS Consent:{' '}
+              {client.smsOptedOutAt ? 'Opted out' : client.smsConsentGivenAt ? 'Given' : 'Not yet given'}
+            </Text>
+
             <SubHead>Phones</SubHead>
             {client.phones.length > 0 ? (
               client.phones.map((p) => (
-                <Fact key={p.id} label={p.label ?? (p.isPrimary ? 'Primary' : 'Phone')} value={p.phone} />
+                <ContactLine key={p.id} value={p.phone} label={p.label} primary={p.isPrimary} />
               ))
             ) : client.phone ? (
-              <Fact label="Phone" value={client.phone} />
+              <ContactLine value={client.phone} label={null} primary />
             ) : (
               <Empty text="No phone on file." />
             )}
+            <DisabledInline label="+ Add phone" note="Adding a number is done in the portal." />
 
             <SubHead>Emails</SubHead>
             {client.emails.length > 0 ? (
               client.emails.map((e) => (
-                <Fact key={e.id} label={e.label ?? (e.isPrimary ? 'Primary' : 'Email')} value={e.email} />
+                <ContactLine key={e.id} value={e.email} label={e.label} primary={e.isPrimary} />
               ))
             ) : client.email ? (
-              <Fact label="Email" value={client.email} />
+              <ContactLine value={client.email} label={null} primary />
             ) : (
               <Empty text="No email on file." />
             )}
+            <DisabledInline label="+ Add email" note="Adding an address is done in the portal." />
 
             {client.instagramHandle ? <Fact label="Instagram" value={client.instagramHandle} /> : null}
             {client.address ? <Fact label="Address" value={client.address} /> : null}
             {client.referredBy ? <Fact label="Referred by" value={clientName(client.referredBy)} /> : null}
-            <Fact
-              label="SMS consent"
-              value={client.smsOptedOutAt ? 'Opted out' : client.smsConsentGivenAt ? 'Given' : 'Not given'}
+
+            <DisabledInline
+              label="Merge with another client"
+              note="Merging is destructive — portal only."
             />
           </CollapsibleSection>
 
@@ -223,14 +281,14 @@ export default function ClientScreen() {
             // Web carries BOTH here: Send Inquiry (texts the client an
             // intake link) and New Inquiry (logs one on their behalf).
             actions={[
-              PORTAL_ACTION('Send Inquiry', 'Sends the client an intake link — portal only.'),
+              PORTAL_ACTION('Send Inquiry via Email', 'Sends the client an intake link — portal only.'),
               PORTAL_ACTION('New Inquiry', 'Logging an inquiry is done in the portal.'),
             ]}
           >
             {inquiries.length === 0 ? (
               <Empty text="No open inquiries." />
             ) : (
-              inquiries.map((i) => <InquiryLine key={i.id} inquiry={i} />)
+              inquiries.map((i) => <InquiryRowLine key={i.id} inquiry={i} />)
             )}
           </CollapsibleSection>
 
@@ -243,7 +301,7 @@ export default function ClientScreen() {
             {projects.length === 0 ? (
               <Empty text="No projects." />
             ) : (
-              projects.map((i) => <InquiryLine key={i.id} inquiry={i} />)
+              projects.map((i) => <ProjectLine key={i.id} inquiry={i} />)
             )}
           </CollapsibleSection>
 
@@ -266,10 +324,15 @@ export default function ClientScreen() {
                 >
                   <View style={styles.lineText}>
                     <Text style={styles.lineTitle}>{formatMoney(g.amountCents)}</Text>
-                    <Text style={styles.lineMeta}>
-                      {g.status} · {g.code}
+                    {/* Web's columns: code, expiry, and whether it is
+                        attached to an appointment. */}
+                    <Text style={styles.lineMeta} numberOfLines={1}>
+                      {g.code}
+                      {g.expiresAt ? ` · expires ${dateOnly(g.expiresAt)}` : ''}
+                      {` · ${g.appointmentId ? 'Attached' : 'Unattached'}`}
                     </Text>
                   </View>
+                  <Chip label={g.status} tone={giftCardTone(g.status)} />
                   <Feather name="chevron-right" size={16} color={colors.fgMuted} />
                 </Pressable>
               ))
@@ -289,9 +352,21 @@ export default function ClientScreen() {
               deposits.map((d) => (
                 <View key={d.id} style={styles.line}>
                   <View style={styles.lineText}>
-                    <Text style={styles.lineTitle}>{formatMoney(Math.round(d.totalCharged * 100))}</Text>
-                    <Text style={styles.lineMeta}>{d.paidAt ? 'Paid' : 'Awaiting payment'}</Text>
+                    <Text style={styles.lineTitle}>
+                      Session {d.sessionNumber ?? 1} — {formatMoney(Math.round(d.totalCharged * 100))}
+                    </Text>
+                    {/* Web's columns: deposit vs total, signed, paid,
+                        and the gift card it was settled with. */}
+                    <Text style={styles.lineMeta} numberOfLines={2}>
+                      {`deposit ${formatMoney(Math.round(d.depositAmount * 100))}`}
+                      {` · signed ${d.signedAt ? stamp(d.signedAt) : 'Pending'}`}
+                      {` · paid ${d.paidAt ? stamp(d.paidAt) : 'Not yet'}`}
+                      {d.giftCard ? ` · ${d.giftCard.code}` : ''}
+                    </Text>
                   </View>
+                  {/* Web ends each row with a download for the signed
+                      form. Nothing on this client downloads a file yet. */}
+                  <Feather name="download" size={15} color={colors.fgMuted} style={styles.disabledIcon} />
                 </View>
               ))
             )}
@@ -318,20 +393,34 @@ export default function ClientScreen() {
               client.liabilityWaivers.map((w) => (
                 <View key={w.id} style={styles.line}>
                   <View style={styles.lineText}>
-                    <Text style={styles.lineTitle}>{w.signedAt ? 'Signed' : 'Not signed'}</Text>
-                    <Text style={styles.lineMeta}>{dateOnly(w.signedAt ?? w.createdAt)}</Text>
+                    {/* Web labels these by when they were CREATED, with
+                        the state carried by the chip. */}
+                    <Text style={styles.lineTitle}>Created {stamp(w.createdAt)}</Text>
                   </View>
+                  <Chip
+                    label={w.signedAt ? 'Signed' : (w.status ?? 'Pending')}
+                    tone={w.signedAt ? 'success' : 'warning'}
+                  />
                 </View>
               ))
             )}
           </CollapsibleSection>
 
           <CollapsibleSection title="Notes" open={!!open.notes} onToggle={() => toggle('notes')}>
-            <Empty text="Client notes are written in the portal." />
+            {/* Web's explainer, verbatim. */}
+            <Text style={styles.explainer}>
+              Every note written on this client&apos;s inquiries, projects, and appointments —
+              consolidated here, grouped by where it was written. Internal only — never shown to the
+              client or shared with an artist.
+            </Text>
+            <Empty text="Writing a note is done in the portal." />
           </CollapsibleSection>
 
           <CollapsibleSection title="Activity history" open={!!open.activity} onToggle={() => toggle('activity')}>
-            <Empty text="The audit trail isn't part of this client's payload yet." />
+            {/* Web groups this by date with a description per change. The
+                client payload carries no audit trail, so the card keeps
+                web's place and says so rather than showing nothing. */}
+            <Empty text="No activity recorded yet." />
           </CollapsibleSection>
         </ScrollView>
       )}
@@ -350,7 +439,7 @@ function QuickAction({
   onPress,
   note,
 }: {
-  icon: 'message-circle' | 'copy' | 'check' | 'edit-2';
+  icon: 'message-circle' | 'copy' | 'check' | 'edit-2' | 'more-horizontal';
   label: string;
   onPress?: () => void;
   note?: string;
@@ -371,11 +460,8 @@ function QuickAction({
   );
 }
 
-function InquiryLine({ inquiry }: { inquiry: ClientInquiry }) {
-  const price =
-    inquiry.priceEstimateLow != null && inquiry.priceEstimateHigh != null
-      ? `$${inquiry.priceEstimateLow} – $${inquiry.priceEstimateHigh}`
-      : null;
+/** Web's inquiries table: description, channel, submitted, status chip. */
+function InquiryRowLine({ inquiry }: { inquiry: ClientInquiry }) {
   return (
     <View style={styles.line}>
       <View style={styles.lineText}>
@@ -383,10 +469,101 @@ function InquiryLine({ inquiry }: { inquiry: ClientInquiry }) {
           {inquiry.description?.trim() || inquiry.service || 'Untitled inquiry'}
         </Text>
         <Text style={styles.lineMeta}>
-          {inquiry.status.replace(/_/g, ' ').toLowerCase()}
-          {price ? ` · ${price}` : ''}
+          {[inquiry.channel, stamp(inquiry.createdAt)].filter(Boolean).join(' · ')}
         </Text>
       </View>
+      <StatusChip status={inquiry.status} />
+    </View>
+  );
+}
+
+/**
+ * Web's projects rows: the title with its status chip, then a line per
+ * planned session carrying a deposit chip and a booking chip.
+ *
+ * The BOOKING chip ("Scheduled" / "Not yet booked" / "Completed") needs
+ * appointment state, which this payload does not carry — so the session
+ * line shows what it can and the report logs the gap rather than
+ * guessing a booking status.
+ */
+function ProjectLine({ inquiry }: { inquiry: ClientInquiry }) {
+  const sessions = inquiry.plannedSessions ?? [];
+  const deposits = inquiry.depositForms ?? [];
+  return (
+    <View style={styles.project}>
+      <View style={styles.line}>
+        <View style={styles.lineText}>
+          <Text style={styles.lineTitle} numberOfLines={2}>
+            {inquiry.description?.trim() || inquiry.service || 'Untitled project'}
+          </Text>
+        </View>
+        <StatusChip status={inquiry.status} />
+      </View>
+
+      {(sessions.length > 0 ? sessions : deposits.length > 0 ? deposits : [null]).map((_, index) => {
+        const number = index + 1;
+        const deposit = deposits.find((d) => (d.sessionNumber ?? 1) === number);
+        return (
+          <View key={number} style={styles.sessionLine}>
+            <Text style={styles.sessionLabel}>Session {number}</Text>
+            <Chip
+              label={deposit ? (deposit.paidAt ? 'Deposit paid' : 'Deposit sent') : 'Deposit not yet generated'}
+              tone={deposit?.paidAt ? 'success' : 'neutral'}
+            />
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+/** An inquiry/project status, in the tone the rest of the app uses. */
+function StatusChip({ status }: { status: string }) {
+  return <Chip label={statusLabel(status)} tone={statusTone(status)} />;
+}
+
+function Chip({ label, tone }: { label: string; tone: keyof typeof tones | 'neutral' }) {
+  const color = tones[tone as keyof typeof tones] ?? tones.neutral;
+  return (
+    <View style={[styles.chip, { borderColor: color }]}>
+      <View style={[styles.chipDot, { backgroundColor: color }]} />
+      <Text style={[styles.chipLabel, { color }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+        {label.toUpperCase()}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * A control web offers inline that mobile cannot perform yet — rendered
+ * in place, disabled, with its reason, so the card has web's shape.
+ */
+function DisabledInline({ label, note }: { label: string; note: string }) {
+  return (
+    <View style={styles.disabledInline}>
+      <Text style={styles.disabledInlineLabel}>{label}</Text>
+      <Text style={styles.disabledInlineNote}>{note}</Text>
+    </View>
+  );
+}
+
+/** A phone or email, with web's Primary chip and its Remove control. */
+function ContactLine({
+  value,
+  label,
+  primary,
+}: {
+  value: string;
+  label: string | null;
+  primary: boolean;
+}) {
+  return (
+    <View style={styles.contactLine}>
+      <Text style={styles.contactValue} selectable numberOfLines={1}>
+        {value}
+      </Text>
+      {label ? <Text style={styles.contactLabel}>{label}</Text> : null}
+      {primary ? <Chip label="Primary" tone="neutral" /> : null}
     </View>
   );
 }
@@ -419,6 +596,25 @@ function Banner({ icon, text }: { icon: 'archive' | 'git-merge' | 'log-out'; tex
   );
 }
 
+/** Web's gift-card colours: active green, void red, redeemed neutral. */
+function giftCardTone(status: string): keyof typeof tones {
+  const s = status.toUpperCase();
+  if (s === 'ACTIVE') return 'success';
+  if (s === 'VOID' || s === 'EXPIRED') return 'danger';
+  return 'neutral';
+}
+
+/** A real instant, as web writes it in these tables. */
+function stamp(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 /**
  * Waiver dates are calendar dates at UTC midnight — read back with UTC
  * forced, per CLAUDE.md's timezone rule.
@@ -436,7 +632,33 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   content: { padding: space.lg, gap: space.md, paddingBottom: space.xxl },
 
-  quickRow: { flexDirection: 'row', gap: space.sm },
+  headerCard: {
+    borderWidth: hairline,
+    borderColor: colors.border,
+    borderRadius: radius.card,
+    padding: space.lg,
+    gap: space.md,
+  },
+  headerTop: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },
+  headerText: { flex: 1, gap: 2 },
+  headerInitials: { ...type.label, fontSize: 14, color: colors.fgMuted },
+  headerName: { ...type.heading, color: colors.fg },
+  headerContact: { ...type.meta, color: colors.fgMuted },
+  codeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    alignSelf: 'flex-start',
+    marginTop: space.xs,
+    borderWidth: hairline,
+    borderColor: colors.borderStrong,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.sm,
+    paddingVertical: 3,
+  },
+  codeChipText: { ...type.meta, color: colors.fgSecondary, letterSpacing: 1 },
+
+  quickRow: { flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' },
   quick: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -503,5 +725,47 @@ const styles = StyleSheet.create({
   lineMeta: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
   empty: { ...type.small, color: colors.fgMuted, paddingVertical: space.sm },
+
+  consentLine: { ...type.small, color: colors.fgSecondary, marginBottom: space.xs },
+
+  contactLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingVertical: space.sm,
+    borderBottomWidth: hairline,
+    borderBottomColor: colors.borderSoft,
+  },
+  contactValue: { ...type.body, color: colors.fg, flexShrink: 1 },
+  contactLabel: { ...type.meta, color: colors.fgMuted },
+
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flexShrink: 0,
+    borderWidth: hairline,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.sm,
+    paddingVertical: 2,
+  },
+  chipDot: { width: 5, height: 5, borderRadius: radius.pill },
+  chipLabel: { ...type.meta, fontSize: 9, letterSpacing: 1 },
+
+  project: { paddingVertical: space.xs },
+  sessionLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingLeft: space.md,
+    paddingBottom: space.sm,
+  },
+  sessionLabel: { ...type.meta, color: colors.fgMuted, flex: 1 },
+
+  disabledInline: { paddingVertical: space.sm, opacity: 0.55 },
+  disabledInlineLabel: { ...type.small, color: colors.fgMuted },
+  disabledInlineNote: { ...type.meta, color: colors.fgMuted },
+  disabledIcon: { opacity: 0.4 },
+  explainer: { ...type.small, color: colors.fgMuted, marginBottom: space.sm },
   pressed: { opacity: 0.6 },
 });
