@@ -24236,3 +24236,207 @@ npx expo start
 4. **Tap the avatar, top-right.** Profile / Settings / Log out only — no destinations, and your own
    name at the top rather than the studio's.
 5. If you can sign in as an artist, the drawer should show **Flash Gallery only**.
+
+# Mobile session P — density + polish round (six device-gate findings)
+
+**Base: `main`** (`0fde710`), which is where the primary checkout sat after sessions H2→O were
+merged at the start of this session. Dedicated worktree, five commits, pushed.
+
+| # | Commit | Covers |
+| --- | --- | --- |
+| 1 | `53c301e` | Tasks density · drawer safe area + logo · toggle clipping (items 1–3) |
+| 2 | `a339680` | Client detail sections + header quick actions (items 5–6) |
+| 3 | `3222c93` | Composer link insert (item 4) |
+| 4 | *(renders)* | Verification screenshots |
+| 5 | *(this)* | REPORT.md |
+
+---
+
+## 1 — Tasks control density
+
+**Web's finding.** Web's Tasks page uses `PillMenu`, a component whose own comment says it was
+"originally built once for Conversations (its own Filter and Sort pills), extracted here so any
+other list view wanting the same pattern (Tasks, Inquiries & Projects, …) reuses one implementation
+instead of a second copy." Mobile had drifted the other way — a sort toggle in chat, a row of sort
+pills here.
+
+Web's option sets, verbatim:
+
+- **Filter** (Assigned to Me): All · My tasks · Assigned by others · Overdue
+- **Sort**: Recently added · Due soonest · A–Z
+- **Filter** (Studio Queue): All types, plus one per system-task type
+
+**Built:** one Filter and one Sort, through a mobile `PillMenu`. Five controls in the second row
+became two.
+
+**One correction to the brief.** It asked for "multi-select where filters aren't mutually
+exclusive". **Neither of web's task filters is multi-select** — each picks one. Mirroring web means
+single-select; a control that behaved differently on the phone would be a second product. Web's
+solo-studio rule (drop "Assigned by others") is mirrored, and dropped on DELEGATED too, where every
+row is by definition one you assigned.
+
+## 2 — Drawer safe area + logo · **root cause**
+
+**This is the same defect the gallery viewer had in session H, reintroduced by the drawer.** A React
+Native `<Modal>` is a separate native root, and `react-native-safe-area-context` does not resolve
+insets inside one unless a provider is mounted within the modal. The `<SafeAreaView>` measured
+**zero**, so the studio name rendered under the status bar and collided with the clock — exactly the
+owner's screenshot.
+
+Insets are now read in the app's own tree and applied as padding. Verified under a 59/34 inset:
+`paddingTop: 59px`, `paddingBottom: 34px`, header clear of the bar (`p-01`).
+
+**Logo.** Web's sidebar leads with `studio.logoUrl` (`Sidebar.tsx`, `max-h-28 w-full
+object-contain`, the name only as alt text). Logos are stored as **base64 data URIs**, exactly like
+avatars — so this goes through `Avatar`'s scheme-aware renderer, because expo-image cannot load a
+`data:` URI on iOS (session H2's root cause). **Divergence, logged:** web falls back to the Ink
+Manager wordmark when a studio has no logo; per the owner's instruction this falls back to the
+studio's name.
+
+## 3 — Inquiries/Projects toggle · **root cause, and why the first test missed it**
+
+The earlier session reported this as not reproducing. **The owner's device evidence was right and
+that test was wrong**, for a specific reason:
+
+> **A browser never applies OS text scaling. React Native scales every `Text` by default.**
+
+The fixture test measured 375pt and 414pt at fixed type and found clean geometry — which was true,
+and irrelevant. Re-measured with scaling simulated:
+
+| Text scale | Pill width | 2nd pill right edge | Label/badge gap |
+| --- | --- | --- | --- |
+| 1× | 130 | 283 | 8px |
+| 1.5× | 159 | 342 | 8px |
+| **2×** | **190** | **404** | 8px |
+
+The pill grows correctly and the gap never closes — but **at 2× the second segment ends at 404px on
+a 375pt screen**, off the edge. To a person holding the phone that is a truncated label with the
+badge jammed against it, which is exactly what was reported.
+
+**Fixed three ways**, so no single trigger has to be the right one: text scaling capped at 1.3 on
+this control (chrome that must stay navigable — body copy elsewhere stays uncapped, deliberately),
+the label held to one line, and neither the pill nor its badge allowed to be shrunk by a row that
+runs out of width.
+
+## 4 — Chat quick-send · **web and the brief disagree**
+
+**Web's composer has two quick-action surfaces**, and only one of them is safe to build unattended:
+
+**Slash commands** — every one a real outbound send, each permission-gated:
+
+| Command | Permission |
+| --- | --- |
+| Send deposit form | `inquiries.edit` |
+| Send waiver | `waivers.generate` |
+| Send estimate | `inquiries.sendEstimate` |
+| Send gift card receipt | `giftCards.issue` |
+| Book appointment | `appointments.create` |
+
+**Insert-link menu** — pure text insertion into the draft: Prefilled intake link, Intake form,
+estimate links, deposit links, waiver links, flash gallery links.
+
+**Built:** the link menu, in web's order, with web's exact insertion rule (append on a new line when
+a draft exists, otherwise become the draft). Web's "Prefilled intake link" mints a token, so it is
+shown **disabled** rather than omitted. The five slash commands are **not** built — each sends
+something to a real client.
+
+**On flash pieces.** The brief asked for a picker over Flash Gallery data *and* said to mirror web
+exactly and invent nothing. **Web has no per-piece send.** What it has is a **link to an artist's
+flash gallery**, in this same menu — so that is what mobile now offers. A piece picker would have
+been a mobile-only invention in the one surface where the two clients most need to agree. Flagged
+for the owner rather than decided.
+
+## 5 & 6 — Client detail: sections and quick actions
+
+**Read off web's live page**, not remembered. Section order:
+
+contact info (phones, emails inside) · inquiries · projects · gift cards · deposit forms ·
+appointments · waivers · notes · activity history
+
+Header row: **Message · Copy · Edit**. Per-section actions: **Send Inquiry** and **New Inquiry** on
+inquiries, **Issue Gift Card**, **Send Deposit Form**, **Send Waiver**. Nothing else carries one.
+
+Mobile had six of the nine, in a different order, flat and uncollapsible. Now all nine as
+collapsible cards in web's order, serif small-caps headers, each collapsed card still showing its
+count so nothing is hidden — only folded.
+
+**Unbuilt writes render disabled with a one-line reason, not hidden** — the owner's call, parity of
+shape now. Verified disabled: Message (no thread), Edit, New Inquiry, Issue Gift Card, Send Deposit
+Form, Send Waiver.
+
+**Copy is real and copies exactly what web copies**: name, then every phone, then every email, each
+with its label in parentheses — web's own `buildCustomerDetailsText`, line for line. Its second
+item, "Copy prefilled link", is disabled: web generates a token **and texts it to the client**, so
+it is an outbound send, not a clipboard action.
+
+**Message** opens the client's *existing* thread, found by `clientId` in the conversation list.
+Web's button resolves-**or-creates**; creating a thread is a write, so this opens what is there and
+says so plainly when there is nothing.
+
+**Two sections are shape-only and say so**: appointments and activity history are not in the client
+payload, and this run does not invent API surface.
+
+---
+
+## Divergences from web, deliberate
+
+1. Drawer logo falls back to the studio **name**, not web's Ink Manager wordmark (owner's
+   instruction).
+2. Task filters are single-select **because web's are** — the brief's multi-select suggestion does
+   not match the spec it pointed at.
+3. Client sections **collapse**; web's don't need to.
+4. Text scaling capped at 1.3 on pill controls; web has no equivalent because browsers don't do OS
+   text scaling.
+
+## API gaps hit
+
+1. Client detail returns no **appointments** and no **activity history** — both are web sections.
+2. `phones` are copied unformatted: web runs `formatPhoneInput`, which mobile has no equivalent of.
+   A mangled number pasted into a message is worse than an unformatted one, so it is noted rather
+   than approximated.
+
+## Verification
+
+414pt renders in `apps/mobile/parity-audit/`: `p-01` drawer under a 59/34 notch with the logo,
+`p-02` tasks controls, `p-03` client detail full scroll.
+
+Section order and disabled-action set were asserted from the DOM, not just eyeballed. **No database
+writes were made this session** — every check was a read or a render.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable *(first attempt hit EPERM −4048 — this session's own dev servers held files; documented in CLAUDE.md, resolved by stopping them)* |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 9.48s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.81 MB |
+| React singleton | 19.2.7 absent |
+| Bundle content | `Insert a link`, `Activity history`, `Assigned by others`, `portal only` present; harness absent |
+
+## Not verified — for the device gate
+
+- **The toggle at real Dynamic Type.** The cap is measured logic, but only a phone with Larger Text
+  actually exercises it.
+- **The drawer's notch clearance on hardware** — proven by overriding the insets context, which is
+  the only way a browser can show a notch.
+- The link menu against a client with estimate/deposit/waiver links (the dev client had an intake
+  form and three flash galleries).
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+1. **Turn Larger Text up in iOS Settings**, then open Inquiries. The toggle must stay on one line
+   with its badges intact.
+2. **Open the drawer.** The studio logo and name must sit below the clock, not under it.
+3. **Tasks** — one Filter, one Sort. Filter should offer All / My tasks / Assigned by others /
+   Overdue on MINE, and drop the middle two on DELEGATED.
+4. **A client** — nine sections in web's order, collapsing; tap **Copy → Copy customer details** and
+   paste it somewhere.
+5. **A client conversation → "+" → Insert a link.**
