@@ -8,7 +8,9 @@ import { ConversationRow } from '@/components/ConversationRow';
 import { FrequentStrip } from '@/components/FrequentStrip';
 import { TopBar } from '@/components/TopBar';
 import { ThreadListControls } from '@/components/ThreadListControls';
-import { ScreenLoading, StateMessage } from '@/components/ui';
+import { SkeletonList } from '@/components/Skeleton';
+import { Appear } from '@/components/Appear';
+import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { fetchConversations } from '@/lib/conversations';
 import {
@@ -134,7 +136,7 @@ export default function ConversationsScreen() {
       />
 
       {items === null && error === null ? (
-        <ScreenLoading />
+        <SkeletonList rows={7} />
       ) : (
         <FlatList
           data={visible}
@@ -154,7 +156,8 @@ export default function ConversationsScreen() {
             )
           }
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
+          renderItem={({ item, index }) => (
+            <Appear index={index}>
             <ConversationRow
               item={item}
               viewerUserId={session?.profile.id}
@@ -163,6 +166,7 @@ export default function ConversationsScreen() {
               // so an interpolated href is (correctly) rejected.
               onPress={() => router.push({ pathname: '/conversation/[id]', params: { id: item.id } })}
             />
+            </Appear>
           )}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           contentContainerStyle={visible.length === 0 ? styles.emptyContainer : undefined}

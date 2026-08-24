@@ -1,8 +1,10 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 
 import { colors, hairline, radius, space, type } from '@/theme';
+import { duration, easing } from '@/theme/motion';
 
 /**
  * Editorial Gold's shared visual language, ported from apps/web.
@@ -151,6 +153,25 @@ export function EditorialCard({
  * inquiry against a max of forty draws nothing at all, and "one" and
  * "none" look identical.
  */
+/**
+ * The bar's fill, growing to width rather than appearing at it.
+ *
+ * apps/web animates exactly this: measured off the live dashboard, its
+ * funnel bars transition `width, filter` over
+ * `0.2s cubic-bezier(0.4, 0, 0.2, 1)`. Same duration, same curve here.
+ *
+ * Re-runs whenever the value changes, so switching the dashboard's date
+ * range animates the bars to their new lengths instead of snapping.
+ */
+function AnimatedBarFill({ widthPct }: { widthPct: number }) {
+  const w = useSharedValue(0);
+  useEffect(() => {
+    w.value = withTiming(widthPct, { duration: duration.base, easing: easing.standard });
+  }, [w, widthPct]);
+  const style = useAnimatedStyle(() => ({ width: `${w.value}%` as const }));
+  return <Animated.View style={[styles.barFill, style]} />;
+}
+
 export function FunnelBar({
   label,
   valueLabel,
@@ -177,7 +198,7 @@ export function FunnelBar({
         accessibilityRole="image"
         accessibilityLabel={`${label}: ${valueLabel}`}
       >
-        <View style={[styles.barFill, { width: `${widthPct}%` }]} />
+        <AnimatedBarFill widthPct={widthPct} />
       </View>
     </View>
   );

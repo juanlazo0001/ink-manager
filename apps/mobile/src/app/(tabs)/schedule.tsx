@@ -7,7 +7,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppointmentRow } from '@/components/AppointmentRow';
 import { DayStrip } from '@/components/DayStrip';
 import { TopBar } from '@/components/TopBar';
-import { ScreenLoading, StateMessage } from '@/components/ui';
+import { SkeletonList } from '@/components/Skeleton';
+import { StateMessage } from '@/components/ui';
 import { useStudioTimeZone } from '@/hooks/useStudioTimeZone';
 import { useAuth } from '@/context/auth';
 import { appointmentsOnStudioDay, groupByStudioDay } from '@/lib/appointmentDisplay';
@@ -147,7 +148,7 @@ export default function ScheduleScreen() {
     return (
       <SafeAreaView style={styles.screen} edges={['top']}>
         <TopBar />
-        <ScreenLoading />
+        <SkeletonList rows={5} avatar={false} />
       </SafeAreaView>
     );
   }
@@ -189,7 +190,7 @@ export default function ScheduleScreen() {
       ) : null}
 
       {appointments === null && error === null ? (
-        <ScreenLoading />
+        <SkeletonList rows={5} avatar={false} />
       ) : (
         <SectionList
           sections={sections}

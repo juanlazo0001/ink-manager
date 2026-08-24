@@ -7,7 +7,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { InquiryRow, type InquiryRowData } from '@/components/InquiryRow';
 import { TopBar } from '@/components/TopBar';
 import { SegmentedControl } from '@/components/SegmentedControl';
-import { ScreenLoading, StateMessage } from '@/components/ui';
+import { SkeletonList } from '@/components/Skeleton';
+import { Appear } from '@/components/Appear';
+import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { fetchArtistInquiries, fetchStaffInquiries, usesArtistInquiryRoutes } from '@/lib/inquiries';
 import {
@@ -170,12 +172,13 @@ export default function InquiriesScreen() {
       />
 
       {items === null && error === null ? (
-        <ScreenLoading />
+        <SkeletonList rows={6} />
       ) : (
         <FlatList
           data={visible}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
+          renderItem={({ item, index }) => (
+            <Appear index={index}>
             <InquiryRow
               inquiry={item}
               // Artists only: the detail screen is built on the artist
@@ -188,6 +191,7 @@ export default function InquiriesScreen() {
                   : undefined
               }
             />
+            </Appear>
           )}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           contentContainerStyle={visible.length === 0 ? styles.emptyContainer : styles.listContent}

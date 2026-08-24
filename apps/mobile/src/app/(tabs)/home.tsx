@@ -16,7 +16,8 @@ import {
 } from '@/components/editorial';
 import { TopBar } from '@/components/TopBar';
 import { Pill, PillRow } from '@/components/Pill';
-import { ScreenLoading, StateMessage } from '@/components/ui';
+import { SkeletonCards } from '@/components/Skeleton';
+import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { useStudioTimeZone } from '@/hooks/useStudioTimeZone';
 import { fetchDashboard, presetRange, RANGE_PRESETS, type DateRange, type RangeDays } from '@/lib/dashboard';
@@ -98,7 +99,7 @@ export default function HomeScreen() {
     return (
       <SafeAreaView style={styles.screen} edges={['top']}>
         <TopBar />
-        <ScreenLoading />
+        <SkeletonCards count={4} />
       </SafeAreaView>
     );
   }

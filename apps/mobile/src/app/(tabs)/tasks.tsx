@@ -9,7 +9,8 @@ import { Pill, PillRow } from '@/components/Pill';
 import { TopBar } from '@/components/TopBar';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { PersonalTaskRow, SystemTaskRow } from '@/components/TaskRow';
-import { ScreenLoading, StateMessage } from '@/components/ui';
+import { SkeletonList } from '@/components/Skeleton';
+import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { screenErrorMessage } from '@/lib/screenError';
 import { useStudioTimeZone } from '@/hooks/useStudioTimeZone';
@@ -275,7 +276,7 @@ export default function TasksScreen() {
       ) : null}
 
       {data === null && error === null ? (
-        <ScreenLoading />
+        <SkeletonList rows={6} avatar={false} />
       ) : (
         <SectionList
           sections={sections}
