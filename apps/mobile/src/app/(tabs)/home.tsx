@@ -264,14 +264,22 @@ export default function HomeScreen() {
                   table of one. */}
               {data.scope === 'studio' && data.artistUtilization.length > 1 ? (
                 <View style={styles.utilList}>
-                  {data.artistUtilization.map((artist) => (
-                    <View key={artist.artistId} style={styles.utilRow}>
-                      <Text style={styles.utilName} numberOfLines={1}>
-                        {artist.name}
-                      </Text>
-                      <Text style={styles.utilCount}>{artist.appointmentCount}</Text>
-                    </View>
-                  ))}
+                  {/* Bars, not a bare list: web draws one per artist,
+                      scaled to the busiest, so the comparison is visible
+                      at a glance rather than read off numbers. Same
+                      FunnelBar the funnel above uses -- identical
+                      treatment, and it animates to width on range change. */}
+                  <FunnelBarList>
+                    {data.artistUtilization.map((artist) => (
+                      <FunnelBar
+                        key={artist.artistId}
+                        label={artist.name}
+                        valueLabel={String(artist.appointmentCount)}
+                        value={artist.appointmentCount}
+                        max={Math.max(...data.artistUtilization.map((a) => a.appointmentCount), 1)}
+                      />
+                    ))}
+                  </FunnelBarList>
                 </View>
               ) : null}
             </EditorialCard>

@@ -17,20 +17,29 @@ export function formatPercent(value: number | null): string | null {
 }
 
 /**
- * `4h` / `1.5h` / `2d 3h`. Averages come back as fractional hours.
+ * Web's own `formatHours` (apps/web/src/pages/Dashboard.tsx), mirrored
+ * exactly so the two clients cannot report the same average differently.
  *
- * Anything under a day stays in hours because that is how a response time
- * is discussed; past that, days are the only readable unit. Sub-hour
- * averages round to one decimal rather than to "0h", which would read as
- * instantaneous.
+ *   under an hour   minutes  -- `2m`
+ *   under 48 hours  hours    -- `7.3h` below ten, `26h` above
+ *   beyond that     days     -- `3.1d`
+ *
+ * The minutes branch is the one that matters: mobile previously rounded
+ * fractional hours to one decimal at every scale, so a two-minute average
+ * printed as `0h` -- which reads as instantaneous -- while web showed
+ * `2m` from the identical payload. Observed side by side in the owner
+ * parity audit.
+ *
+ * Null stays null rather than becoming web's em dash: mobile's callers
+ * decide their own empty text, and several suppress the whole row.
  */
 export function formatHours(hours: number | null): string | null {
   if (hours === null) return null;
-  if (hours < 1) return `${Math.round(hours * 10) / 10}h`;
-  if (hours < 24) return `${Math.round(hours * 10) / 10}h`;
-  const days = Math.floor(hours / 24);
-  const rest = Math.round(hours % 24);
-  return rest === 0 ? `${days}d` : `${days}d ${rest}h`;
+  const sign = hours < 0 ? '-' : '';
+  const abs = Math.abs(hours);
+  if (abs < 1) return `${sign}${Math.round(abs * 60)}m`;
+  if (abs < 48) return `${sign}${abs < 10 ? abs.toFixed(1) : Math.round(abs)}h`;
+  return `${sign}${(abs / 24).toFixed(1)}d`;
 }
 
 /**
