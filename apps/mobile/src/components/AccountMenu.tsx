@@ -3,7 +3,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Ornament } from '@/components/editorial';
-import { ClientsIcon, LogoutIcon, PersonIcon, PhotoIcon, ScanIcon, SettingsIcon, TeamIcon } from '@/components/icons';
+import { LogoutIcon, PersonIcon, SettingsIcon } from '@/components/icons';
 import { useAuth } from '@/context/auth';
 import { colors, hairline, radius, space, type } from '@/theme';
 
@@ -19,18 +19,9 @@ import { colors, hairline, radius, space, type } from '@/theme';
  * Anchored to the top-right under the avatar rather than filling the
  * screen, matching web's own `absolute right-0 top-12 w-48` dropdown.
  *
- * What is in it is not a design choice; it is web's own nav list filtered
- * to what an artist can reach AND what exists on this phone:
- *
- *   Dashboard, My Inquiries, Calendar   already tabs — a menu entry
- *                                       duplicating a tab is noise
- *   Clients        `clients.view`, which ARTIST lacks by default, and no
- *                  mobile screen exists. Omitted.
- *   Team           OWNER only. Omitted.
- *   Scan           `giftCards.view`, which ARTIST lacks. Omitted.
- *   Flash Gallery  `flashGallery.manage`, ARTIST default TRUE. Included.
- *
- * plus web's account menu, same filter:
+ * IDENTITY ONLY, since the nav split. Destinations moved to the drawer
+ * behind the hamburger; what remains is web's own account menu, filtered
+ * to what exists on this phone:
  *
  *   Profile        included
  *   Settings       included
@@ -40,24 +31,15 @@ import { colors, hairline, radius, space, type } from '@/theme';
  * Omitted, not stubbed — an entry that opens nothing is worse than an
  * entry that is not there.
  *
- * The studio name lives here rather than in the bar. Web puts it in the
- * sidebar header, above the nav; the bar itself never carries it. Moving
- * it here is matching that hierarchy, not inventing one.
+ * The studio name is NOT here any more. Web puts it in the sidebar
+ * header, above the nav, and mobile now has a drawer to serve as that
+ * sidebar — so it went where web keeps it. This header names the person
+ * instead, which is what the menu is about.
  */
 export function AccountMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
   const { session, logout } = useAuth();
-  // Web's own gate for this destination (Sidebar.tsx: `permission:
-  // 'giftCards.view'`). An OWNER always holds it — the API short-circuits
-  // every permission check for that role — so this only ever hides the
-  // entry from a role that genuinely cannot use it.
-  const canScan = session?.profile.permissions?.includes('giftCards.view') ?? false;
-  // Web's gate for /clients (Sidebar.tsx: `permission: 'clients.view'`).
-  const canViewClients = session?.profile.permissions?.includes('clients.view') ?? false;
-  // Web's Sidebar gates /team on `team.manage`.
-  const canViewTeam = session?.profile.permissions?.includes('team.manage') ?? false;
-
-  function go(path: '/flash' | '/profile' | '/settings' | '/scan' | '/clients' | '/team') {
+  function go(path: '/profile' | '/settings') {
     onClose();
     router.push(path);
   }
@@ -70,28 +52,22 @@ export function AccountMenu({ open, onClose }: { open: boolean; onClose: () => v
 
       <SafeAreaView style={styles.sheetWrap} edges={['top']} pointerEvents="box-none">
         <View style={styles.sheet}>
+          {/* Identity only. The STUDIO name moved to the nav drawer,
+              which is where web keeps it (sidebar header, never the bar).
+              What is left is who you are signed in as, which is the whole
+              subject of this menu. */}
           <View style={styles.header}>
             <Text style={styles.studio} numberOfLines={1}>
-              {session?.studio?.name ?? 'Studio unavailable'}
+              {session?.profile.name ?? session?.profile.email}
             </Text>
             <Text style={styles.person} numberOfLines={1}>
-              {session?.profile.name ?? session?.profile.email}
+              {session?.profile.email}
             </Text>
           </View>
 
           <Ornament style={styles.ornament} />
 
           <View style={styles.items}>
-            <MenuItem Icon={PhotoIcon} label="Flash Gallery" onPress={() => go('/flash')} />
-            {/* Web puts Scan in the main nav, gated on `giftCards.view`
-                (Sidebar.tsx). Mobile's five tabs are spoken for and
-                scanning is an occasional errand, so it lives here — but
-                behind the same permission web uses. */}
-            {canViewClients ? (
-              <MenuItem Icon={ClientsIcon} label="Clients" onPress={() => go('/clients')} />
-            ) : null}
-            {canScan ? <MenuItem Icon={ScanIcon} label="Scan" onPress={() => go('/scan')} /> : null}
-            {canViewTeam ? <MenuItem Icon={TeamIcon} label="Team" onPress={() => go('/team')} /> : null}
             <MenuItem Icon={PersonIcon} label="Profile" onPress={() => go('/profile')} />
             <MenuItem Icon={SettingsIcon} label="Settings" onPress={() => go('/settings')} />
             <View style={styles.divider} />

@@ -5,7 +5,8 @@ import { useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AccountMenu } from '@/components/AccountMenu';
-import { BellIcon, ChevronDownIcon } from '@/components/icons';
+import { NavDrawer } from '@/components/NavDrawer';
+import { BellIcon, ChevronDownIcon, MenuIcon } from '@/components/icons';
 import { useAuth } from '@/context/auth';
 import { colors, fonts, hairline, radius, space, type } from '@/theme';
 
@@ -38,31 +39,45 @@ import { colors, fonts, hairline, radius, space, type } from '@/theme';
  *   `hidden ... sm:flex`, and a phone is below that breakpoint. So this
  *   IS web's phone rendering — avatar and chevron only.
  *
- * THE LEFT SIDE IS EMPTY, and that is web's hierarchy rather than an
- * omission. Web's top bar is a `fixed right-4 top-4` cluster and nothing
- * else — it has no left-hand region at all, and the studio name lives in
- * the SIDEBAR's header, never in the bar. With the hamburger gone there is
- * no sidebar on mobile either, so the studio name sits at the top of the
- * account menu, which is the nearest thing to web's sidebar header.
+ * THE HAMBURGER IS BACK, on the left, by owner decision — and this time
+ * it opens a real drawer rather than a menu. The split is Facebook's:
+ * the hamburger goes places, the avatar is who you are.
  *
- * The hamburger it used to carry is gone by owner decision: its four
- * destinations moved into the account menu, which is where web keeps
- * Profile / Settings / Log out already. Flash Gallery came with them —
- * web reaches it from the sidebar, and mobile no longer has one.
+ * It exists because the account menu had grown to carry four
+ * destinations plus identity, which is two jobs in one control. Now the
+ * drawer holds every non-tab screen (see lib/navDestinations) and the
+ * account menu holds Profile / Settings / Log out, which is exactly what
+ * web keeps there.
+ *
+ * The studio name went with the drawer. Web puts it in the SIDEBAR's
+ * header, above the nav, and never in the bar; mobile finally has the
+ * sidebar to put it in.
  */
 export function TopBar({ right }: { right?: ReactNode }) {
   const router = useRouter();
   const { session } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
     <>
       <View style={styles.bar}>
+        <IconButton
+          label="Navigation"
+          Icon={MenuIcon}
+          expanded={drawerOpen}
+          onPress={() => setDrawerOpen(true)}
+        />
+
         <View style={styles.spacer} />
 
         {right}
 
-        <IconButton label="Notifications" onPress={() => router.push('/notifications')} />
+        <IconButton
+          label="Notifications"
+          Icon={BellIcon}
+          onPress={() => router.push('/notifications')}
+        />
 
         <Pressable
           onPress={() => setMenuOpen(true)}
@@ -91,28 +106,38 @@ export function TopBar({ right }: { right?: ReactNode }) {
       </View>
 
       <AccountMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
+      <NavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
     </>
   );
 }
 
-/** Web's `iconBtnClass`, as a control. The bell is its only caller now. */
+/**
+ * Web's `iconBtnClass`, as a control — 44pt circle, soft border, inset
+ * fill, shadow. Takes its glyph now that the hamburger shares it: the
+ * bell hardcoded one when it was the only caller.
+ */
 function IconButton({
   label,
   onPress,
+  Icon,
   badge,
+  expanded,
 }: {
   label: string;
   onPress: () => void;
+  Icon: (props: { size?: number; color: string }) => React.ReactElement;
   badge?: number;
+  expanded?: boolean;
 }) {
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={badge ? `${label}, ${badge} unread` : label}
+      accessibilityState={expanded === undefined ? undefined : { expanded }}
       style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
     >
-      <BellIcon size={20} color={colors.fgMuted} />
+      <Icon size={20} color={colors.fgMuted} />
       {badge && badge > 0 ? <Badge count={badge} /> : null}
     </Pressable>
   );

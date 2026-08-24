@@ -4,6 +4,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ScreenBackground } from '@/components/ScreenBackground';
@@ -97,6 +98,11 @@ const TRANSPARENT_NAV_THEME = {
 
 export default function RootLayout() {
   return (
+    // Required by the nav drawer's swipe-to-dismiss: gesture-handler does
+    // nothing unless one of these is above every gesture in the tree. It
+    // was already a dependency (SDK 54 ships it for expo-router) but had
+    // never been mounted, because nothing gestured until now.
+    <GestureHandlerRootView style={styles.root}>
     <SafeAreaProvider>
       <AuthProvider>
         <StatusBar style="light" />
@@ -108,10 +114,12 @@ export default function RootLayout() {
         </ThemeProvider>
       </AuthProvider>
     </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1 },
   booting: {
     flex: 1,
     alignItems: 'center',

@@ -122,6 +122,17 @@ export function PhotoIcon({ size = 20, color }: IconProps) {
   );
 }
 
+/** Menu — three rules, web's `MenuIcon` path for path. */
+export function MenuIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Line x1="3" y1="5.5" x2="17" y2="5.5" />
+      <Line x1="3" y1="10" x2="17" y2="10" />
+      <Line x1="3" y1="14.5" x2="17" y2="14.5" />
+    </Svg>
+  );
+}
+
 /** Team — a badge/roster glyph, matching web's Team nav icon family. */
 export function TeamIcon({ size = 20, color }: IconProps) {
   return (
