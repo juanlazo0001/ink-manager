@@ -5,7 +5,8 @@ import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from '
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { NewTaskBar } from '@/components/NewTaskBar';
-import { Pill, PillRow } from '@/components/Pill';
+import { PillMenu } from '@/components/PillMenu';
+import { PillRow } from '@/components/Pill';
 import { TopBar } from '@/components/TopBar';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { PersonalTaskRow, SystemTaskRow } from '@/components/TaskRow';
@@ -16,7 +17,10 @@ import { screenErrorMessage } from '@/lib/screenError';
 import { useStudioTimeZone } from '@/hooks/useStudioTimeZone';
 import { createPersonalTask, dismissSystemTask, fetchTasks, setPersonalTaskCompleted } from '@/lib/tasks';
 import {
+  filterTasks,
   isOverdue,
+  taskFiltersFor,
+  type TaskFilter,
   mobileRouteForSystemTask,
   segmentCount,
   sortTasks,
@@ -49,7 +53,10 @@ export default function TasksScreen() {
   /** Ids currently mid-write, so a row shows a spinner rather than lying. */
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<TaskSort>('newest');
-  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [filter, setFilter] = useState<TaskFilter>('all');
+  // Decides mine-vs-others on a personal task: a row this person created
+  // for themselves carries their own id in createdById.
+  const viewerUserId = session?.profile.id ?? '';
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const { timeZone } = useStudioTimeZone();
@@ -206,7 +213,7 @@ export default function TasksScreen() {
     const { open: allOpen, done } = splitByCompletion(source);
     // The overdue filter applies to open work only. A completed task that
     // was once late is not "overdue" — it is done.
-    const filtered = overdueOnly ? allOpen.filter((t) => isOverdue(t, timeZone)) : allOpen;
+    const filtered = filterTasks(allOpen, filter, viewerUserId, timeZone);
     const open = sortTasks(filtered, sort);
     const out: { title: string | null; data: Row[] }[] = [];
     if (open.length > 0) out.push({ title: null, data: open.map((task): Row => ({ kind: 'personal', task, canComplete })) });
@@ -214,16 +221,16 @@ export default function TasksScreen() {
     // open work by definition — a completed task that was once late is
     // not overdue, it is finished — and leaving the pile visible under an
     // active filter reads as "these are the overdue ones".
-    if (done.length > 0 && !overdueOnly) {
+    if (done.length > 0 && filter !== 'overdue') {
       out.push({ title: `DONE (${done.length})`, data: done.map((task): Row => ({ kind: 'personal', task, canComplete })) });
     }
     return out;
-  }, [data, segment, sort, overdueOnly, timeZone]);
+  }, [data, segment, sort, filter, timeZone, viewerUserId]);
 
   const emptyCopy = useMemo(() => {
     // The filter's own empty state comes first: "nothing on your list" is
     // a different and wrong statement when the list is merely filtered.
-    if (overdueOnly && segment !== 'queue') {
+    if (filter === 'overdue' && segment !== 'queue') {
       return {
         eyebrow: 'Nothing late',
         title: 'Nothing is overdue',
@@ -242,7 +249,7 @@ export default function TasksScreen() {
       default:
         return { eyebrow: 'Clear', title: 'Nothing on your list', body: 'Tasks assigned to you will show up here.' };
     }
-  }, [segment, overdueOnly]);
+  }, [segment, filter]);
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -254,24 +261,31 @@ export default function TasksScreen() {
         onChange={setSegment}
       />
 
-      {/* Not shown on QUEUE: system tasks are computed, have no title to
+      {/* One Filter, one Sort — web's own two controls, via the PillMenu
+          it extracted for exactly this. Previously a standing OVERDUE
+          toggle plus four sort pills, which with the scope segments above
+          them was most of the screen before any task.
+
+          Not shown on QUEUE: system tasks are computed, have no title to
           sort by and no due date to be late against. */}
       {segment !== 'queue' ? (
         <PillRow style={styles.controls}>
-          <Pill
-            label="Overdue"
-            tone="alert"
-            selected={overdueOnly}
-            onPress={() => setOverdueOnly((v) => !v)}
+          <PillMenu
+            label="Filter"
+            icon="filter"
+            value={filter}
+            options={taskFiltersFor({ segment, isSoloStudio: session?.profile.isSoloStudio ?? false })}
+            onChange={setFilter}
+            active={filter !== 'all'}
           />
-          {TASK_SORTS.map((option) => (
-            <Pill
-              key={option.key}
-              label={option.label}
-              selected={option.key === sort}
-              onPress={() => setSort(option.key)}
-            />
-          ))}
+          <PillMenu
+            label="Sort"
+            icon="bar-chart-2"
+            value={sort}
+            options={TASK_SORTS.map((o) => ({ value: o.key, label: o.label }))}
+            onChange={setSort}
+            active={sort !== 'newest'}
+          />
         </PillRow>
       ) : null}
 

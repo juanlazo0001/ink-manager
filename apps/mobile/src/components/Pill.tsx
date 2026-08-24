@@ -28,7 +28,22 @@ import { colors, fonts, hairline, radius, space } from '@/theme';
  *
  * `tone` exists for the one control that legitimately differs: the Tasks
  * OVERDUE filter, where lateness is an alert and red is punctuation.
+ *
+ * TEXT SCALING IS CAPPED HERE, and that is the fix for a real device
+ * defect rather than a preference. React Native scales every Text with
+ * the OS text-size setting by default; a browser never does, which is
+ * why an earlier fixture test at 375pt and 414pt found nothing while the
+ * owner's phone showed a clipped label and a colliding badge. Measured:
+ * at 2x scale the second segment's right edge lands at 404px on a 375pt
+ * screen — off the edge, which reads as truncation even though the row
+ * scrolls.
+ *
+ * 1.3 keeps the control legible for anyone who has enlarged their type
+ * without letting two segments outgrow the narrowest phone. Body copy
+ * elsewhere in the app is deliberately NOT capped — this cap is for
+ * chrome that must stay navigable, not for content.
  */
+const MAX_TEXT_SCALE = 1.3;
 export function Pill({
   label,
   selected = false,
@@ -67,12 +82,22 @@ export function Pill({
       ]}
     >
       {leading}
-      <Text style={[styles.label, selected && styles.labelSelected, alert && styles.labelAlert]}>
+      <Text
+        style={[styles.label, selected && styles.labelSelected, alert && styles.labelAlert]}
+        // One line, always: a wrapped segment label makes the pill twice
+        // as tall and pushes the badge out of its row.
+        numberOfLines={1}
+        maxFontSizeMultiplier={MAX_TEXT_SCALE}
+      >
         {label.toUpperCase()}
       </Text>
       {count && count > 0 ? (
         <View style={[styles.count, selected && styles.countSelected]}>
-          <Text style={[styles.countLabel, selected && styles.countLabelSelected]}>
+          <Text
+            style={[styles.countLabel, selected && styles.countLabelSelected]}
+            numberOfLines={1}
+            maxFontSizeMultiplier={MAX_TEXT_SCALE}
+          >
             {count > 99 ? '99+' : count}
           </Text>
         </View>
@@ -113,6 +138,9 @@ const styles = StyleSheet.create({
   pill: {
     flexDirection: 'row',
     alignItems: 'center',
+    // Never squeezed by a row that runs out of width — a compressed pill
+    // is what puts a badge on top of a label.
+    flexShrink: 0,
     gap: space.sm,
     // px-4 py-2
     paddingHorizontal: space.lg,
@@ -137,6 +165,7 @@ const styles = StyleSheet.create({
 
   count: {
     minWidth: 18,
+    flexShrink: 0,
     paddingHorizontal: 5,
     paddingVertical: 1,
     borderRadius: radius.pill,

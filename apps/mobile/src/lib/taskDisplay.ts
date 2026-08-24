@@ -232,3 +232,61 @@ export function mobileRouteForSystemTask(task: Pick<SystemTask, 'entityType' | '
       return null;
   }
 }
+
+/**
+ * The filter dimension, mirroring apps/web's own
+ * `ASSIGNED_TO_ME_FILTER_OPTIONS` exactly — All / My tasks / Assigned by
+ * others / Overdue.
+ *
+ * SINGLE-select, as web's is. It replaced a standing OVERDUE toggle plus
+ * a row of sort pills, which together were most of the screen above the
+ * list.
+ */
+export type TaskFilter = 'all' | 'mine' | 'others' | 'overdue';
+
+export const TASK_FILTERS: { value: TaskFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'mine', label: 'My tasks' },
+  { value: 'others', label: 'Assigned by others' },
+  { value: 'overdue', label: 'Overdue' },
+];
+
+/**
+ * Which of those options make sense for a given scope.
+ *
+ * Web drops "Assigned by others" for a solo studio — there is nobody else
+ * to have assigned it — and this drops it on the DELEGATED scope too,
+ * where every row is by definition one this person assigned, so the
+ * mine/others split would offer a choice with one answer.
+ */
+export function taskFiltersFor(options: {
+  segment: TaskSegment;
+  isSoloStudio: boolean;
+}): { value: TaskFilter; label: string }[] {
+  const dropOthers = options.isSoloStudio || options.segment === 'assignedByMe';
+  return TASK_FILTERS.filter((f) => !(dropOthers && (f.value === 'others' || f.value === 'mine')));
+}
+
+/**
+ * Applies the filter. `viewerUserId` decides mine-vs-others: a personal
+ * task carries `createdById`, and a row this person created for
+ * themselves has it equal to their own id.
+ */
+export function filterTasks(
+  tasks: PersonalTask[],
+  filter: TaskFilter,
+  viewerUserId: string,
+  timeZone: string,
+  now: Date = new Date(),
+): PersonalTask[] {
+  switch (filter) {
+    case 'mine':
+      return tasks.filter((t) => !t.createdById || t.createdById === viewerUserId);
+    case 'others':
+      return tasks.filter((t) => !!t.createdById && t.createdById !== viewerUserId);
+    case 'overdue':
+      return tasks.filter((t) => isOverdue(t, timeZone, now));
+    default:
+      return tasks;
+  }
+}

@@ -8,8 +8,9 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { Avatar } from '@/components/Avatar';
 import { Ornament } from '@/components/editorial';
 import { useAuth } from '@/context/auth';
 import { isActiveDestination, visibleDestinations } from '@/lib/navDestinations';
@@ -17,6 +18,8 @@ import { colors, hairline, radius, space, type } from '@/theme';
 import { duration, easing } from '@/theme/motion';
 
 const WIDTH = 288;
+/** Web caps the logo at `max-h-28` (112px); 64 is the phone equivalent. */
+const LOGO_SIZE = 64;
 
 /**
  * The navigation drawer — every screen that is NOT a bottom tab.
@@ -44,8 +47,23 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
   const pathname = usePathname();
   const { session } = useAuth();
   const { width: screenWidth } = useWindowDimensions();
+  /*
+   * Insets read HERE, in the app's own tree, and applied as padding — not
+   * via <SafeAreaView> inside the Modal.
+   *
+   * This is the SAME failure the gallery viewer hit in session H, and the
+   * drawer reintroduced it: a RN <Modal> is a separate native root, and
+   * react-native-safe-area-context does not resolve insets inside one
+   * unless a provider is mounted within the modal itself. The
+   * SafeAreaView measured zero, so the studio name rendered under the
+   * status bar and collided with the clock — which is exactly what the
+   * owner's device screenshot shows.
+   */
+  const insets = useSafeAreaInsets();
 
   const destinations = visibleDestinations(session?.profile);
+  const studioName = session?.studio?.name ?? 'Studio unavailable';
+  const logoUrl = session?.studio?.logoUrl ?? null;
 
   // -WIDTH is off-screen left; 0 is open. Driven rather than toggled so
   // the swipe can hand a real position back to the animation.
@@ -116,11 +134,31 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
 
         <GestureDetector gesture={swipe}>
           <Animated.View style={[styles.panel, { width: WIDTH }, panelStyle]}>
-            <SafeAreaView style={styles.panelInner} edges={['top', 'bottom']}>
-              {/* Web's sidebar header: the studio, then who you are. */}
+            <View style={[styles.panelInner, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+              {/* Web's sidebar header. It leads with the studio's own
+                  logo (Sidebar.tsx renders `studio.logoUrl` at
+                  `max-h-28 w-full object-contain`, with the name only as
+                  alt text), so this does the same and falls back to the
+                  name when a studio has none.
+                  Web's fallback is the Ink Manager wordmark; here it is
+                  the studio's name, per the owner's instruction — logged
+                  as a deliberate divergence.
+                  Logos are stored as base64 data URIs, exactly like
+                  avatars, so this goes through Avatar's scheme-aware
+                  renderer rather than expo-image, which cannot load a
+                  `data:` URI on iOS (session H2's root cause). */}
               <View style={styles.header}>
+                {logoUrl ? (
+                  <Avatar
+                    url={logoUrl}
+                    initials={studioName}
+                    size={LOGO_SIZE}
+                    style={styles.logo}
+                    labelStyle={styles.logoFallbackLabel}
+                  />
+                ) : null}
                 <Text style={styles.studio} numberOfLines={2}>
-                  {session?.studio?.name ?? 'Studio unavailable'}
+                  {studioName}
                 </Text>
                 <Text style={styles.person} numberOfLines={1}>
                   {session?.profile.name ?? session?.profile.email}
@@ -162,7 +200,7 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
                   </Text>
                 ) : null}
               </ScrollView>
-            </SafeAreaView>
+            </View>
           </Animated.View>
         </GestureDetector>
 
@@ -189,6 +227,8 @@ const styles = StyleSheet.create({
   panelInner: { flex: 1 },
 
   header: { paddingHorizontal: space.lg, paddingTop: space.lg, paddingBottom: space.md },
+  logo: { borderRadius: radius.input, borderWidth: 0, marginBottom: space.sm },
+  logoFallbackLabel: { ...type.meta, color: colors.fgMuted },
   studio: { ...type.heading, color: colors.fg },
   person: { ...type.meta, color: colors.fgMuted, marginTop: 4 },
   ornament: { marginBottom: space.sm },
