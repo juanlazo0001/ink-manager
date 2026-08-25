@@ -13,13 +13,12 @@ import { InquiryStatusChip, StatusChip } from '@/components/StatusChip';
 import {
   DownloadIcon,
   GiftCardIcon,
-  MailPlusIcon,
-  PhonePlusIcon,
   PlusIcon,
   SearchIcon,
   SendIcon,
   TrashIcon,
 } from '@/components/icons';
+import { ContactAddSheet } from '@/components/ContactAddSheet';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -73,6 +72,8 @@ export default function ClientScreen() {
   const [codeCopied, setCodeCopied] = useState(false);
   /** The client's existing thread, if they have one. Null until looked up. */
   const [threadId, setThreadId] = useState<string | null>(null);
+  /** The Contact Info card's "+" sheet. Opening is free; writing is not. */
+  const [addContactOpen, setAddContactOpen] = useState(false);
 
   // Which sections start open. Contact and the client's work are what a
   // person came for; the paperwork below folds until asked for.
@@ -252,9 +253,36 @@ export default function ClientScreen() {
             <Banner icon="log-out" text={`Transferred to ${client.transferredToStudio.name}.`} />
           ) : null}
 
-          {/* Web's Widget gives this section NO header action, so neither
-              does this one. Its controls all live in the body. */}
-          <CollapsibleSection title="Contact info" open={!!open.contact} onToggle={() => toggle('contact')}>
+          {/*
+            The Inquiries card's header anatomy exactly: chevron, title,
+            then a pair of icon actions on the right, same component and
+            same size.
+
+            DIVERGENCE FROM WEB, owner-directed. Web's Widget gives this
+            section no header action at all and scatters its controls
+            through the body — a text link per group plus a merge pill at
+            the foot. Both are gone; `+` opens the add sheet and the
+            magnifier is merge.
+          */}
+          <CollapsibleSection
+            title="Contact info"
+            open={!!open.contact}
+            onToggle={() => toggle('contact')}
+            headerActions={
+              <CardActionRow>
+                <CardIconButton
+                  Icon={PlusIcon}
+                  label="Add contact info"
+                  onPress={() => setAddContactOpen(true)}
+                />
+                <CardIconButton
+                  Icon={SearchIcon}
+                  label="Merge with another client"
+                  unavailableNote="Merging is destructive — portal only."
+                />
+              </CardActionRow>
+            }
+          >
             {/* Web leads this card with the consent line, before the
                 numbers it governs — label, then the state in its own
                 colour, with the date it was given. */}
@@ -276,12 +304,7 @@ export default function ClientScreen() {
               </Text>
             ) : null}
 
-            <GroupHead
-              title="Phones"
-              addIcon={PhonePlusIcon}
-              addLabel="Add phone"
-              addNote="Adding a number is done in the portal."
-            />
+            <SubHead>Phones</SubHead>
             {client.phones.length > 0 ? (
               client.phones.map((p) => (
                 <ContactLine key={p.id} value={p.phone} label={p.label} primary={p.isPrimary} kind="phone" />
@@ -292,12 +315,7 @@ export default function ClientScreen() {
               <Empty text="No phone on file." />
             )}
 
-            <GroupHead
-              title="Emails"
-              addIcon={MailPlusIcon}
-              addLabel="Add email"
-              addNote="Adding an address is done in the portal."
-            />
+            <SubHead>Emails</SubHead>
             {client.emails.length > 0 ? (
               client.emails.map((e) => (
                 <ContactLine key={e.id} value={e.email} label={e.label} primary={e.isPrimary} kind="email" />
@@ -311,10 +329,6 @@ export default function ClientScreen() {
             {client.instagramHandle ? <Fact label="Instagram" value={client.instagramHandle} /> : null}
             {client.address ? <Fact label="Address" value={client.address} /> : null}
             {client.referredBy ? <Fact label="Referred by" value={clientName(client.referredBy)} /> : null}
-
-            {/* The card's one primary action, and the one place web gives
-                a control WORDS rather than a glyph — so it keeps them. */}
-            <MergeButton />
           </CollapsibleSection>
 
           <CollapsibleSection
@@ -523,6 +537,19 @@ export default function ClientScreen() {
           </CollapsibleSection>
         </ScrollView>
       )}
+
+      <ContactAddSheet
+        visible={addContactOpen}
+        onClose={() => setAddContactOpen(false)}
+        onAddPhone={() => {
+          setAddContactOpen(false);
+          Alert.alert('Add phone', 'Adding a number is done in the portal.');
+        }}
+        onAddEmail={() => {
+          setAddContactOpen(false);
+          Alert.alert('Add email', 'Adding an address is done in the portal.');
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -713,57 +740,11 @@ function PrimaryTag() {
   );
 }
 
-/**
- * A contact group's heading: web's eyebrow on the left, its add control
- * on the right.
- *
- * OWNER-DIRECTED DIVERGENCE: web writes these as the text links
- * "+ Add phone" / "+ Add email"; here they are icon-only, at the same
- * 32pt row size the download buttons use.
- */
-function GroupHead({
-  title,
-  addIcon,
-  addLabel,
-  addNote,
-}: {
-  title: string;
-  addIcon: (props: { size?: number; color: string }) => React.ReactElement;
-  addLabel: string;
-  addNote: string;
-}) {
-  return (
-    <View style={styles.groupHead}>
-      <Text style={styles.subHead}>{title.toUpperCase()}</Text>
-      <CardIconButton Icon={addIcon} label={addLabel} unavailableNote={addNote} />
-    </View>
-  );
+/** A contact group's heading. Its add control now lives in the card header. */
+function SubHead({ children }: { children: string }) {
+  return <Text style={styles.subHead}>{children.toUpperCase()}</Text>;
 }
 
-/**
- * Web's merge control: `rounded-full border border-border px-4 py-2` with
- * a 16px search glyph and the words. It is the one control on this card
- * web gives words rather than a glyph, so it keeps them.
- *
- * Web right-aligns it (`flex justify-end`); centred here, per the owner.
- */
-function MergeButton() {
-  return (
-    <View style={styles.mergeRow}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Merge with another client"
-        accessibilityState={{ disabled: true }}
-        accessibilityHint="Merging is destructive — portal only."
-        onPress={() => Alert.alert('Merge with another client', 'Merging is destructive — portal only.')}
-        style={({ pressed }) => [styles.merge, pressed && styles.pressed]}
-      >
-        <SearchIcon size={16} color={colors.fgMuted} />
-        <Text style={styles.mergeLabel}>Merge with another client</Text>
-      </Pressable>
-    </View>
-  );
-}
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
@@ -894,15 +875,7 @@ const styles = StyleSheet.create({
   /* Web: `flex items-center justify-between`, the eyebrow left and the
      add control right. The eyebrow keeps its own vertical rhythm; the
      32pt button is taller than it, so the row centres on the button. */
-  groupHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: space.sm,
-    marginTop: space.md,
-    marginBottom: space.xs,
-  },
-  subHead: { ...type.meta, color: colors.accent },
+  subHead: { ...type.meta, color: colors.accent, marginTop: space.md, marginBottom: space.xs },
 
   fact: {
     flexDirection: 'row',
@@ -1025,21 +998,6 @@ const styles = StyleSheet.create({
     color: colors.accent,
   },
 
-  /* Web: `mt-6 flex justify-end` around a
-     `rounded-full border border-border px-4 py-2 text-sm font-semibold`.
-     Centred rather than right-aligned, per the owner. */
-  mergeRow: { marginTop: space.lg, alignItems: 'center' },
-  merge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.sm,
-  },
-  mergeLabel: { ...type.small, color: colors.fgSecondary },
 
   project: { paddingVertical: space.xs },
   sessionLine: {
