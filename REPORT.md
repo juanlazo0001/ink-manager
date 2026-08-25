@@ -25359,3 +25359,139 @@ Restart any `expo start` already running from the primary checkout first — the
 4. **Deposit forms / waivers** — those download buttons are bigger now too. Worth a look, since that
    is the part of the change that reaches beyond this card.
 5. **If any client has a non-US number**, it should appear exactly as stored rather than reshaped.
+
+# Mobile session T3 — Contact Info, unified header actions
+
+**Base: `mobile/session-t2` at `5be88f3`**, not `main` — T2 is still unmerged (`main` is at
+`151c0d8`, carrying S and T). Worktree cut from T2; two commits, pushed.
+
+---
+
+## 1 — The header
+
+`[chevron] CONTACT INFO ....... [+] [search]` — the Inquiries card's anatomy exactly: same
+`CardIconButton`, same `CardActionRow`, same 44pt size, same `space.sm` gap, same right-hand column.
+`t3-01` shows the two cards stacked at 390pt for comparison.
+
+- **`+`** opens the add sheet.
+- **`search`** is merge, carrying the magnifier from the pill that used to sit at the card's foot.
+
+**Divergence from web, owner-directed and now larger than before.** Web's `Widget` gives this
+section *no* header action at all and scatters its controls through the body — a text link per group
+plus a merge pill. Both are gone.
+
+## 2 — The body, slimmed
+
+SMS consent line → PHONES group → EMAILS group → the read-only facts. Nothing else. Trash stays per
+row, right-aligned, unchanged from T2.
+
+`GroupHead` collapses back to a plain `SubHead` (the eyebrow and nothing else), and `MergeButton`
+and its styles are deleted rather than left orphaned.
+
+## 3 — The sheet
+
+**It is not a new component pattern.** `ContactAddSheet` is the bottom sheet this app already uses
+for message actions, the channel picker and attach, matched piece for piece:
+
+| | Shared value |
+| --- | --- |
+| shell | transparent `Modal`, `animationType="slide"` |
+| backdrop | `#000000aa`, `justifyContent: 'flex-end'`, closes on tap |
+| panel | `surfaceRaised`, top corners at `radius.card`, hairline `borderStrong` top |
+| padding | `lg` sides, `lg` top, `xxl` bottom |
+| title | accent `Eyebrow` |
+| rows | `flexDirection: row`, `gap: space.md`, `paddingVertical: space.md`, 16px glyph, `type.body` |
+| footer | centred `DONE` in `type.button`, accent |
+
+**T2's glyphs moved rather than died.** The handset-plus and envelope-plus drawn last session for
+the per-group buttons are this sheet's row icons. They are still the only thing distinguishing the
+two choices — one level in.
+
+**Opening is free; writing is gated.** The sheet opens, both rows read clearly, and each answers in
+the app's voice about where the write lives until M2. The merge action behaves the same way from the
+header.
+
+## 4 — The 320pt check, and it fails
+
+**`CONTACT INFO` does not fit beside two icons at 320pt.** This is the exact row session S's
+worst-case table flagged, now reached for real.
+
+At 320pt the card gives its header **236pt**, and two 44pt buttons plus the chevron and three gaps
+leave the title **109pt**:
+
+| Width | Card inner | Title budget | `CONTACT INFO` needs | Result |
+| --- | --- | --- | --- | --- |
+| **320** | 236 | **109** | **145** | **truncates — over by 36pt** |
+| 375 | 291 | 164 | 145 | fits |
+| 390 | 306 | 179 | 145 | fits |
+
+`INQUIRIES` (103pt) fits at 320 with room, which is why that card has never shown this.
+
+**A measurement trap worth recording.** My first pass reported `INQUIRIES` truncating at 320 too.
+That was wrong: the preview frame was short enough for the list to overflow, and
+`react-native-web` then paints a **real scrollbar** that steals ~15pt of width — a thing iOS does
+not do. Re-measured with tall frames, the card inner comes back to a clean 236 and `INQUIRIES`
+fits. **Any width measurement in this harness must use a frame taller than its content.**
+
+### What I shipped, and the alternatives
+
+Shipped: **the title truncates at 320**, which is web's own rule for this exact case (`min-w-0
+truncate` on the `h2`, `shrink-0` on every action). It is clean at 375 and 390 — every phone Apple
+currently sells.
+
+The alternatives, and why not:
+
+1. **Shrink the icons at 320.** This is what session S's brief pre-authorised, but T2 has since
+   removed the size variant deliberately: 32pt is under the 44pt iOS tap-target floor, and the whole
+   point of that round was one shared token. Reintroducing a smaller button here would undo it.
+2. **Rename the section to `CONTACT`** — 93pt, fits the 109pt budget with 16 to spare, at every
+   width. One line. But it renames a section web calls "Contact Info", so it is the owner's call,
+   not mine.
+
+**My recommendation is (2) if you care about 320-class devices** (SE 1st gen, 5s), and leaving it as
+shipped if you don't — the truncation costs nothing on any phone from the SE 2nd gen onward.
+
+## Verification
+
+`apps/mobile/parity-audit/`:
+
+- **`t3-01-header-anatomy.png`** — Contact Info directly above Inquiries at 390pt. The anatomy match.
+- **`t3-02-add-sheet.png`** — the sheet open, with T2's glyphs on its rows.
+- `t3-03-widths.png` — 320 / 375 / 390, showing the truncation and the slimmed body.
+
+The sheet spans the full preview width rather than one phone frame, because a `Modal` is a separate
+root and fills the viewport — on a phone that *is* the screen. Not a defect.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 23.12s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4,847,748 bytes (4.85 MB) |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | `Add contact info`, `Add phone`, `Add email`, `Merge with another client` and all three notes present (`Merging is destructive` as UTF-16LE, per T's note); harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **A client → Contact Info.** The header should look like the Inquiries card's: title, then two
+   circles on the right, same size.
+2. **Tap `+`.** The sheet should slide up looking exactly like the message-actions sheet, with the
+   handset-plus and envelope-plus on its two rows. Tap one — it should say where the write lives.
+   Tap DONE or the dimmed area to close.
+3. **Tap the magnifier** — same treatment for merge.
+4. **The body** should have no add buttons and no merge pill left in it.
+5. **The title** — on your phone it should read in full. It only truncates at 320pt, which is item 4
+   above and the one thing needing your decision.
