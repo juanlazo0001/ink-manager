@@ -19,6 +19,17 @@ import { duration, easing } from '@/theme/motion';
 /**
  * The eyebrow: letterspaced uppercase Jura flanked by red `+` glyphs.
  *
+ * ONE RENDERING, NO VARIANTS. There used to be a `tone` prop — `muted`,
+ * `accent`, `alert` — and it recoloured the TEXT while the ticks stayed
+ * red regardless. That is how the Clients screen ended up with a red
+ * eyebrow: session W read "red-tick eyebrow" as "red eyebrow" and passed
+ * `tone="alert"`, which is a different thing entirely. Home's rendering
+ * is canonical and is now the only one: muted text, red ticks, inline.
+ *
+ * `style` still reaches the ROW, for spacing. It has never reached the
+ * text, so the four call sites that set `color` on it were no-ops; those
+ * are gone too.
+ *
  * Web's `components/Eyebrow.tsx`:
  *   container  font-jura text-[11px] font-semibold tracking-[0.34em]
  *              text-fg-muted uppercase, gap-3
@@ -35,7 +46,6 @@ export function Eyebrow({
   children,
   meta,
   style,
-  tone = 'muted',
 }: {
   children: ReactNode;
   /** A date range, "All-time" — the card's contextual second line. */
@@ -46,10 +56,7 @@ export function Eyebrow({
    * `tone`, which is why no call site sets one by hand.
    */
   style?: StyleProp<ViewStyle>;
-  /** `accent` for the one eyebrow on a screen that is the screen's subject. */
-  tone?: 'muted' | 'accent' | 'alert';
 }) {
-  const color = tone === 'accent' ? colors.accent : tone === 'alert' ? colors.danger : colors.fgMuted;
   const label = String(children).toUpperCase();
   /*
    * THE TRACKING IS WHAT MAKES A LONG EYEBROW OVERFLOW, not the type size.
@@ -69,7 +76,7 @@ export function Eyebrow({
         +
       </Text>
       <Text
-        style={[styles.eyebrow, isLong && styles.eyebrowLong, { color }]}
+        style={[styles.eyebrow, isLong && styles.eyebrowLong]}
         numberOfLines={1}
         // A further safety net on iOS only — react-native-web ignores it
         // and ellipsizes instead, which is why the step above is
@@ -316,7 +323,15 @@ const styles = StyleSheet.create({
    * never shrink and never move.
    */
   eyebrowRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  eyebrow: { ...type.eyebrow, flexShrink: 1 },
+  /*
+   * The canonical colour, baked in.
+   *
+   * It used to come from the `tone` prop, so removing that prop left the
+   * text with NO colour at all -- black on a black page, invisible rather
+   * than muted. Caught by measuring the computed value rather than
+   * trusting a render that merely looked dim.
+   */
+  eyebrow: { ...type.eyebrow, color: colors.fgMuted, flexShrink: 1 },
   eyebrowLong: { fontSize: 9.5, letterSpacing: 0.5 },
   tick: { ...type.eyebrow, fontSize: 13, letterSpacing: 0, color: colors.dangerStrong, flexShrink: 0 },
   eyebrowMeta: { ...type.meta, color: colors.fgMuted, opacity: 0.7 },

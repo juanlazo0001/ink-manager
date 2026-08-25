@@ -173,7 +173,7 @@ export default function TeamScreen() {
         </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          <Eyebrow tone="accent">{tab === 'staff' ? 'Staff' : 'Artists'}</Eyebrow>
+          <Eyebrow>{tab === 'staff' ? 'Staff' : 'Artists'}</Eyebrow>
           <View style={styles.roster}>
             {(tab === 'staff' ? staff : artists).map((u, i) => (
               <Appear key={u.id} index={i}>

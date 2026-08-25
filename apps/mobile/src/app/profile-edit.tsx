@@ -577,7 +577,7 @@ export default function ProfileEditScreen() {
         saveLabel="Save changes"
       >
         <View style={styles.accountBlock}>
-          <Eyebrow tone="accent">Account</Eyebrow>
+          <Eyebrow>Account</Eyebrow>
           <AvatarField
             label="Profile photo"
             value={account.values.avatarUrl}

@@ -134,7 +134,7 @@ export default function ClientsScreen() {
         word, the same way the client detail's does not (session U).
       */}
       <View style={styles.pageHead}>
-        <Eyebrow tone="alert">Everyone who&apos;s booked with your studio.</Eyebrow>
+        <Eyebrow>Everyone who&apos;s booked with you.</Eyebrow>
         {/* ITEM 3: Home's "Welcome, Juan" token exactly — `type.welcome`. */}
         <Text style={styles.pageTitle}>Clients</Text>
       </View>
@@ -243,22 +243,29 @@ function ClientRow({
           record has no image field at all, so every circle on this screen
           was a pair of initials restating the name beside it. */}
       <View style={styles.rowText}>
-        <Text style={styles.name} numberOfLines={1}>
-          {name}
-        </Text>
+        {/*
+          ITEM 4: the chip sits with the NAME, on its baseline — it says
+          something about this person, so it belongs beside them rather
+          than out at the row's edge where it read as a second column.
+          The name is the only shrinkable thing in the line, so it
+          truncates and the chip never wraps.
+        */}
+        <View style={styles.nameLine}>
+          <Text style={styles.name} numberOfLines={1}>
+            {name}
+          </Text>
+          {client.archivedAt ? (
+            <View style={styles.archived}>
+              <Text style={styles.archivedLabel}>ARCHIVED</Text>
+            </View>
+          ) : chip ? (
+            <StatusChip label={chip.label} tone={chip.tone} />
+          ) : null}
+        </View>
         <Text style={styles.secondary} numberOfLines={1}>
           {secondary}
         </Text>
       </View>
-      {/* ITEM 5: one chip, and archived outranks everything — a client
-          nobody is working with has no live state worth showing. */}
-      {client.archivedAt ? (
-        <View style={styles.archived}>
-          <Text style={styles.archivedLabel}>ARCHIVED</Text>
-        </View>
-      ) : chip ? (
-        <StatusChip label={chip.label} tone={chip.tone} />
-      ) : null}
       {/* ITEM 6b: opens this client's thread. Navigation when one exists;
           see the screen's own note for why it stops there when one does
           not. */}
@@ -303,9 +310,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
     paddingVertical: space.md,
   },
+  // Name and its chip share a baseline; only the name can shrink.
+  nameLine: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   rowText: { flex: 1 },
   avatarLabel: { ...type.label, fontSize: 13, color: colors.fgMuted },
-  name: { ...type.heading, color: colors.fg },
+  name: { ...type.heading, color: colors.fg, flexShrink: 1 },
   secondary: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
   archived: {

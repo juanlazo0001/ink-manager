@@ -84,7 +84,7 @@ const styles = StyleSheet.create({
     paddingTop: space.lg,
     paddingBottom: space.xxl,
   },
-  eyebrow: { color: colors.accent, marginBottom: space.sm },
+  eyebrow: { marginBottom: space.sm },
 
   action: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md },
   actionLabel: { ...type.body, color: colors.fg },

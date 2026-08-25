@@ -17,7 +17,7 @@ export function DetailSection({
 }) {
   return (
     <View style={styles.section}>
-      <Eyebrow tone={accent ? 'accent' : 'muted'}>{title}</Eyebrow>
+      <Eyebrow>{title}</Eyebrow>
       <View style={styles.card}>{children}</View>
     </View>
   );

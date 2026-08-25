@@ -130,7 +130,7 @@ const styles = StyleSheet.create({
     paddingTop: space.lg,
     paddingBottom: space.xxl,
   },
-  eyebrow: { color: colors.accent, marginBottom: space.sm },
+  eyebrow: { marginBottom: space.sm },
 
   emojiRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: space.xs },
   emoji: {

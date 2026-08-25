@@ -247,7 +247,7 @@ export default function StaffInquiryScreen() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <View style={styles.section}>
-      <Eyebrow tone="accent">{title}</Eyebrow>
+      <Eyebrow>{title}</Eyebrow>
       <View style={styles.sectionBody}>{children}</View>
     </View>
   );

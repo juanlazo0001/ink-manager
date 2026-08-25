@@ -72,7 +72,7 @@ export function PillMenu<T extends string>({
       <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
           <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-            <Eyebrow tone="accent">{label}</Eyebrow>
+            <Eyebrow>{label}</Eyebrow>
             <ScrollView style={styles.optionScroll}>
               {options.map((option) => {
                 const selected = option.value === value;
@@ -176,7 +176,7 @@ export function GroupedPillMenu<T extends string>({
             <ScrollView style={styles.optionScroll}>
               {groups.map((group) => (
                 <View key={group.title}>
-                  <Eyebrow tone="accent">{group.title}</Eyebrow>
+                  <Eyebrow>{group.title}</Eyebrow>
                   {group.options.map((option) => {
                     const selected = isSelected(group, option.value);
                     return (

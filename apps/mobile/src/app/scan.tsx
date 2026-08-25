@@ -196,7 +196,7 @@ const styles = StyleSheet.create({
   },
   allowLabel: { ...type.button, color: colors.accent },
 
-  eyebrow: { color: colors.accent, marginTop: space.sm },
+  eyebrow: { marginTop: space.sm },
   manualRow: { flexDirection: 'row', gap: space.sm, alignItems: 'center' },
   input: {
     flex: 1,

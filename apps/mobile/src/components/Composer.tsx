@@ -476,7 +476,7 @@ const styles = StyleSheet.create({
     paddingBottom: space.xxl,
     gap: space.xs,
   },
-  sheetEyebrow: { color: colors.accent, marginTop: space.md, marginBottom: space.xs },
+  sheetEyebrow: { marginTop: space.md, marginBottom: space.xs },
   option: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.md - 2 },
   optionLabel: { ...type.body, color: colors.fgSecondary, flex: 1 },
   optionLabelActive: { color: colors.fg },
