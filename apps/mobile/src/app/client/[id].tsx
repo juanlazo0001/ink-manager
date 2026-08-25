@@ -2,7 +2,7 @@ import type { AppointmentListItem } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -34,6 +34,7 @@ import {
   type ClientPlannedSession,
 } from '@/lib/clients';
 import { fetchConversations } from '@/lib/conversations';
+import { fetchWidgetLayout, saveWidgetLayout } from '@/lib/artists';
 import { appointmentBadge, type AppointmentTone } from '@/lib/appointmentDisplay';
 import { fetchAppointments } from '@/lib/appointments';
 import { giftCardTone } from '@/lib/giftCardDisplay';
@@ -72,6 +73,36 @@ import { colors, hairline, radius, space, tones, type } from '@/theme';
  * sends something to a client or moves money, which this run's contract
  * keeps out of unattended hands.
  */
+/**
+ * Web's `CLIENT_WIDGET_ORDER`, id for id — the fallback for a user who has
+ * never reordered this page.
+ */
+const CLIENT_SECTION_ORDER = [
+  'contact-info',
+  'inquiries',
+  'projects',
+  'gift-cards',
+  'deposit-forms',
+  'appointments',
+  'waivers',
+  'notes',
+  'activity-history',
+];
+
+/**
+ * A saved order, reconciled against the sections this build actually has.
+ *
+ * Same job as web's `computeOrder`: honour what the user arranged, drop
+ * ids that no longer exist, and append any section added since they last
+ * touched it — in the default order's own relative positions, so a new
+ * card lands where it was designed to rather than at the bottom.
+ */
+function mergeOrder(saved: string[]): string[] {
+  const known = saved.filter((id) => CLIENT_SECTION_ORDER.includes(id));
+  const missing = CLIENT_SECTION_ORDER.filter((id) => !known.includes(id));
+  return [...known, ...missing];
+}
+
 export default function ClientScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -94,6 +125,26 @@ export default function ClientScreen() {
    * call. Null until it lands; `[]` is a real "none".
    */
   const [appointments, setAppointments] = useState<AppointmentListItem[] | null>(null);
+  /**
+   * ITEM 3. The card order, and whether the move controls are showing.
+   *
+   * `client-detail` is WEB'S OWN pageKey for this screen, and
+   * `PUT /widget-layouts/:pageKey` is the endpoint web's `useWidgetLayout`
+   * writes to — per-user, not per-studio. Mobile already had both halves
+   * from session B's artist profile editor (`fetchWidgetLayout` /
+   * `saveWidgetLayout`); nothing new was needed on either side, and
+   * because the key matches, a reorder here shows up on web for the same
+   * person and vice versa.
+   */
+  const [order, setOrder] = useState<string[]>(CLIENT_SECTION_ORDER);
+  const [reordering, setReordering] = useState(false);
+  /**
+   * Whatever the server currently holds for collapse, carried through
+   * untouched on every write. Mobile keeps its own collapse in local
+   * state, so sending [] would silently clear what the same person
+   * collapsed on web.
+   */
+  const savedCollapsed = useRef<string[]>([]);
 
   // Which sections start open. Contact and the client's work are what a
   // person came for; the paperwork below folds until asked for.
@@ -139,6 +190,47 @@ export default function ClientScreen() {
       cancelled = true;
     };
   }, [token, id]);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    fetchWidgetLayout(token, 'client-detail')
+      .then((layout) => {
+        if (cancelled) return;
+        setOrder(mergeOrder(layout.widgetOrder ?? []));
+        savedCollapsed.current = layout.collapsedWidgetIds ?? [];
+      })
+      .catch(() => {
+        // No saved layout, or the read failed. The default order is
+        // already on screen; a missing preference is not an error.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  /**
+   * Optimistic and best-effort, exactly as web's `persist` is: the move
+   * lands on screen immediately and a failed PUT only means it does not
+   * survive a relaunch. Never worth blocking a drag over.
+   */
+  function move(id: string, delta: number) {
+    setOrder((current) => {
+      const from = current.indexOf(id);
+      const to = from + delta;
+      if (from < 0 || to < 0 || to >= current.length) return current;
+      const next = [...current];
+      next.splice(to, 0, next.splice(from, 1)[0]);
+      if (token) // `collapsedWidgetIds` is sent empty: mobile keeps collapse in
+      // local state per screen, and writing [] would otherwise clear
+      // whatever the same user collapsed on web. Preserved verbatim.
+      void saveWidgetLayout(token, 'client-detail', {
+        widgetOrder: next,
+        collapsedWidgetIds: savedCollapsed.current,
+      }).catch(() => {});
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!token || !id) return;
@@ -273,6 +365,19 @@ export default function ClientScreen() {
               label="Edit"
               note="Editing a client is done in the portal."
             />
+            {/*
+              ITEM 3's entry point. Web reveals a drag handle on every card
+              permanently; a phone has no hover, and a permanent handle on
+              nine cards is nine controls nobody uses. A mode instead —
+              session B's pattern from the artist profile editor, and the
+              same `move` / `check` pair it uses.
+            */}
+            <QuickAction
+              icon={reordering ? 'check' : 'move'}
+              label={reordering ? 'Done' : 'Reorder'}
+              onPress={() => setReordering((v) => !v)}
+            />
+
             {/* Web's overflow (…) holds archive and delete — both
                 destructive, neither built. */}
             <QuickAction icon="more-horizontal" label="More" note="Archive and delete live in the portal." />
@@ -316,7 +421,19 @@ export default function ClientScreen() {
             the foot. Both are gone; `+` opens the add sheet and the
             magnifier is merge.
           */}
+          {/*
+            ITEM 3: the cards render in the SAVED order, keyed by web's own
+            widget ids so the two clients agree about what moved. Built
+            here rather than above the return because every one of them
+            reads `client`, which is only non-null inside this branch.
+          */}
+          {(() => {
+            const SECTIONS: Record<string, React.ReactNode> = {
+    'contact-info': (
           <CollapsibleSection
+            reordering={reordering}
+            onMoveUp={() => move('contact-info', -1)}
+            onMoveDown={() => move('contact-info', 1)}
             title="Contact info"
             open={!!open.contact}
             onToggle={() => toggle('contact')}
@@ -382,8 +499,12 @@ export default function ClientScreen() {
             {client.address ? <Fact label="Address" value={client.address} /> : null}
             {client.referredBy ? <Fact label="Referred by" value={clientName(client.referredBy)} /> : null}
           </CollapsibleSection>
-
+    ),
+    'inquiries': (
           <CollapsibleSection
+            reordering={reordering}
+            onMoveUp={() => move('inquiries', -1)}
+            onMoveDown={() => move('inquiries', 1)}
             title="Inquiries"
             open={!!open.inquiries}
             onToggle={() => toggle('inquiries')}
@@ -419,8 +540,12 @@ export default function ClientScreen() {
               </>
             )}
           </CollapsibleSection>
-
+    ),
+    'projects': (
           <CollapsibleSection
+            reordering={reordering}
+            onMoveUp={() => move('projects', -1)}
+            onMoveDown={() => move('projects', 1)}
             title="Projects"
             open={!!open.projects}
             onToggle={() => toggle('projects')}
@@ -438,8 +563,12 @@ export default function ClientScreen() {
               ))
             )}
           </CollapsibleSection>
-
+    ),
+    'gift-cards': (
           <CollapsibleSection
+            reordering={reordering}
+            onMoveUp={() => move('gift-cards', -1)}
+            onMoveDown={() => move('gift-cards', 1)}
             title="Gift cards"
             open={!!open.gift}
             onToggle={() => toggle('gift')}
@@ -481,8 +610,12 @@ export default function ClientScreen() {
               ))
             )}
           </CollapsibleSection>
-
+    ),
+    'deposit-forms': (
           <CollapsibleSection
+            reordering={reordering}
+            onMoveUp={() => move('deposit-forms', -1)}
+            onMoveDown={() => move('deposit-forms', 1)}
             title="Deposit forms"
             open={!!open.deposits}
             onToggle={() => toggle('deposits')}
@@ -505,15 +638,12 @@ export default function ClientScreen() {
                     <Text style={styles.lineTitle}>
                       Session {d.sessionNumber ?? 1} — {formatMoney(Math.round(d.totalCharged * 100))}
                     </Text>
-                    {/* ITEM 4: dates stay in the meta line; the payment
-                        STATE leaves it for a chip below, and the gift
-                        card code goes entirely — it identified a
-                        different record than the row is about. */}
-                    <Text style={styles.lineMeta} numberOfLines={2}>
-                      {`deposit ${formatMoney(Math.round(d.depositAmount * 100))}`}
-                      {d.signedAt ? ` · signed ${stamp(d.signedAt)}` : ''}
-                      {d.paidAt ? ` · paid ${stamp(d.paidAt)}` : ''}
-                    </Text>
+                    {/* The meta line is gone entirely (session W). The
+                        title says which session and for how much; the
+                        chip says where it stands. The dates and the
+                        deposit split are on the form itself, and on a
+                        phone they were three quiet clauses nobody reads
+                        under a title that already answers the question. */}
                     <View style={styles.belowChips}>
                       <StatusChip label={depositState(d).label} tone={depositState(d).tone} />
                     </View>
@@ -534,8 +664,9 @@ export default function ClientScreen() {
               ))
             )}
           </CollapsibleSection>
-
-          <CollapsibleSection title="Appointments" open={!!open.appointments} onToggle={() => toggle('appointments')}>
+    ),
+    'appointments': (
+          <CollapsibleSection reordering={reordering} onMoveUp={() => move('appointments', -1)} onMoveDown={() => move('appointments', 1)} title="Appointments" open={!!open.appointments} onToggle={() => toggle('appointments')}>
             {appointments === null ? (
               <Empty text="Loading appointments…" />
             ) : appointments.length === 0 ? (
@@ -546,8 +677,12 @@ export default function ClientScreen() {
               ))
             )}
           </CollapsibleSection>
-
+    ),
+    'waivers': (
           <CollapsibleSection
+            reordering={reordering}
+            onMoveUp={() => move('waivers', -1)}
+            onMoveDown={() => move('waivers', 1)}
             title="Waivers"
             open={!!open.waivers}
             onToggle={() => toggle('waivers')}
@@ -587,8 +722,9 @@ export default function ClientScreen() {
               ))
             )}
           </CollapsibleSection>
-
-          <CollapsibleSection title="Notes" open={!!open.notes} onToggle={() => toggle('notes')}>
+    ),
+    'notes': (
+          <CollapsibleSection reordering={reordering} onMoveUp={() => move('notes', -1)} onMoveDown={() => move('notes', 1)} title="Notes" open={!!open.notes} onToggle={() => toggle('notes')}>
             {/* Web's explainer, verbatim. */}
             <Text style={styles.explainer}>
               Every note written on this client&apos;s inquiries, projects, and appointments —
@@ -597,13 +733,20 @@ export default function ClientScreen() {
             </Text>
             <Empty text="Writing a note is done in the portal." />
           </CollapsibleSection>
-
-          <CollapsibleSection title="Activity history" open={!!open.activity} onToggle={() => toggle('activity')}>
+    ),
+    'activity-history': (
+          <CollapsibleSection reordering={reordering} onMoveUp={() => move('activity-history', -1)} onMoveDown={() => move('activity-history', 1)} title="Activity history" open={!!open.activity} onToggle={() => toggle('activity')}>
             {/* Web groups this by date with a description per change. The
                 client payload carries no audit trail, so the card keeps
                 web's place and says so rather than showing nothing. */}
             <Empty text="No activity recorded yet." />
           </CollapsibleSection>
+    ),
+  };
+            return order.map((sectionId) => (
+              <View key={sectionId}>{SECTIONS[sectionId]}</View>
+            ));
+          })()}
         </ScrollView>
       )}
 
@@ -629,7 +772,7 @@ function QuickAction({
   onPress,
   note,
 }: {
-  icon: 'message-circle' | 'copy' | 'check' | 'edit-2' | 'more-horizontal';
+  icon: 'message-circle' | 'copy' | 'check' | 'edit-2' | 'more-horizontal' | 'move';
   label: string;
   onPress?: () => void;
   note?: string;
@@ -926,19 +1069,26 @@ function AppointmentLine({
   last?: boolean;
 }) {
   const badge = appointmentBadge(appointment);
+  const artist = appointment.artist?.name ?? null;
   return (
     <View style={[styles.line, last && styles.lineLast]}>
-      <View style={styles.lineText}>
-        <Text style={styles.lineTitle}>{stamp(appointment.startTime)}</Text>
-        {appointment.artist?.name ? (
-          <Text style={styles.lineMeta} numberOfLines={1}>
-            {appointment.artist.name}
-          </Text>
-        ) : null}
-        <View style={styles.belowChips}>
-          <StatusChip label={badge.label} tone={APPOINTMENT_CHIP_TONES[badge.tone]} />
-        </View>
-      </View>
+      {/*
+        ITEM 2: the artist becomes their FACE. A name repeated down a
+        column is the same width of grey text as the date beside it;
+        an avatar is scannable at a glance and is how web renders this
+        very column (`<Avatar name avatarUrl />` before the name).
+      */}
+      <Avatar
+        url={appointment.artist?.avatarUrl ?? null}
+        initials={initialsOf(artist ?? '?')}
+        size={28}
+        labelStyle={styles.apptInitials}
+      />
+      <Text style={[styles.lineTitle, styles.apptWhen]} numberOfLines={1}>
+        {stamp(appointment.startTime)}
+      </Text>
+      {/* Chip right-aligned on the row, not below it. */}
+      <StatusChip label={badge.label} tone={APPOINTMENT_CHIP_TONES[badge.tone]} style={styles.apptChip} />
     </View>
   );
 }
@@ -1059,6 +1209,10 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.borderSoft,
   },
   lineLast: { borderBottomWidth: 0 },
+  /* ITEM 2: avatar + when on the left, chip held to the right edge. */
+  apptInitials: { ...type.label, fontSize: 10, color: colors.fgMuted },
+  apptWhen: { flexShrink: 1 },
+  apptChip: { marginLeft: 'auto' },
   lineText: { flex: 1 },
   lineTitle: { ...type.body, color: colors.fg },
   lineMeta: { ...type.meta, color: colors.fgMuted, marginTop: 2 },

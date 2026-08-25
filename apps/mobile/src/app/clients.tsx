@@ -7,6 +7,9 @@ import { Appear } from '@/components/Appear';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { Pill, PillRow } from '@/components/Pill';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { CardIconButton } from '@/components/CardIconButton';
+import { Eyebrow } from '@/components/editorial';
+import { MessageIcon } from '@/components/icons';
 import { SkeletonList } from '@/components/Skeleton';
 import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -14,6 +17,7 @@ import { clientName, fetchClients, filterClients, type ClientListItem } from '@/
 import { screenErrorMessage } from '@/lib/screenError';
 import { colors, hairline, radius, space, type } from '@/theme';
 import { formatPhone } from '@/lib/format';
+import { fetchConversations } from '@/lib/conversations';
 
 /**
  * The client list.
@@ -34,6 +38,13 @@ export default function ClientsScreen() {
   const [rows, setRows] = useState<ClientListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  /*
+   * ITEM 6b. One request for the whole list rather than one per row:
+   * `GET /conversations` already returns every thread this user can see,
+   * each carrying its `clientId`, so a single fetch answers "does this
+   * client have a thread" for every row on the screen.
+   */
+  const [threadsByClient, setThreadsByClient] = useState<Record<string, string>>({});
   const [showArchived, setShowArchived] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -54,6 +65,25 @@ export default function ClientsScreen() {
   );
 
   useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    fetchConversations(token)
+      .then((rows) => {
+        if (cancelled) return;
+        const map: Record<string, string> = {};
+        for (const row of rows) if (row.clientId) map[row.clientId] = row.id;
+        setThreadsByClient(map);
+      })
+      .catch(() => {
+        // A failed lookup only means the message buttons say there is no
+        // thread yet — never a reason to break the list.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  useEffect(() => {
     void load();
   }, [load]);
 
@@ -61,7 +91,18 @@ export default function ClientsScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
-      <ScreenHeader title="Clients" onBack={() => router.back()} />
+      <ScreenHeader onBack={() => router.back()} />
+
+      {/*
+        ITEM 6c: web's Clients page leads with an eyebrow over a display
+        serif title — `<Eyebrow>Everyone who's booked with your studio.</Eyebrow>`
+        above an `h1` in `font-display`. The nav row no longer repeats the
+        word, the same way the client detail's does not (session U).
+      */}
+      <View style={styles.pageHead}>
+        <Eyebrow tone="alert">Everyone who&apos;s booked with your studio.</Eyebrow>
+        <Text style={styles.pageTitle}>Clients</Text>
+      </View>
 
       <View style={styles.controls}>
         <TextInput
@@ -102,6 +143,10 @@ export default function ClientsScreen() {
               <ClientRow
                 client={item}
                 onPress={() => router.push({ pathname: '/client/[id]', params: { id: item.id } })}
+                threadId={threadsByClient[item.id]}
+                onMessage={(threadId) =>
+                  router.push({ pathname: '/conversation/[id]', params: { id: threadId } })
+                }
               />
             </Appear>
           )}
@@ -131,7 +176,18 @@ export default function ClientsScreen() {
   );
 }
 
-function ClientRow({ client, onPress }: { client: ClientListItem; onPress: () => void }) {
+function ClientRow({
+  client,
+  onPress,
+  threadId,
+  onMessage,
+}: {
+  client: ClientListItem;
+  onPress: () => void;
+  /** This client's existing thread, if they have one. */
+  threadId?: string;
+  onMessage: (threadId: string) => void;
+}) {
   const name = clientName(client);
   // `formatPhone` returns '' for a missing number, not null, so the
   // fallback has to be reached before formatting rather than after it.
@@ -144,7 +200,9 @@ function ClientRow({ client, onPress }: { client: ClientListItem; onPress: () =>
       accessibilityLabel={name}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
-      <Avatar url={null} initials={initialsOf(name)} size={40} labelStyle={styles.avatarLabel} />
+      {/* ITEM 6a: no avatar. These are never photographs — the client
+          record has no image field at all, so every circle on this screen
+          was a pair of initials restating the name beside it. */}
       <View style={styles.rowText}>
         <Text style={styles.name} numberOfLines={1}>
           {name}
@@ -158,12 +216,25 @@ function ClientRow({ client, onPress }: { client: ClientListItem; onPress: () =>
           <Text style={styles.archivedLabel}>ARCHIVED</Text>
         </View>
       ) : null}
+      {/* ITEM 6b: opens this client's thread. Navigation when one exists;
+          see the screen's own note for why it stops there when one does
+          not. */}
+      <CardIconButton
+        Icon={MessageIcon}
+        label={`Message ${name}`}
+        onPress={threadId ? () => onMessage(threadId) : undefined}
+        unavailableNote={`${name} has no chat thread yet. Starting one is done in the portal.`}
+      />
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
+  /* Web: an eyebrow, then `font-display` at clamp(28,3.4vw,38). */
+  pageHead: { paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.xs },
+  pageTitle: { ...type.display, fontSize: 30, lineHeight: 36, color: colors.fg },
+
   controls: { paddingHorizontal: space.lg, paddingBottom: space.sm },
   search: {
     minHeight: 44,

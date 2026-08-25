@@ -32,6 +32,9 @@ export function CollapsibleSection({
   open,
   onToggle,
   headerActions,
+  reordering,
+  onMoveUp,
+  onMoveDown,
   children,
 }: {
   title: string;
@@ -43,6 +46,14 @@ export function CollapsibleSection({
    * client-detail sections that is nothing at all.
    */
   headerActions?: ReactNode;
+  /**
+   * While the screen is in reorder mode, the header swaps its actions for
+   * a pair of move buttons — session B's pattern from the artist profile
+   * editor, unchanged.
+   */
+  reordering?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
   children: ReactNode;
 }) {
   return (
@@ -67,7 +78,14 @@ export function CollapsibleSection({
           </SectionHeader>
         </Pressable>
 
-        {headerActions ?? null}
+        {reordering ? (
+          <View style={styles.moveGroup}>
+            <MoveButton icon="arrow-up" label={`Move ${title} up`} onPress={onMoveUp} />
+            <MoveButton icon="arrow-down" label={`Move ${title} down`} onPress={onMoveDown} />
+          </View>
+        ) : (
+          headerActions ?? null
+        )}
       </View>
 
       {open ? <View style={styles.body}>{children}</View> : null}
@@ -75,7 +93,42 @@ export function CollapsibleSection({
   );
 }
 
+/** Session B's move control, same size and treatment as its original. */
+function MoveButton({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: 'arrow-up' | 'arrow-down';
+  label: string;
+  onPress?: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.move, !onPress && styles.moveDisabled, pressed && styles.pressed]}
+    >
+      <Feather name={icon} size={16} color={onPress ? colors.accent : colors.fgMuted} />
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
+  moveGroup: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  move: {
+    width: 36,
+    height: 36,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.accent,
+  },
+  moveDisabled: { borderColor: colors.border },
+
   head: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   // `minWidth: 0` is what lets the title truncate instead of forcing the
   // row wider than the card — RN's default `minWidth: auto` would not.

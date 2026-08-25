@@ -6,8 +6,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AccountMenu } from '@/components/AccountMenu';
 import { NavDrawer } from '@/components/NavDrawer';
-import { BellIcon, ChevronDownIcon, MenuIcon } from '@/components/icons';
+import { BellIcon, ChevronDownIcon, MenuIcon, TasksIcon } from '@/components/icons';
 import { useAuth } from '@/context/auth';
+import { useBadgeCounts } from '@/hooks/useBadgeCounts';
 import { colors, fonts, hairline, radius, space, type } from '@/theme';
 
 /**
@@ -73,40 +74,85 @@ export function TopBar({ right }: { right?: ReactNode }) {
 
         {right}
 
-        <IconButton
-          label="Notifications"
-          Icon={BellIcon}
-          onPress={() => router.push('/notifications')}
-        />
+        <TopBarActions onOpenAccount={() => setMenuOpen(true)} accountExpanded={menuOpen} />
 
-        <Pressable
-          onPress={() => setMenuOpen(true)}
-          accessibilityRole="button"
-          accessibilityLabel="Account menu"
-          accessibilityState={{ expanded: menuOpen }}
-          style={({ pressed }) => [styles.avatarPill, pressed && styles.pressed]}
-        >
-          {session?.profile.avatarUrl ? (
-            <Image
-              source={{ uri: session.profile.avatarUrl }}
-              style={styles.avatar}
-              contentFit="cover"
-              transition={140}
-              accessible={false}
-            />
-          ) : (
-            <View style={[styles.avatar, styles.avatarFallback]}>
-              <Text style={styles.avatarInitial}>
-                {(session?.profile.name?.trim() || session?.profile.role || 'U').slice(0, 1).toUpperCase()}
-              </Text>
-            </View>
-          )}
-          <ChevronDownIcon size={14} color={colors.fgMuted} />
-        </Pressable>
       </View>
 
       <AccountMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
       <NavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+    </>
+  );
+}
+
+/**
+ * The persistent top-right cluster: tasks with its badge, the bell, then
+ * the account avatar.
+ *
+ * ONE IMPLEMENTATION, TWO BARS. `TopBar` (the tabs) and `ScreenHeader`
+ * (every stacked/detail screen) both render this, so the corner is
+ * identical wherever you are — which is the whole point of item 5. Before
+ * this, the tabs bar had bell + avatar and `ScreenHeader` had an avatar
+ * alone, and neither had tasks at all.
+ *
+ * TASKS SITS LEFT OF THE BELL because that is where apps/web puts it —
+ * `TopBar.tsx` renders a `TasksIcon` link to `/tasks` immediately before
+ * the mentions bell, with the same badge. Mobile had been carrying that
+ * count on a tab instead; the tab is gone and the count came here with
+ * the icon.
+ *
+ * The badge is web's own count: every system task plus every incomplete
+ * personal one. See `useBadgeCounts`.
+ */
+export function TopBarActions({
+  onOpenAccount,
+  accountExpanded,
+}: {
+  onOpenAccount: () => void;
+  accountExpanded?: boolean;
+}) {
+  const router = useRouter();
+  const { session } = useAuth();
+  const { tasks } = useBadgeCounts();
+
+  return (
+    <>
+      <IconButton
+        label="My tasks"
+        Icon={TasksIcon}
+        badge={tasks}
+        onPress={() => router.push('/tasks')}
+      />
+
+      <IconButton
+        label="Notifications"
+        Icon={BellIcon}
+        onPress={() => router.push('/notifications')}
+      />
+
+      <Pressable
+        onPress={onOpenAccount}
+        accessibilityRole="button"
+        accessibilityLabel="Account menu"
+        accessibilityState={accountExpanded === undefined ? undefined : { expanded: accountExpanded }}
+        style={({ pressed }) => [styles.account, pressed && styles.pressed]}
+      >
+        {session?.profile.avatarUrl ? (
+          <Image
+            source={{ uri: session.profile.avatarUrl }}
+            style={styles.accountImage}
+            contentFit="cover"
+            transition={140}
+            accessible={false}
+          />
+        ) : (
+          <View style={styles.accountFallback}>
+            <Text style={styles.accountLabel}>
+              {(session?.profile.name?.trim() || session?.profile.role || 'U').slice(0, 1).toUpperCase()}
+            </Text>
+          </View>
+        )}
+        <ChevronDownIcon size={14} color={colors.fgMuted} />
+      </Pressable>
     </>
   );
 }
@@ -183,7 +229,7 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
 
-  avatarPill: {
+  account: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
@@ -201,6 +247,17 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   /* h-9 w-9 */
+  accountImage: { width: 36, height: 36, borderRadius: radius.pill },
+  accountFallback: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceRaised,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  /* font-display text-sm text-accent-hover */
+  accountLabel: { fontFamily: type.display.fontFamily, fontSize: 14, color: colors.accentHover },
   avatar: { width: 36, height: 36, borderRadius: radius.pill, backgroundColor: colors.surfaceRaised },
   avatarFallback: { alignItems: 'center', justifyContent: 'center' },
   /* font-display text-sm text-accent-hover */

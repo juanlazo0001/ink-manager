@@ -22,13 +22,19 @@ import { ClientsIcon, PhotoIcon, ScanIcon, TeamIcon } from '@/components/icons';
  *           close but not web's rule: a FRONT_DESK granted team.manage
  *           would have seen an entry web hides, and a solo studio owner
  *           would have seen a roster of one.
- *   Flash   web gates on `flashGallery.manage`. It was ungated here,
+ *   Flash   MOVED OUT of the drawer in session W -- it is a tab now, and
+ *           nothing should be reachable from two navigation surfaces at
+ *           once. Its permission gate (`flashGallery.manage`) moved with
+ *           it. The note below is kept because it records why that gate
+ *           exists at all:
+ *
+ *           web gates on `flashGallery.manage`. It was ungated here,
  *           so an artist without it saw a destination the API refuses.
  */
 export interface NavDestination {
   id: string;
   label: string;
-  href: '/clients' | '/team' | '/flash' | '/scan';
+  href: '/clients' | '/team' | '/scan';
   Icon: (props: { size?: number; color: string }) => React.ReactElement;
   /** Permission key required, if web requires one. */
   permission?: string;
@@ -53,13 +59,6 @@ export const NAV_DESTINATIONS: NavDestination[] = [
     Icon: TeamIcon,
     roles: ['OWNER'],
     hideForSoloStudio: true,
-  },
-  {
-    id: 'flash',
-    label: 'Flash Gallery',
-    href: '/flash',
-    Icon: PhotoIcon,
-    permission: 'flashGallery.manage',
   },
   {
     id: 'scan',
