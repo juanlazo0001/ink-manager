@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { NewTaskBar } from '@/components/NewTaskBar';
 import { GroupedPillMenu, PillMenu, type MenuGroup } from '@/components/PillMenu';
 import { PillRow } from '@/components/Pill';
-import { TopBar } from '@/components/TopBar';
+import { ScreenHeader } from '@/components/ScreenHeader';
 import { PersonalTaskRow, SystemTaskRow } from '@/components/TaskRow';
 import { SkeletonList } from '@/components/Skeleton';
 import { StateMessage } from '@/components/ui';
@@ -297,7 +297,16 @@ export default function TasksScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
-      <TopBar />
+      {/*
+        ITEM 1: Notifications' anatomy exactly — back chevron, serif title,
+        and `right` overridden to an empty spacer so the top-right cluster
+        does NOT appear.
+        Tasks kept `TopBar` (hamburger + cluster) from when it was a tab.
+        Repeating the cluster inside a screen you reached BY TAPPING the
+        cluster is circular, which is why Notifications suppresses it and
+        why this now does too.
+      */}
+      <ScreenHeader title="Tasks" onBack={() => router.back()} right={<View style={styles.headSpacer} />} />
 
       {/* One Filter, one Sort — web's own two controls, via the PillMenu
           it extracted for exactly this. Previously a standing OVERDUE
@@ -417,6 +426,8 @@ export default function TasksScreen() {
 }
 
 const styles = StyleSheet.create({
+  /* Balances the back chevron so the title stays centred, as Notifications does. */
+  headSpacer: { width: 44 },
   screen: { flex: 1, backgroundColor: 'transparent' },
   listContent: { paddingTop: space.sm, paddingBottom: space.xxl },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },

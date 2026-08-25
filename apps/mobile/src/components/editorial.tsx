@@ -50,12 +50,35 @@ export function Eyebrow({
   tone?: 'muted' | 'accent' | 'alert';
 }) {
   const color = tone === 'accent' ? colors.accent : tone === 'alert' ? colors.danger : colors.fgMuted;
+  const label = String(children).toUpperCase();
+  /*
+   * THE TRACKING IS WHAT MAKES A LONG EYEBROW OVERFLOW, not the type size.
+   * 0.34em at 11px is 3.7px between every letter — on a 39-character line
+   * that is 145px of pure air, more than half a 320pt screen's usable
+   * width. So a long eyebrow steps both down together.
+   *
+   * Deterministic on a character count rather than measured, because it
+   * has to produce the same result on iOS and under react-native-web:
+   * `adjustsFontSizeToFit` is iOS-only and silently ellipsizes on web,
+   * which is exactly what this is here to prevent.
+   */
+  const isLong = label.length > 24;
   return (
     <View style={[styles.eyebrowRow, style]}>
       <Text style={styles.tick} accessibilityElementsHidden importantForAccessibility="no">
         +
       </Text>
-      <Text style={[styles.eyebrow, { color }]}>{String(children).toUpperCase()}</Text>
+      <Text
+        style={[styles.eyebrow, isLong && styles.eyebrowLong, { color }]}
+        numberOfLines={1}
+        // A further safety net on iOS only — react-native-web ignores it
+        // and ellipsizes instead, which is why the step above is
+        // deterministic rather than relying on this.
+        adjustsFontSizeToFit
+        minimumFontScale={0.8}
+      >
+        {label}
+      </Text>
       <Text style={styles.tick} accessibilityElementsHidden importantForAccessibility="no">
         +
       </Text>
@@ -282,9 +305,20 @@ export function RedRule({ style }: { style?: StyleProp<ViewStyle> }) {
 }
 
 const styles = StyleSheet.create({
-  eyebrowRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, flexWrap: 'wrap' },
-  eyebrow: { ...type.eyebrow },
-  tick: { ...type.eyebrow, fontSize: 13, letterSpacing: 0, color: colors.dangerStrong },
+  /*
+   * NEVER WRAPS. `flexWrap: 'wrap'` was here, and on a long eyebrow the
+   * row broke — dropping the closing `+` onto a line of its own, which is
+   * not an eyebrow, it is a stray glyph. The ticks flank the text; that is
+   * the whole anatomy.
+   *
+   * When the text is too wide the TEXT gives way, not the row: it shrinks
+   * a step (`adjustsFontSizeToFit`) and, past that, ellipsizes. The ticks
+   * never shrink and never move.
+   */
+  eyebrowRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  eyebrow: { ...type.eyebrow, flexShrink: 1 },
+  eyebrowLong: { fontSize: 9.5, letterSpacing: 0.5 },
+  tick: { ...type.eyebrow, fontSize: 13, letterSpacing: 0, color: colors.dangerStrong, flexShrink: 0 },
   eyebrowMeta: { ...type.meta, color: colors.fgMuted, opacity: 0.7 },
 
   card: {

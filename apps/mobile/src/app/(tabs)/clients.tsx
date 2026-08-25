@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Appear } from '@/components/Appear';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { Pill, PillRow } from '@/components/Pill';
-import { ScreenHeader } from '@/components/ScreenHeader';
+import { TopBar } from '@/components/TopBar';
 import { CardIconButton } from '@/components/CardIconButton';
 import { Eyebrow } from '@/components/editorial';
 import { MessageIcon } from '@/components/icons';
@@ -18,6 +18,15 @@ import { screenErrorMessage } from '@/lib/screenError';
 import { colors, hairline, radius, space, type } from '@/theme';
 import { formatPhone } from '@/lib/format';
 import { fetchConversations } from '@/lib/conversations';
+import { fetchAppointments } from '@/lib/appointments';
+import {
+  buildUpcomingByClient,
+  clientIdentity,
+  clientStatusChip,
+  upcomingWindow,
+} from '@/lib/clientListSignals';
+import { StatusChip } from '@/components/StatusChip';
+import type { AppointmentListItem } from '@ink-manager/shared-types';
 
 /**
  * The client list.
@@ -45,6 +54,13 @@ export default function ClientsScreen() {
    * client have a thread" for every row on the screen.
    */
   const [threadsByClient, setThreadsByClient] = useState<Record<string, string>>({});
+  /**
+   * ITEM 5, from ONE bounded request rather than one per row. See
+   * `lib/clientListSignals.ts` for what the API does and does not support
+   * here — the short version is that "upcoming appointment" is reachable
+   * and the other two signals are not.
+   */
+  const [upcoming, setUpcoming] = useState<Record<string, AppointmentListItem>>({});
   const [showArchived, setShowArchived] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -67,6 +83,17 @@ export default function ClientsScreen() {
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
+    const now = new Date();
+    const window = upcomingWindow(now);
+    fetchAppointments(token, { start: window.start, end: window.end })
+      .then((rows) => {
+        if (!cancelled) setUpcoming(buildUpcomingByClient(rows, now));
+      })
+      .catch(() => {
+        // A viewer without appointment visibility simply gets no chips —
+        // never an error on a screen that is about clients.
+      });
+
     fetchConversations(token)
       .then((rows) => {
         if (cancelled) return;
@@ -91,7 +118,14 @@ export default function ClientsScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
-      <ScreenHeader onBack={() => router.back()} />
+      {/*
+        ITEM 2: the same top bar every tab screen wears — hamburger left,
+        the [tasks][bell][avatar] cluster right. This screen had a pushed
+        screen's back chevron, which is the chrome of somewhere you went
+        INTO rather than a place in the app. You still arrive from the
+        drawer, and the hamburger is how you go back to it.
+      */}
+      <TopBar />
 
       {/*
         ITEM 6c: web's Clients page leads with an eyebrow over a display
@@ -101,6 +135,7 @@ export default function ClientsScreen() {
       */}
       <View style={styles.pageHead}>
         <Eyebrow tone="alert">Everyone who&apos;s booked with your studio.</Eyebrow>
+        {/* ITEM 3: Home's "Welcome, Juan" token exactly — `type.welcome`. */}
         <Text style={styles.pageTitle}>Clients</Text>
       </View>
 
@@ -144,6 +179,7 @@ export default function ClientsScreen() {
                 client={item}
                 onPress={() => router.push({ pathname: '/client/[id]', params: { id: item.id } })}
                 threadId={threadsByClient[item.id]}
+                upcoming={upcoming[item.id]}
                 onMessage={(threadId) =>
                   router.push({ pathname: '/conversation/[id]', params: { id: threadId } })
                 }
@@ -181,18 +217,21 @@ function ClientRow({
   onPress,
   threadId,
   onMessage,
+  upcoming,
 }: {
   client: ClientListItem;
   onPress: () => void;
   /** This client's existing thread, if they have one. */
   threadId?: string;
   onMessage: (threadId: string) => void;
+  /** Their soonest confirmed appointment, if they have one. */
+  upcoming?: AppointmentListItem;
 }) {
   const name = clientName(client);
-  // `formatPhone` returns '' for a missing number, not null, so the
-  // fallback has to be reached before formatting rather than after it.
-  const secondary =
-    client.email ?? (client.phone ? formatPhone(client.phone) : null) ?? 'No contact details';
+  // ITEM 4: the best identity available, with NO channel glyph — see
+  // `clientListSignals` for why no channel can be known.
+  const secondary = clientIdentity(client, formatPhone) ?? 'No contact details';
+  const chip = clientStatusChip(upcoming);
   return (
     <Pressable
       onPress={onPress}
@@ -211,10 +250,14 @@ function ClientRow({
           {secondary}
         </Text>
       </View>
+      {/* ITEM 5: one chip, and archived outranks everything — a client
+          nobody is working with has no live state worth showing. */}
       {client.archivedAt ? (
         <View style={styles.archived}>
           <Text style={styles.archivedLabel}>ARCHIVED</Text>
         </View>
+      ) : chip ? (
+        <StatusChip label={chip.label} tone={chip.tone} />
       ) : null}
       {/* ITEM 6b: opens this client's thread. Navigation when one exists;
           see the screen's own note for why it stops there when one does
@@ -233,7 +276,8 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
   /* Web: an eyebrow, then `font-display` at clamp(28,3.4vw,38). */
   pageHead: { paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.xs },
-  pageTitle: { ...type.display, fontSize: 30, lineHeight: 36, color: colors.fg },
+  /* ITEM 3: the same token Home's "Welcome, Juan" uses, not a lookalike. */
+  pageTitle: { ...type.welcome, color: colors.fg },
 
   controls: { paddingHorizontal: space.lg, paddingBottom: space.sm },
   search: {

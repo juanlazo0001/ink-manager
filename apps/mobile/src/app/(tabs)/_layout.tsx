@@ -99,6 +99,17 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <PhotoIcon size={size - 2} color={color} />,
         }}
       />
+
+      {/*
+        ITEM 2: Clients lives INSIDE this navigator but has no tab button.
+        `href: null` is expo-router's own way to say that — the screen gets
+        the navigator's chrome (the footer bar stays visible, the shared
+        photo ground shows through) while the bar still shows five tabs.
+        A route outside this group cannot render the tab bar at all, which
+        is why it moved rather than being restyled in place. It is still
+        reached from the drawer.
+      */}
+      <Tabs.Screen name="clients" options={{ href: null }} />
     </Tabs>
   );
 }
