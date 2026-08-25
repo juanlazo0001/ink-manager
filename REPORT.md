@@ -26422,3 +26422,179 @@ Restart any `expo start` already running from the primary checkout first — the
    the same.
 5. **Clients at 320pt** — its eyebrow will ellipsize. That is item 1's cost, and shortening the line
    is your call.
+
+# Mobile session AA — quick fixes, and the client record's first live writes
+
+**Base: `mobile/session-z` at `4b25573`.** T2 → Z are all unmerged (`main` is at `151c0d8`, carrying
+S and T). Worktree cut from Z; two commits, pushed.
+
+---
+
+## 6a — Web's client write surface, inventoried
+
+From `apps/api/src/routes/clients.ts`, before building anything:
+
+| Route | Permission | Wired |
+| --- | --- | --- |
+| `PATCH /clients/:id` | `clients.edit` | **yes** — the Edit screen |
+| `POST /clients/:id/phones` | `clients.edit` | **yes** |
+| `DELETE /clients/:id/phones/:phoneId` | `clients.edit` | **yes** |
+| `POST /clients/:id/phones/:id/make-primary` | `clients.edit` | **yes** |
+| `POST /clients/:id/emails` · `DELETE` · `make-primary` | `clients.edit` | **yes** |
+| `POST /clients/:id/archive` · `/unarchive` | `clients.archive` | **yes** — the More menu |
+| `POST /clients/:id/merge` | `clients.merge` | **yes** — typed confirm |
+| `DELETE /clients/:id` | **OWNER role** | **no — deliberately** |
+
+**Delete is web's other More-menu item and stays toast-gated.** It permanently destroys the record,
+it is OWNER-only, and web guards it with a typed confirmation over a *server-rendered preview* of
+what would go with it. None of that is in the set this session was cleared for, and half-building a
+destructive confirm is worse than not offering one.
+
+**What `PATCH` accepts** is `EDITABLE_CLIENT_FIELDS` — firstName, lastName, email, phone,
+instagramHandle, facebookProfileUrl, otherContact, address, preferredLocale — and **it ignores
+anything else silently, not with a 400.** A form offering a field the server does not take would
+appear to save and quietly discard it, which is why the write module names fields rather than
+spreading a form object. (`preferredLocale` is left out: it is a picker over the supported-locale
+set and belongs with the i18n work.)
+
+## The exercise earned its keep — a rule I would have shipped broken
+
+Running every path against the **dev API** (item 6f) turned up something no amount of reading the UI
+would have shown:
+
+```
+DELETE /clients/:id/phones/:phoneId
+→ 400  "Make another phone primary before removing this one"
+```
+
+**The primary row cannot be deleted while others exist** — and *can* be when it is the last one, in
+which case the client's own `phone` column is nulled with it. Without this, the trash button would
+have been **permanently broken on exactly one row per group**, on every client with more than one
+number, and only there.
+
+The UI encodes the real rule now: `removable = !isPrimary || rows.length === 1`, and the disabled
+button carries the server's own sentence. The exercise proves both halves — the refusal and the
+allowed last-row delete.
+
+## 6f — the write-path evidence
+
+Two labelled fixtures created on the **dev database**, mutated, and left in place:
+
+| | id |
+| --- | --- |
+| survivor | `cmt8sbb9j000jcoi2gm2u71xp` — *ZZ-Fixture-Survivor 20260825-AA* |
+| source | `cmt8sbby5000mcoi29p2jlmxc` — *ZZ-Fixture-Source 20260825-AA* |
+
+**19/19 passed.**
+
+| Step | Result |
+| --- | --- |
+| `PATCH` firstName + address + instagram | 200 |
+| `PATCH` with a non-editable field | ignored, as documented — not accepted, not rejected |
+| `POST /phones`, `POST /emails` | 201 |
+| `make-primary` (both) | 200 |
+| `DELETE` the **primary** phone | **400, refused** — the rule above |
+| `DELETE` a non-primary phone / email | 204 |
+| `DELETE` the **last** phone | 204 — allowed, nulls `client.phone` |
+| `archive` → `archivedAt` set | 200 |
+| `unarchive` → `archivedAt` cleared | 200 |
+| `merge` | 200 |
+| source still exists, `mergedIntoId` set | **tombstone, not a deletion** |
+| merged record refuses edits | 400, web's own sentence |
+| source gone from `GET /clients` | filtered out |
+| `DELETE` a phone that is not there | 404 — the revert path the UI needs |
+
+**Production untouched.** Every call went to `127.0.0.1:4001` against the dev database, on records
+this session created.
+
+## 6e — merge semantics, and why the confirm says what it says
+
+`performMerge` (`apps/api/src/lib/clientMerge.ts`), in one transaction:
+
+1. every inquiry, appointment and gift card is **repointed** to the survivor;
+2. the two clients' **conversations are folded** together;
+3. the source's phones and emails **carry over as aliases**;
+4. the source gets `mergedIntoId` — **it is not deleted.**
+
+So the source becomes a tombstone pointing at the survivor: out of every list view, and refused by
+`PATCH` with *"This client has been merged and can no longer be edited directly."* Both confirmed
+live.
+
+**It cannot be undone.** `archive` has an `unarchive`; this has nothing — there is no unmerge route
+anywhere in the API, and step 1 records no inverse. So the confirm sheet says *"This cannot be
+undone"* as a fact, lists the four consequences above, and requires typing **MERGE** — web's own
+pattern for its destructive actions, and the right control for a one-way door.
+
+## 6b, 6c, 6d — the flows
+
+**Contact writes are optimistic with a visible revert.** The row moves at once; a failure puts the
+previous client object back exactly and says why above the card. A write that silently did not happen
+is the outcome worth engineering against — the screen would go on claiming a number the studio no
+longer has. After each success the client is **re-read** rather than trusted, because adding a phone
+can also change which row is primary and the server decides that.
+
+**Set-primary is offered** — web has it as a text link on every non-primary row; same rule here, with
+a drawn star since web has no glyph for it.
+
+**Edit** is a real form on session B's layer: dirty tracking, the unsaved-changes guard, and
+validation that **mirrors web's without exceeding it** (non-empty names; ten digits if a phone is
+given, matching `isValidPhoneDigits`; a shape check on email). Only dirty fields are sent — the audit
+trail records every field a `PATCH` touches, so sending the whole object would write nine entries for
+a one-field change.
+
+## 1–5
+
+| # | Result |
+| --- | --- |
+| 1 | Drag gone. **The persistence stays wired on purpose** — `fetchWidgetLayout` still reads on load and the key is still web's `client-detail`, so an order arranged on web is honoured. `saveWidgetLayout` has no caller here now; the comment says that is intentional. |
+| 2 | One `SCREEN_TOP_INSET`. Home had the padding and nothing else did. |
+| 3 | Tasks back to **QUEUE / MINE / OTHERS**. Recorded as a deliberate divergence from web, since Y's stacked layout *was* web's. The scope segments Y deleted are **not** back: those filtered one list, these are three. |
+| 4 | Team's segment eyebrows gone. |
+| 5 | Flash takes the tab anatomy it should have had since W. |
+
+## Verification
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 13.06s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.96 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | every write path present; the drag labels absent; harness absent |
+
+**A bundle-check note, in the spirit of session Q's:** two markers first read ABSENT —
+`Type MERGE to confirm` and the primary-delete sentence — because both are **template strings**, so
+the literal never exists. Re-checked against their constant fragments (`' to confirm'`, `'MERGE'`,
+`' primary before removing this one.'`, `'Make another '`) — all present. **A marker spanning a `${}`
+will always read absent**; check the fragments.
+
+`Delete client` is present and *should* be — it renders dimmed with its explanation. The only
+`Reorder` left is `profile-edit.tsx`'s own artist-profile mode, untouched and out of scope.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+**These are real writes now — use the fixture client, `ZZ-Fixture-Survivor 20260825-AA`.**
+
+1. **Contact info → `+`** — add a phone, then an email. They should appear immediately and survive a
+   pull-to-refresh.
+2. **The trash on the primary row is disabled** and says why. Promote another row first, then it
+   frees up. That is the server's rule, not a mobile invention.
+3. **Turn on airplane mode, then delete a row.** It should vanish, come back, and tell you it did not
+   save. This is the path worth testing on a bad connection.
+4. **Edit** — change a name, leave without saving; it should stop you.
+5. **More → Archive**, then Unarchive.
+6. **Merge** — pick the other fixture (`ZZ-Fixture-Source`), read the consequences, type MERGE.
+   Afterwards the source should be gone from your client list. **Do this on the fixtures, not a real
+   client:** it cannot be undone.
