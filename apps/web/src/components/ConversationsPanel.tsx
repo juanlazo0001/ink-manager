@@ -408,13 +408,48 @@ function isMessageEdited(message: MessageItem): boolean {
   return new Date(message.updatedAt).getTime() - new Date(message.createdAt).getTime() > MESSAGE_EDITED_THRESHOLD_MS
 }
 
-// Twilio's terminal SMS statuses only -- queued/sending/sent are
-// deliberately unlabeled (no indicator) rather than a noisy "Sending…"
-// that would need a matching removal once the real terminal status lands.
-function smsStatusLabel(status: string | undefined): string | null {
-  if (status === 'delivered') return 'Delivered'
-  if (status === 'failed' || status === 'undelivered') return 'Not delivered'
-  return null
+// The full Twilio delivery progression, not just its terminal states.
+// This previously labeled only delivered/failed/undelivered and showed
+// NOTHING for queued/sending/sent, on the reasoning that an interim
+// "Sending…" was noise that would need removing once a terminal status
+// landed. That turned out to hide the case that actually matters: when a
+// message stalls BEFORE delivery -- an unroutable number, a carrier
+// filter, a status callback that never arrives -- "no indicator" is
+// indistinguishable from "delivered fine but not labeled yet", so a send
+// that never really went anywhere looks exactly like a healthy one. Naming
+// each state makes a stall visible as a stall.
+//
+// Tone is returned alongside the label rather than derived at the render
+// site from `status !== 'delivered'`, which would paint every in-flight
+// state in danger red the moment interim states became visible.
+type SmsStatusTone = 'progress' | 'delivered' | 'failed'
+
+function smsStatusDisplay(status: string | undefined): { label: string; tone: SmsStatusTone } | null {
+  switch (status) {
+    // "accepted" and "scheduled" are Twilio states a Messaging Service can
+    // report that a bare From number never does -- worth naming rather than
+    // falling through to no-indicator now that sends route through one.
+    case 'accepted':
+    case 'scheduled':
+    case 'queued':
+      return { label: 'Queued', tone: 'progress' }
+    case 'sending':
+      return { label: 'Sending…', tone: 'progress' }
+    case 'sent':
+      return { label: 'Sent', tone: 'progress' }
+    case 'delivered':
+      return { label: 'Delivered', tone: 'delivered' }
+    // Twilio reports this when the carrier accepted the message but never
+    // returned a receipt. It is genuinely not a failure, so it must not be
+    // red -- but it is also not confirmation, so it can't say "Delivered".
+    case 'delivery_unknown':
+      return { label: 'Delivery unconfirmed', tone: 'progress' }
+    case 'failed':
+    case 'undelivered':
+      return { label: 'Not delivered', tone: 'failed' }
+    default:
+      return null
+  }
 }
 
 // Per-channel dot colors for the thread's meta row and the composer's
@@ -3369,15 +3404,19 @@ function ThreadView({
                               </Link>
                             )}
                             {message.channel === 'SMS' &&
-                              smsStatusLabel(message.metadata?.deliveryStatus) &&
                               (() => {
-                                const label = smsStatusLabel(message.metadata?.deliveryStatus)
-                                const isFailure = message.metadata?.deliveryStatus !== 'delivered'
+                                const status = smsStatusDisplay(message.metadata?.deliveryStatus)
+                                if (!status) return null
+                                // Only a real failure is red -- in-flight states stay
+                                // muted so the thread doesn't flash danger on every
+                                // send while it's still on its way (red is punctuation).
                                 return (
                                   <p
-                                    className={`mt-1 text-[10.5px] font-medium ${isFailure ? 'text-danger' : 'text-[#8a8a92]'}`}
+                                    className={`mt-1 text-[10.5px] font-medium ${
+                                      status.tone === 'failed' ? 'text-danger' : 'text-[#8a8a92]'
+                                    }`}
                                   >
-                                    {label}
+                                    {status.label}
                                   </p>
                                 )
                               })()}

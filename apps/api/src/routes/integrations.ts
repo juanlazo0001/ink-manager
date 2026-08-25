@@ -5,7 +5,13 @@ import { IntegrationChannel, IntegrationStatus, Role } from "../../generated/pri
 import { requireAuth, requireRole } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { decryptSecret, encryptSecret, isEncryptionConfigured, maskAccountSid, maskEmail, maskStripeAccountId } from "../lib/secrets";
-import { sendSms, validateTwilioAccount, type TwilioCredentials } from "../lib/twilio";
+import {
+  resolveTwilioSender,
+  sendSms,
+  validateTwilioAccount,
+  type SmsIntegrationMetadata,
+  type TwilioCredentials,
+} from "../lib/twilio";
 import { TWILIO_SMS_WEBHOOK_URL, TWILIO_STATUS_CALLBACK_URL, GMAIL_OAUTH_REDIRECT_URI, PUBLIC_APP_URL } from "../lib/publicUrl";
 import { normalizePhone } from "../lib/phone";
 import {
@@ -400,7 +406,7 @@ router.post("/:channel/connect", async (req, res) => {
     return res.status(503).json({ error: "Integrations aren't available right now -- ask an admin to check the server configuration" });
   }
 
-  const { accountSid, authToken, fromNumber } = req.body ?? {};
+  const { accountSid, authToken, fromNumber, messagingServiceSid } = req.body ?? {};
 
   if (typeof accountSid !== "string" || !accountSid.trim()) {
     return res.status(400).json({ error: "Account SID is required" });
@@ -411,11 +417,18 @@ router.post("/:channel/connect", async (req, res) => {
   if (typeof fromNumber !== "string" || !fromNumber.trim()) {
     return res.status(400).json({ error: "From number is required" });
   }
+  // Optional: a studio with no Messaging Service keeps connecting exactly
+  // as before. Anything other than a string or an omission is a client bug
+  // worth surfacing rather than silently coercing away.
+  if (messagingServiceSid !== undefined && messagingServiceSid !== null && typeof messagingServiceSid !== "string") {
+    return res.status(400).json({ error: "Messaging Service SID must be text" });
+  }
 
   const credentials: TwilioCredentials = { accountSid: accountSid.trim(), authToken: authToken.trim() };
   const normalizedFrom = fromNumber.trim();
+  const normalizedServiceSid = typeof messagingServiceSid === "string" ? messagingServiceSid.trim() : "";
 
-  const validation = await validateTwilioAccount(credentials, normalizedFrom);
+  const validation = await validateTwilioAccount(credentials, normalizedFrom, normalizedServiceSid || null);
 
   if (!validation.valid) {
     // On failure, nothing secret is ever stored -- only the channel/status/
@@ -438,8 +451,26 @@ router.post("/:channel/connect", async (req, res) => {
   }
 
   const encryptedSecret = encryptSecret(JSON.stringify(credentials));
-  const displayName = `${maskAccountSid(credentials.accountSid)} · ${normalizedFrom}`;
+  // Twilio's canonical E.164 spelling, NOT the string typed into the form
+  // -- routes/webhooks.ts resolves inbound texts by exact-matching this
+  // against Twilio's `To`, so a "(850) 880-4483" here would silently drop
+  // every inbound reply. See validateTwilioAccount's own comment.
+  const canonicalFrom = validation.phoneNumber;
+  // The Messaging Service is what a studio most needs to SEE confirmed on
+  // the card (it's the difference between sending under the approved A2P
+  // campaign and sending as a bare long code), so the display name says so
+  // rather than leaving it invisible behind an identical-looking row.
+  const displayName = normalizedServiceSid
+    ? `${maskAccountSid(credentials.accountSid)} · ${canonicalFrom} · Messaging Service`
+    : `${maskAccountSid(credentials.accountSid)} · ${canonicalFrom}`;
   const connectedAt = new Date();
+  // Written as an omitted key rather than an explicit undefined/null so a
+  // studio that reconnects WITHOUT a service genuinely clears it -- this
+  // whole object replaces the stored metadata, it isn't merged into it.
+  const metadata = {
+    phoneNumber: canonicalFrom,
+    ...(normalizedServiceSid ? { messagingServiceSid: normalizedServiceSid } : {}),
+  };
 
   await prisma.studioIntegration.upsert({
     where: { studioId_channel: { studioId, channel: IntegrationChannel.SMS } },
@@ -448,7 +479,7 @@ router.post("/:channel/connect", async (req, res) => {
       channel: IntegrationChannel.SMS,
       status: IntegrationStatus.CONNECTED,
       encryptedSecret,
-      metadata: { phoneNumber: normalizedFrom },
+      metadata,
       displayName,
       connectedAt,
       lastError: null,
@@ -456,7 +487,7 @@ router.post("/:channel/connect", async (req, res) => {
     update: {
       status: IntegrationStatus.CONNECTED,
       encryptedSecret,
-      metadata: { phoneNumber: normalizedFrom },
+      metadata,
       displayName,
       connectedAt,
       lastError: null,
@@ -617,8 +648,12 @@ router.post("/:channel/test-message", async (req, res) => {
     return res.status(400).json({ error: "SMS is not connected for this studio" });
   }
 
-  const metadata = (integration.metadata as { phoneNumber?: string } | null) ?? {};
-  if (!metadata.phoneNumber) {
+  // Same sender precedence as every real send (lib/clientSms.ts) -- a test
+  // message that went out on a different sender than real traffic would be
+  // worse than no test at all, since it would "prove" a route nobody uses.
+  const metadata = (integration.metadata as SmsIntegrationMetadata | null) ?? {};
+  const sender = resolveTwilioSender(metadata);
+  if (!sender) {
     return res.status(400).json({ error: "SMS integration is missing its from-number" });
   }
 
@@ -635,7 +670,7 @@ router.post("/:channel/test-message", async (req, res) => {
   try {
     const result = await sendSms(
       credentials,
-      metadata.phoneNumber,
+      sender,
       toE164,
       "This is a test message from Ink Manager -- your SMS integration is connected.",
       TWILIO_STATUS_CALLBACK_URL,

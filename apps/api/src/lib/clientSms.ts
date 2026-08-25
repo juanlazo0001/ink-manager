@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { prisma } from "./prisma";
 import { IntegrationChannel, IntegrationStatus, MessageChannel, MessageDirection } from "../../generated/prisma/enums";
 import { decryptSecret } from "./secrets";
-import { sendSms, type TwilioCredentials } from "./twilio";
+import { resolveTwilioSender, sendSms, type SmsIntegrationMetadata, type TwilioCredentials } from "./twilio";
 import { TWILIO_STATUS_CALLBACK_URL } from "./publicUrl";
 import { logAudit } from "./audit";
 import { emitInvalidation } from "./realtime/registry";
@@ -162,9 +162,15 @@ async function sendSmsMessage(params: {
     return failed("not_connected");
   }
 
-  const metadata = (integration.metadata as { phoneNumber?: string } | null) ?? {};
-  const fromNumber = metadata.phoneNumber;
-  if (!fromNumber) {
+  // A2P: routes through the studio's Messaging Service when one is
+  // configured, so the send is attributed to the approved campaign and
+  // picks up its Sender Pool and Advanced Opt-Out; falls back to the bare
+  // From number for any studio without one. The precedence itself lives in
+  // resolveTwilioSender rather than here, so this path and the Settings
+  // test-message can't drift into using different senders.
+  const metadata = (integration.metadata as SmsIntegrationMetadata | null) ?? {};
+  const sender = resolveTwilioSender(metadata);
+  if (!sender) {
     return failed("not_connected");
   }
 
@@ -190,7 +196,7 @@ async function sendSmsMessage(params: {
     result = { sid: `DRYRUN${crypto.randomUUID().replace(/-/g, "").slice(0, 26)}`, status: "queued" };
   } else {
     try {
-      result = await sendSms(credentials, fromNumber, toNumber, body, TWILIO_STATUS_CALLBACK_URL);
+      result = await sendSms(credentials, sender, toNumber, body, TWILIO_STATUS_CALLBACK_URL);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Twilio send failed";
       return failed("send_failed", message);

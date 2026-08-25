@@ -118,7 +118,13 @@ interface StripeIntegrationMetadata {
   payoutsEnabled: boolean
 }
 
-const EMPTY_SMS_CONNECT_FORM = { accountSid: '', authToken: '', fromNumber: '' }
+// messagingServiceSid is optional -- left blank, the studio sends from the
+// bare From number exactly as before. Filled in, every send routes through
+// that Messaging Service instead, which is what carries an approved A2P
+// campaign, its Sender Pool and Advanced Opt-Out (see lib/twilio.ts's
+// resolveTwilioSender). Blank is submitted as '' and the API treats that as
+// "no service", so it also clears a previously-saved one on reconnect.
+const EMPTY_SMS_CONNECT_FORM = { accountSid: '', authToken: '', fromNumber: '', messagingServiceSid: '' }
 
 interface StudioSettingsData {
   refundPolicy: string | null
@@ -4214,6 +4220,24 @@ export default function Settings() {
                     placeholder="+19195551234"
                     className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
+                </div>
+
+                <div className="mb-3">
+                  <label htmlFor="twilioMessagingServiceSid" className="mb-1 block text-sm font-medium text-fg-secondary">
+                    Messaging Service SID <span className="font-normal text-fg-muted">(optional)</span>
+                  </label>
+                  <input
+                    id="twilioMessagingServiceSid"
+                    type="text"
+                    value={smsConnectForm.messagingServiceSid}
+                    onChange={(e) => setSmsConnectForm({ ...smsConnectForm, messagingServiceSid: e.target.value })}
+                    placeholder="MG…"
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                  <p className="mt-1 text-xs text-fg-muted">
+                    Recommended for US/Canada texting. Routes every message through your approved A2P campaign, its
+                    sender pool and opt-out handling. The From number above must be in that service&rsquo;s sender pool.
+                  </p>
                 </div>
 
                 {smsConnectError && <p className="mb-3 text-sm text-danger">{smsConnectError}</p>}
