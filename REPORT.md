@@ -26598,3 +26598,256 @@ Restart any `expo start` already running from the primary checkout first — the
 6. **Merge** — pick the other fixture (`ZZ-Fixture-Source`), read the consequences, type MERGE.
    Afterwards the source should be gone from your client list. **Do this on the fixtures, not a real
    client:** it cannot be undone.
+
+# Mobile session AB — one title system, and the safe actions go live
+
+**Base: `mobile/session-aa` at `30b43a4`.** T2 → AA are all still unmerged. Worktree cut from AA;
+one commit (`2eebf44`), pushed.
+
+---
+
+## The correction this session turned on
+
+I came into item 4 believing attach-to-a-session was a money flow and planning to toast-gate it.
+**That was wrong, and reading the route rather than trusting the earlier note is what caught it.**
+
+`PATCH /gift-cards/:id/attachment` (`apps/api/src/routes/giftCards.ts:535`) sets `appointmentId`,
+writes a `rollover` audit row, and returns. No amount is read. No balance moves. Nothing is
+redeemed.
+
+The money check I had attributed to it — `validateGiftCardsForAttachment`, which sums
+`amountCents` across a set of cards and refuses a shortfall against `requiredCents` — lives on a
+**different path entirely**: `POST /appointments` and inquiry scheduling. Neither is reachable from
+the gift card screen. apps/web's own call site says the same thing in its own words: *"This just
+sets which appointment the card is aimed at; no new balance/redemption math lives here."*
+
+So under the brief's own test — *"IF investigation shows it's a plain association write … wire with
+confirm"* — attach qualifies, and it is live. **Void and transfer are untouched and stay gated**,
+which is the line the standing constraint actually draws.
+
+The lesson is the one already in memory as [[feedback_verify_premises]]: a premise carried forward
+from an earlier note is not evidence. Two functions with similar names sat on opposite sides of the
+money line.
+
+## 4 — the gift card's safe actions
+
+**The code is copyable.** It is the thing someone reads down a phone line, and copying it touches
+nothing. A haptic fires on the tap, because the entire result of that tap lives in an invisible
+clipboard — a label that changes for two seconds is not feedback you can feel.
+
+**Attach is live**, with the shape the action's real weight deserves:
+
+| | |
+| --- | --- |
+| Which sessions are offered | this client's **upcoming REQUESTED/CONFIRMED** ones |
+| Why not all of them | the server accepts any of this client's appointments; web narrows for a reason it states — a cancelled or finished session is a confusing choice, not a real one |
+| Confirm | two steps, not a typed word — **this is reversible**, and a typed confirm would be theatre |
+| What the copy says | nothing is charged now; **the session it is on now loses this deposit**; you can move it again |
+| Detach | included — `appointmentId: null` is a real state the route takes, and staff need it when a session moves |
+
+Refusals are the server's own sentences, not a generic "not allowed": no `giftCards.issue`; a card
+that is not ACTIVE or EXEMPT; a card with no holder.
+
+**Void and transfer are reworded, not unlocked.** They said "portal only", which reads as a
+permanent verdict. They now say *"Coming soon"* — the truth is that they are next, not never.
+
+## 5 — deposit and waiver PDFs
+
+Both routes are the same shape: an authenticated GET that replies with the bytes. No signed URL, no
+redirect, no separate storage host.
+
+**A share sheet, not a "download".** A phone has no downloads folder to put this in. The native
+idiom is: write into the app's own cache, hand the file to the system sheet, let the person pick
+Files or Mail or AirDrop — that is what they meant by download. Anything else leaves a file nobody
+can reach. The cache is the right home precisely because the OS may reclaim it, and the server can
+always re-issue.
+
+**Built on expo-file-system 19's `File` API for one specific reason.** SDK 54 moved the old
+`downloadAsync`/`cacheDirectory` pair behind `expo-file-system/legacy`, and the legacy call
+**resolved for any status**. A 403 would have written the error body to disk and opened a share
+sheet offering a "PDF" containing the word Forbidden. `File.downloadFileAsync` rejects on a non-2xx
+and writes nothing — read off `ios/FileSystemModule.swift`, which also settles how the status
+reaches JS:
+
+```swift
+UnableToDownloadException("response has status \(httpResponse.statusCode)")
+```
+
+That string is the only place the status survives, which is why the code parses it rather than
+reading a status field that does not exist. 401/403/404 each get a sentence someone can act on;
+everything else gets one honest line rather than a guess.
+
+`CardIconButton` grew a real `busy` state for the round trip — the glyph becomes a spinner and the
+button stops accepting taps, because a control that looks idle while it works invites a second tap
+and a second download.
+
+## 1, 2, 3 — the title system
+
+| # | Result |
+| --- | --- |
+| 1 | `EYEBROW_TITLE_GAP = 8` on `ScreenShell`. Web is `mt-1` — 4px — and session Z matched it exactly; this is **recorded as an owner-directed divergence**, one step up the scale rather than a number picked by eye. |
+| 2 | Tasks' eyebrow is gone. The header already names the screen and the tabs already name each list; a standing caption between them was a third voice. |
+| 3a | Flash **is** the pattern, so it moves onto the shared component rendering exactly what it rendered before. |
+| 3b | Inquiries: title + `3 inquiries · 2 projects`, computed from the same counts the segmented control uses, so the two cannot disagree. |
+| 3c | Clients: eyebrow removed (**reversing X and Z**, owner's call), title + `2 clients · 1 archived`, `+` wired. |
+
+**The action control moved into the pattern too.** Flash had its own `newButton` style; Clients
+would have had a second copy. `TitleAction` now lives beside `ScreenTitle` — three screens each
+keeping their own copy of a control is precisely how the eyebrow drifted in the first place.
+
+The Clients count line has a constraint worth stating: **the archived figure only appears when the
+toggle is on, and that is not a display choice.** `GET /clients` excludes archived rows unless
+`includeArchived` is set, so with the pill off the screen genuinely does not know how many there
+are. It counts the *filtered* rows, so the line describes what is on screen while a search runs.
+
+### Add Client is live; New Inquiry is not, deliberately
+
+`POST /clients`, gated `clients.edit` **at the entry point** — the `+` is absent without the
+permission, never present-and-refusing, which is how web hides its own `canAddClient` button.
+Verified both ways in the harness: present with the permission, absent without it.
+
+Four fields, because that is what the route reads (`{ firstName, lastName, email, phone, address }`,
+the two names required). Web's Add Client modal offers the same four minus address, so a record
+created on a phone and one created in the portal are the same record. Web's ten-digit rule, to the
+digit.
+
+**New Inquiry is omitted and this is the reason, not an oversight.** Web's `StaffInquiryForm` is
+524 lines and requires **two image uploads** — reference and placement — before it will submit, on
+top of client selection, artist assignment, size, placement and budget. A `+` opening a shrunken
+version of that would create inquiries the portal treats as incomplete. It is a session of its own.
+
+## The write-path evidence — dev database only
+
+**Confirmed I was on the dev database before writing anything**: session AA's own fixture clients
+are present at the exact ids AA reported (`cmt8sbb9j000jcoi2gm2u71xp`). 100 clients. Every call went
+to `127.0.0.1:4001`. **Production untouched.**
+
+### `POST /clients`
+
+| Step | Result |
+| --- | --- |
+| names + email + phone | **201** — `ZZ-Fixture-New 20260825-AB`, `cmt98d8ie0000hoi2lq1so686` |
+| names only, both optionals omitted | **201** — `ZZ-Fixture-Minimal 20260825-AB`, `cmt98d9cl0003hoi2ve1dod1b` |
+| missing `lastName` | **400** `Missing required field(s): lastName` |
+| the created record, re-read | primary phone row **and** primary email row both created by `createClientFromFields`; referral code server-generated |
+
+### `PATCH /gift-cards/:id/attachment`
+
+Exercised on one dev card and **restored to its original state exactly** — the round trip *is* the
+restoration:
+
+| Step | Result |
+| --- | --- |
+| detach (`appointmentId: null`) | **200**, `appointmentId` null, `detachedFromAppointment` naming the session it left |
+| re-attach to the original session | **200**, back where it started |
+| an appointment belonging to somebody else | **400** `appointmentId must belong to this card's client in your studio` |
+| `appointmentId: 42` | **400** `appointmentId must be a string or null` |
+| a REDEEMED card | **400** `Only an ACTIVE or EXEMPT card can be moved (this one is REDEEMED)` |
+| the audit trail afterwards | **two `rollover` rows**, one per direction — which is what the screen re-reads on success |
+
+### The PDF routes
+
+| | deposit form | waiver |
+| --- | --- | --- |
+| authenticated | **200**, `application/pdf`, 103,706 bytes, `%PDF-` | **200**, `application/pdf`, 107,515 bytes, `%PDF-` |
+| `Content-Disposition` | `attachment; filename="deposit-form-….pdf"` | `attachment; filename="waiver-….pdf"` |
+| no token | **401** | **401** |
+| unknown id | **404** | **404** |
+
+## Verification
+
+### What the harness proved, and what it could not
+
+Every screen was looked at, not inferred: Clients (with and without `clients.edit`), Inquiries,
+Flash, Tasks, New Client, the gift card, the attach sheet's list step and its confirm step, and the
+client detail's download buttons at full opacity where they used to be dimmed.
+
+**One thing is honestly unverified: the share sheet itself.** `Sharing.isAvailableAsync()` is false
+under react-native-web, so the native hand-off is device-gate work. The routes are proven, the
+wiring compiles and renders, the busy state was exercised — the sheet opening is for the phone.
+
+**A harness note worth keeping.** Two of my own fixtures were wrong in ways that looked like app
+bugs. `status: 'CLAIMED'` is not a `FlashPieceStatus`, so `STATUS_LABELS[status]` was undefined and
+`Chip` crashed on `.toUpperCase()` — the app was right and my data was not. And the first Clients
+screenshot showed rows stacked on top of each other, which is the artifact **`Appear.tsx`'s own
+comment already documents**: Reanimated implements `entering` on web by briefly
+absolutely-positioning the list. A reanimated error froze it mid-flight. Neither was a regression.
+
+Also caught by looking: **I dropped `<TopBar />` from Inquiries** while inserting the title — the
+replacement text simply did not carry it forward. Invisible in a diff review, obvious in a
+screenshot.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `git status` before building | **clean, 0 entries** |
+| `npm ci` | clean, lockfile stable, tree still clean after |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 14.53s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 5.02 MB, **identical bundle hash before and after `npm ci`** |
+| React singleton | only `19.1.0` in the bundle; the root's 19.2.7 absent |
+
+### Bundle content
+
+Every new path present (`/attachment`, `DETACH FROM ITS SESSION`, `com.adobe.pdf`, `/client-new`,
+`Copy gift card code`); every replaced string absent (`Downloading a PDF is a portal action for
+now`, `Voiding a card destroys its value`, `Transferring a card to another client`, `Everyone who`,
+`Everything needing attention`); the harness absent.
+
+**Two markers first read as failures and both were my check, not the code** — the same trap as
+sessions Q and AA:
+
+- `'portal only'` is still in the bundle because **four other actions legitimately say it** (issue
+  gift card, send deposit form, send waiver, text receipt). The one I reworded is gone, proven by
+  its own full sentence being absent.
+- `'preview'` is all expo-router internals (`__PreviewKey__`, `expo_router_is_preview`). Checked
+  against strings only my harness could have produced — all absent.
+
+**A substring is not a marker.** Check the sentence, or check what else in the app could have
+written it.
+
+## Dependencies
+
+Three added, each pinned to what SDK 54 bundles so they ship **inside Expo Go** and the owner's
+phone can still open the app:
+
+| | required | installed |
+| --- | --- | --- |
+| `expo-file-system` | `~19.0.24` | 19.0.24 |
+| `expo-haptics` | `~15.0.8` | 15.0.8 |
+| `expo-sharing` | `~14.0.8` | 14.0.8 |
+
+## Left open
+
+- **The share sheet is unproven on a device.** Everything up to it is verified; the hand-off is the
+  first thing to try on the gate.
+- Two labelled fixture clients remain on **dev**: `ZZ-Fixture-New 20260825-AB` and
+  `ZZ-Fixture-Minimal 20260825-AB`. Harmless, and named here so they are not mistaken for real
+  records.
+- New Inquiry, per above.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under
+it.
+
+1. **Clients** — the eyebrow is gone; the line under the title counts what is on screen. Type in
+   the search box and watch the count follow it. Tap **+**, create someone, and land on their page.
+2. **Inquiries and Flash** wear the same title block. That is the point of the item — check they
+   look like one system, not three.
+3. **A gift card → the calendar button.** On an ACTIVE card with an upcoming session it opens the
+   sheet; pick a session, read the consequences, attach. Then attach it back, or detach. **Do this
+   on a dev card.** The activity history should show your move.
+4. **Void and transfer still say no** — they should now say "coming soon", not "portal only".
+5. **Tap the gift card code.** It should copy and you should feel it.
+6. **The download icon on a signed deposit form or waiver** — this is the one that has never run on
+   hardware. Expect a spinner, then the iOS share sheet. Save it to Files and open it: it should be
+   a real, readable PDF, not an error page.
