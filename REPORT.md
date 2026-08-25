@@ -25976,3 +25976,150 @@ Restart any `expo start` already running from the primary checkout first — the
    web shows you.
 5. **Clients** — no avatar circles, a message button per row (live only where a thread exists), and
    the eyebrow over the serif title.
+
+# Mobile session X — nav consistency, and the clients list
+
+**Base: `mobile/session-w` at `3f1c2f5`.** T2, T3, U, V, W are all unmerged (`main` is at `151c0d8`,
+carrying S and T). Worktree cut from W; two commits, pushed.
+
+---
+
+## 1 — Tasks takes Notifications' anatomy
+
+**Notifications is confirmed as the reference**, and the mechanism is explicit rather than incidental:
+
+```tsx
+<ScreenHeader title="Notifications" onBack={…} right={<View style={styles.spacer} />} />
+```
+
+That `right` override is what suppresses the cluster — `ScreenHeader`'s default has been the full
+cluster since session W. Tasks had kept **`TopBar`** (hamburger + cluster) from when it was a tab.
+It now uses the same three ingredients: back chevron, serif title, empty spacer.
+
+**Repeating the cluster inside a screen you reached by tapping the cluster is circular** — that is
+the rule, and it is why Notifications suppressed it in the first place.
+
+### The drift audit
+
+| Screen | Chrome | Launched from | Verdict |
+| --- | --- | --- | --- |
+| Notifications | back + title, no cluster | **the cluster** | the reference |
+| **Tasks** | was `TopBar` | **the cluster** | **fixed** |
+| Team, Scan, Settings, Profile | back + title + cluster | the **drawer** / account menu | left alone |
+| Client detail, gift card | back + cluster | pushed from a list | left alone |
+
+The four in row three are the judgment call. They are **drawer-launched, not cluster-launched**, so
+the circularity argument does not apply, and session W put the cluster there deliberately one round
+ago. Changing them would be reversing W on my own initiative. **Flagged, not swept in** — say the
+word if you want the rule to be "any pushed screen" rather than "any cluster-launched screen".
+
+## 2 — Clients gets tab chrome
+
+`clients.tsx` **moved into the tab group** and is registered as
+`<Tabs.Screen name="clients" options={{ href: null }} />` — expo-router's own way to say "in this
+navigator, but no tab button". A route outside the group **cannot render the tab bar at all**, so it
+had to move rather than be restyled where it was; the bar still shows five tabs.
+
+It wears `TopBar` now, like every tab screen, and is still reached from the drawer — the hamburger
+is how you go back to it.
+
+## 3 — The eyebrow, and the type token
+
+**Root cause of the wrapping ticks:** `eyebrowRow` carried **`flexWrap: 'wrap'`**. On a long eyebrow
+the row broke and dropped the closing `+` onto a line of its own. The row never wraps now; the
+**text** gives way instead, and the ticks are pinned.
+
+**The step is deterministic, on character count — not `adjustsFontSizeToFit`.** That prop is
+**iOS-only**; under react-native-web it is ignored and the text ellipsizes, which is precisely the
+failure it would have been there to prevent. It is kept as a further iOS safety net, but the sizing
+decision does not depend on it.
+
+**And the tracking is what actually overflows, not the type size.** `0.34em` at 11px is 3.7px between
+every letter — on this 39-character line that is **145px of pure air**, nearly half a 320pt screen's
+usable width. So a long eyebrow steps both down together: **9.5px / 0.5px tracking**.
+
+Measured after: **no truncation at 320 or 390**, ticks inline at both.
+
+Title is `type.welcome` — Home's own token for "Welcome, Juan", not a lookalike.
+
+## 4 — Preferred channel: **not supported**, and here is why
+
+Every possible source was checked:
+
+| Source | Has a channel? | Has a client key? | Usable? |
+| --- | --- | --- | --- |
+| `Client` model | **no such column** — no preferred/most-used field of any kind | — | no |
+| `GET /clients` | `findMany` with no `select`: scalars only, no relations | n/a | no |
+| `GET /inquiries` | **yes**, `channel` per row | **NO** — `INQUIRY_LIST_SELECT` selects `client: { firstName, lastName }`, with no `id` and no `clientId` | **no key to join on** |
+| `GET /conversations` | no channel on the summary | `clientId` | no |
+
+The inquiries route is the near miss: it has exactly the field wanted and no way to attribute it.
+Matching by **name** was the only alternative and is not one — this app ships a duplicate-client
+detector precisely because two clients share a name.
+
+**So the subtitle is the best identity available and carries no channel glyph:** email → formatted
+phone → `@handle`. The handle **is** real stored data (`instagramHandle` is a column); it is the
+*channel* that is unknowable. A wrong glyph is worse than none.
+
+**What the backend would need:** `clientId` on `INQUIRY_LIST_SELECT` would unlock this *and* the
+active-inquiry chip below, in one field.
+
+## 5 — Status chip: **partially supported**
+
+Of the owner's three, exactly one is reachable without N+1 — and it is the one ranked first:
+
+| Signal | Reachable | Why |
+| --- | --- | --- |
+| **upcoming appointment** | **yes** | `GET /appointments` takes a date range and returns `clientId` per row. **One bounded request** covers every client on screen. |
+| pending deposit | no | no list endpoint exposes deposit-form state per client |
+| active inquiry | no | the same missing join key as item 4 |
+
+So: **one chip, "Booked"**, on web's own definition of upcoming (`startTime >= now AND status
+CONFIRMED` — the same predicate as its `upcoming_appointment` activity filter, so the chip agrees
+with the filter that would produce it). Archived still outranks it.
+
+## Verification
+
+`apps/mobile/parity-audit/`: `x-01-pushed-chrome.png` (Tasks beside Notifications — identical),
+`x-02-clients.png` (320 and 390: tab chrome, one-line eyebrow, identity subtitles, the Booked chip).
+
+Eyebrow fit was read from computed style, not eyeballed: 9.5px, `scrollWidth` equal to laid-out
+width at both frames.
+
+**The tab bar itself is not in a render** — the harness mounts screens directly, without the `Tabs`
+navigator, so there is no bar to photograph. Same limitation as session W, and the device gate is
+where it shows.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 17.17s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.92 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | `Tasks`, `Booked`, the eyebrow copy, `No contact details` present; harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **Tap the tasks icon** in the top right. It should look like Notifications: back chevron, "Tasks",
+   nothing in the corner. No tab bar.
+2. **Drawer → Clients.** It should now look like a tab screen: hamburger and the cluster up top, and
+   **the tab bar along the bottom**. That last part is the bit I could not photograph.
+3. **The eyebrow** — one line, a small red `+` at each end, nothing wrapped. Worth a look on the
+   narrowest phone you have.
+4. **The rows** — a chip reading BOOKED on any client with a confirmed appointment coming up.
+5. **Team / Scan / Settings / Profile** still show the cluster. That is deliberate for now — item 1
+   above explains the distinction, and it is one line each if you want them changed.
