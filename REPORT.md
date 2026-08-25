@@ -25684,3 +25684,151 @@ Restart any `expo start` already running from the primary checkout first — the
    and it should resolve to the card's public link.
 4. **The action row** — tap the copy button, it genuinely copies. The other three say where they live.
 5. **Activity history** at the bottom — real events, grouped by day.
+
+# Mobile session V — client sections polish round 3
+
+**Base: `mobile/session-u` at `2288488`.** T2, T3, U are all unmerged (`main` is at `151c0d8`, with
+S and T). Worktree cut from U; two commits, pushed. **No writes wired — M2 stayed out of scope.**
+
+No screenshots reached this session either; everything below is from web's source.
+
+---
+
+## Item 3 — the gift card chips, root cause
+
+The chips were not "missing the shared component" — they were using it. The bug was in the **tone
+function**, and its cause was upstream of the colours.
+
+`GiftCardStatus` **was not in `packages/shared-types`**. With no enum to be exhaustive against, both
+the client card and the gift card screen had independently hand-rolled the same three-branch
+function:
+
+```ts
+if (s === 'ACTIVE') return 'success';
+if (s === 'VOID' || s === 'EXPIRED') return 'danger';
+return 'neutral';
+```
+
+Against web's `STATUS_TONE`, three of six values were wrong:
+
+| Status | Was | Web | Why |
+| --- | --- | --- | --- |
+| ACTIVE | success | success | ✓ |
+| REDEEMED | neutral | neutral | ✓ |
+| VOID | danger | danger | ✓ |
+| **EXPIRED** | **danger** | **warning** | stale, not destroyed |
+| **PENDING** | **neutral** | **warning** | a Stripe link issued, not yet paid |
+| **EXEMPT** | **neutral** | **info** | a deposit exemption, not a dead card |
+
+**PENDING and EXEMPT had no branch at all** and fell through to grey. That is exactly what was
+reported.
+
+The fix is at the root, per CLAUDE.md: `GiftCardStatus` is added to the generator's `WANTED` list
+and **derived from `schema.prisma`** (six values), and the tone map is a total
+`Record<GiftCardStatus, ChipTone>` in one shared module both screens use. A seventh status is now a
+compile error rather than another silent grey chip.
+
+That package's README already records this exact failure mode for `InquiryStatus`, which shipped to
+mobile with 11 of its 15 values. Same shape, second occurrence.
+
+## Item 5 — the appointments card, root cause
+
+**Not an API gap, and never was.** Web's client detail fires a **second request** beside the client
+one:
+
+```ts
+apiFetch<Client>(`/clients/${id}`),
+apiFetch<Appointment[]>(`/appointments?clientId=${id}`),
+```
+
+`clientId` has always been a supported query param on `GET /appointments`
+(`apps/api/src/routes/appointments.ts`) — **mobile's own `fetchAppointments` simply never exposed
+it.** Mobile makes the same call now and renders web's row: date and time, artist, status chip.
+
+Earlier reports said "appointments aren't part of this client's payload", which was *true* and
+beside the point: they were never on web's payload either.
+
+**That is the third such correction in three sessions** — the projects booking badge (U), the audit
+trail (U), and now this. All three were mobile-side gaps recorded in REPORT.md as missing API
+surface. Worth treating "the API can't do this" as a claim to re-verify rather than inherit.
+
+## Item 6 — sentence case, and the tracking
+
+**One token change, as hoped.** The uppercasing lived in a single place — `SectionHeader`'s
+`String(children).toUpperCase()`. Every call site already passed sentence case ("Contact info",
+"Gift cards"), so nothing was hardcoded in caps and removing the transform moved all nine cards at
+once.
+
+**Tracking: 1.02 → 0.34.** `1.02px` at 17px is **0.06em**, and letterspacing at that strength exists
+for one reason: uppercase has no ascenders or descenders, so without it caps set solid. Mixed case
+already has that separation built in, and the same tracking on it reads as a gap between every
+letter rather than as air. `0.34px` is 0.02em — a trace of the editorial looseness without spelling
+the word out.
+
+Four candidates were rendered side by side rather than argued about (`v-05`): **1.02** (the
+uppercase value, visibly gappy), **0.68**, **0.34** (chosen), **0**.
+
+Owner-directed divergence: web sets these headers in caps.
+
+## Items 1, 2, 4
+
+| # | Change |
+| --- | --- |
+| 1 | Session chips move **below** the session line, left-aligned. Blocks get 10px between them and 4px inside, so the inner gap stays visibly smaller than the outer — which is what makes them read as blocks. Web's `space-y-1.5` was spacing single lines and no longer applies. |
+| 2 | Gift card subtitle is **the code alone**. Expiry and attachment live on the card's own screen, one tap away. |
+| 4 | Deposit rows: `Session N — $X` title, dates in the meta, **payment state as a chip below-left** (Paid / Signed, not paid / Not signed). Gift card code dropped — it identified a different record than the row is about. |
+
+## A bug this session introduced, caught in the render
+
+The appointments chip initially rendered **grey for every status**. `appointmentBadge` speaks the
+Schedule tab's **three-value** vocabulary — `accent | neutral | alert` — built for dot-and-label
+badges, not `ChipTone`'s eight. My first pass cast one to the other; `tones` has no `accent` or
+`alert` key, so every lookup fell through its neutral default.
+
+Now an explicit `Record<AppointmentTone, ChipTone>` following web's reading of the same states:
+`accent` (Requested / Needs checkout / Waiver pending) → **warning**, matching web's
+`WAIVER_PENDING` and `CHECKOUT_PENDING`; `alert` → **danger**, matching `NO_SHOW`.
+
+**A measurement trap worth recording** with it: my first colour check queried the whole document and
+matched the **Projects** card's `CONFIRMED` chip, which comes first in DOM order — reporting green
+for what was actually a grey appointment chip. Scope a colour probe to the section under test.
+
+## Verification
+
+`apps/mobile/parity-audit/`: `v-01-projects.png`, `v-02-gift-cards.png` (all six tones, including
+the three that were wrong), `v-03-deposit-forms.png`, `v-04-appointments.png` (real fetched rows),
+`v-05-tracking.png` (the four candidates).
+
+Chip colours were read from computed style, not eyeballed: `CHECKED OUT` and `CONFIRMED` at
+`#9b927f` (neutral), `CANCELLED` at `#e08272` (danger).
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — **enums re-derived and match `schema.prisma`, now including `GiftCardStatus`** |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 12.99s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.91 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | sentence-case titles, the new deposit states, both appointment states present; harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **A client.** Every section title should read in sentence case with tighter letterspacing.
+2. **Projects** — chips sit under each session, left-aligned; sessions read as separate blocks.
+3. **Gift cards** — code only under the amount, and the chips should be **coloured**: a PENDING card
+   amber, an EXEMPT one blue, an EXPIRED one amber rather than red.
+4. **Deposit forms** — each row ends with a state chip; no gift card code in the meta.
+5. **Appointments** — **this card has rows now.** Date, artist, status. It was never an API gap.
