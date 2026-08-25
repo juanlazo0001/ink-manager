@@ -129,7 +129,19 @@ export const type = {
    * run of capitals web produces, built the only way the platform allows.
    * Tracking is web's 0.06em resolved against the 17px size.
    */
-  sectionHeader: { fontFamily: fonts.displayMedium, fontSize: 17, lineHeight: 22, letterSpacing: 1.02 },
+  /*
+   * A card title, in SENTENCE CASE (mobile session V, owner-directed;
+   * web sets these in caps).
+   *
+   * Tracking is 0.34 rather than the 1.02 the uppercase version carried.
+   * 1.02px is 0.06em, a value that exists to stop uppercase setting
+   * solid — caps are all one height with no ascender or descender to
+   * separate them. Mixed case already has that separation, so the same
+   * tracking reads as a gap between every letter rather than as air.
+   * 0.02em keeps a trace of the editorial looseness without spelling the
+   * word out. Both were rendered side by side before choosing.
+   */
+  sectionHeader: { fontFamily: fonts.displayMedium, fontSize: 17, lineHeight: 22, letterSpacing: 0.34 },
 
   /**
    * The big figures. Web's `bigStatClass`:

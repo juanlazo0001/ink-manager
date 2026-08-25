@@ -9,12 +9,13 @@ import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { QrCode } from '@/components/QrCode';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { StatusChip, type ChipTone } from '@/components/StatusChip';
+import { StatusChip } from '@/components/StatusChip';
 import { BanIcon, CalendarIcon, CopyIcon, TransferIcon } from '@/components/icons';
 import { Card } from '@/components/editorial';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { calendarDate, stamp } from '@/lib/format';
+import { giftCardTone } from '@/lib/giftCardDisplay';
 import { fetchGiftCard, formatMoney, type GiftCard } from '@/lib/giftCards';
 import { screenErrorMessage } from '@/lib/screenError';
 import { colors, space, type } from '@/theme';
@@ -115,7 +116,7 @@ export default function GiftCardScreen() {
             {/* Web's `grid grid-cols-2 gap-4` of labelled facts. */}
             <View style={styles.grid}>
               <Fact label="Status">
-                <StatusChip label={card.status} tone={statusTone(card.status)} />
+                <StatusChip label={card.status} tone={giftCardTone(card.status)} />
               </Fact>
               <Fact label="Expires">
                 <Text style={styles.factValue}>
@@ -206,13 +207,6 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-/** Web's gift-card colours: active green, void red, redeemed neutral. */
-function statusTone(status: string): ChipTone {
-  const s = status.toUpperCase();
-  if (s === 'ACTIVE') return 'success';
-  if (s === 'VOID' || s === 'EXPIRED') return 'danger';
-  return 'neutral';
-}
 
 /** Web's own wording for each `paymentMethod` value. */
 function paymentMethodLabel(method: string | null): string {

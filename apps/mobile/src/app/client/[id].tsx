@@ -1,3 +1,4 @@
+import type { AppointmentListItem } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -33,6 +34,9 @@ import {
   type ClientPlannedSession,
 } from '@/lib/clients';
 import { fetchConversations } from '@/lib/conversations';
+import { appointmentBadge, type AppointmentTone } from '@/lib/appointmentDisplay';
+import { fetchAppointments } from '@/lib/appointments';
+import { giftCardTone } from '@/lib/giftCardDisplay';
 import { calendarDate as dateOnly, formatPhone, stamp } from '@/lib/format';
 import { formatMoney } from '@/lib/giftCards';
 import { statusLabel } from '@/lib/inquiryDisplay';
@@ -83,6 +87,13 @@ export default function ClientScreen() {
   const [threadId, setThreadId] = useState<string | null>(null);
   /** The Contact Info card's "+" sheet. Opening is free; writing is not. */
   const [addContactOpen, setAddContactOpen] = useState(false);
+  /**
+   * ITEM 5. Web's client detail fires `GET /appointments?clientId=` right
+   * beside `GET /clients/:id` — the appointments were never on the client
+   * payload for either client, and mobile simply never made the second
+   * call. Null until it lands; `[]` is a real "none".
+   */
+  const [appointments, setAppointments] = useState<AppointmentListItem[] | null>(null);
 
   // Which sections start open. Contact and the client's work are what a
   // person came for; the paperwork below folds until asked for.
@@ -123,6 +134,23 @@ export default function ClientScreen() {
       })
       .catch(() => {
         /* A missing thread lookup must not break the screen. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, id]);
+
+  useEffect(() => {
+    if (!token || !id) return;
+    let cancelled = false;
+    fetchAppointments(token, { clientId: id })
+      .then((rows) => {
+        if (!cancelled) setAppointments(rows);
+      })
+      .catch(() => {
+        // A failed secondary fetch must not take the screen down; the
+        // card says it could not load rather than claiming there are none.
+        if (!cancelled) setAppointments(null);
       });
     return () => {
       cancelled = true;
@@ -439,10 +467,12 @@ export default function ClientScreen() {
                     <Text style={styles.lineTitle}>{formatMoney(g.amountCents)}</Text>
                     {/* Web's columns: code, expiry, and whether it is
                         attached to an appointment. */}
+                    {/* ITEM 2: the code, and only the code. Expiry and
+                        attachment are on the card's own screen, one tap
+                        away, and were crowding the row that exists to say
+                        which card this is. */}
                     <Text style={styles.lineMeta} numberOfLines={1}>
                       {g.code}
-                      {g.expiresAt ? ` · expires ${dateOnly(g.expiresAt)}` : ''}
-                      {` · ${g.appointmentId ? 'Attached' : 'Unattached'}`}
                     </Text>
                   </View>
                   <StatusChip label={g.status} tone={giftCardTone(g.status)} />
@@ -475,14 +505,18 @@ export default function ClientScreen() {
                     <Text style={styles.lineTitle}>
                       Session {d.sessionNumber ?? 1} — {formatMoney(Math.round(d.totalCharged * 100))}
                     </Text>
-                    {/* Web's columns: deposit vs total, signed, paid,
-                        and the gift card it was settled with. */}
+                    {/* ITEM 4: dates stay in the meta line; the payment
+                        STATE leaves it for a chip below, and the gift
+                        card code goes entirely — it identified a
+                        different record than the row is about. */}
                     <Text style={styles.lineMeta} numberOfLines={2}>
                       {`deposit ${formatMoney(Math.round(d.depositAmount * 100))}`}
-                      {` · signed ${d.signedAt ? stamp(d.signedAt) : 'Pending'}`}
-                      {` · paid ${d.paidAt ? stamp(d.paidAt) : 'Not yet'}`}
-                      {d.giftCard ? ` · ${d.giftCard.code}` : ''}
+                      {d.signedAt ? ` · signed ${stamp(d.signedAt)}` : ''}
+                      {d.paidAt ? ` · paid ${stamp(d.paidAt)}` : ''}
                     </Text>
+                    <View style={styles.belowChips}>
+                      <StatusChip label={depositState(d).label} tone={depositState(d).tone} />
+                    </View>
                   </View>
                   {/* Web ends each row with a download, and ONLY when the
                       form is signed — an unsigned one has no PDF. Same
@@ -501,12 +535,16 @@ export default function ClientScreen() {
             )}
           </CollapsibleSection>
 
-          {/* Web has this section; the client endpoint does not return
-              appointments, and this run does not invent API surface. The
-              card keeps web's shape and says why it is empty rather than
-              pretending the client has none. */}
           <CollapsibleSection title="Appointments" open={!!open.appointments} onToggle={() => toggle('appointments')}>
-            <Empty text="Appointments aren't part of this client's payload yet — see them on the schedule." />
+            {appointments === null ? (
+              <Empty text="Loading appointments…" />
+            ) : appointments.length === 0 ? (
+              <Empty text="No appointments yet." />
+            ) : (
+              appointments.map((a, index) => (
+                <AppointmentLine key={a.id} appointment={a} last={index === appointments.length - 1} />
+              ))
+            )}
           </CollapsibleSection>
 
           <CollapsibleSection
@@ -704,12 +742,13 @@ function ProjectLine({
               .sort((a, b) => (a.signedAt ?? '') < (b.signedAt ?? '') ? 1 : -1)[0] ?? null;
           const dep = sessionDepositBadge(deposit);
           const booking = sessionBookingBadge(session);
+          // ITEM 1: the chips sit BELOW their session line and are
+          // left-aligned under it, so a session reads as one block rather
+          // than as a label with two things trailing off the right edge.
           return (
-            <View key={session?.id ?? number} style={styles.sessionLine}>
-              <Text style={styles.sessionLabel} numberOfLines={2}>
-                {sessionLabelFor(number, session)}
-              </Text>
-              <View style={styles.sessionBadges}>
+            <View key={session?.id ?? number} style={styles.sessionBlock}>
+              <Text style={styles.sessionLabel}>{sessionLabelFor(number, session)}</Text>
+              <View style={styles.belowChips}>
                 <StatusChip label={dep.label} tone={dep.tone} />
                 <StatusChip label={booking.label} tone={booking.tone} />
               </View>
@@ -867,13 +906,63 @@ function sessionLabelFor(number: number, session: ClientPlannedSession | null): 
   return `Session ${number}${hours}${price}`;
 }
 
-/** Web's gift-card colours: active green, void red, redeemed neutral. */
-function giftCardTone(status: string): keyof typeof tones {
-  const s = status.toUpperCase();
-  if (s === 'ACTIVE') return 'success';
-  if (s === 'VOID' || s === 'EXPIRED') return 'danger';
-  return 'neutral';
+/**
+ * ITEM 4's chip. Web's Deposit Forms table renders "Signed"/"Pending" and
+ * a paid column as prose; on a phone the row's STATE is what a person
+ * scans for, so it becomes the chip and the dates stay as meta.
+ */
+function depositState(d: ClientDepositForm): { label: string; tone: ChipTone } {
+  if (d.paidAt) return { label: 'Paid', tone: 'success' };
+  if (d.signedAt) return { label: 'Signed, not paid', tone: 'warning' };
+  return { label: 'Not signed', tone: 'neutral' };
 }
+
+/** One of the client's appointments, as web's Appointments table shows it. */
+function AppointmentLine({
+  appointment,
+  last,
+}: {
+  appointment: AppointmentListItem;
+  last?: boolean;
+}) {
+  const badge = appointmentBadge(appointment);
+  return (
+    <View style={[styles.line, last && styles.lineLast]}>
+      <View style={styles.lineText}>
+        <Text style={styles.lineTitle}>{stamp(appointment.startTime)}</Text>
+        {appointment.artist?.name ? (
+          <Text style={styles.lineMeta} numberOfLines={1}>
+            {appointment.artist.name}
+          </Text>
+        ) : null}
+        <View style={styles.belowChips}>
+          <StatusChip label={badge.label} tone={APPOINTMENT_CHIP_TONES[badge.tone]} />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The Schedule tab's three-value tone vocabulary, translated into the
+ * chip's eight.
+ *
+ * `appointmentBadge` speaks `accent | neutral | alert` — a palette built
+ * for the schedule's dot-and-label badges, not for status chips. Casting
+ * one to the other is what a first pass did here, and every appointment
+ * chip rendered GREY, because `tones` has no `accent` or `alert` key and
+ * the lookup fell through its neutral default. Caught in the render.
+ *
+ * The mapping follows web's own reading of the same states:
+ * `accent` marks "needs an action soon" (Requested, Needs checkout,
+ * Waiver pending), which web tones `warning`; `alert` is a session
+ * actually lost, which web tones `danger` for NO_SHOW.
+ */
+const APPOINTMENT_CHIP_TONES: Record<AppointmentTone, ChipTone> = {
+  accent: 'warning',
+  neutral: 'neutral',
+  alert: 'danger',
+};
 
 /** A real instant, as web writes it in these tables. */
 
@@ -969,6 +1058,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: hairline,
     borderBottomColor: colors.borderSoft,
   },
+  lineLast: { borderBottomWidth: 0 },
   lineText: { flex: 1 },
   lineTitle: { ...type.body, color: colors.fg },
   lineMeta: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
@@ -1099,7 +1189,7 @@ const styles = StyleSheet.create({
   projectFirst: { paddingTop: 0 },
   projectLast: { paddingBottom: 0, borderBottomWidth: 0 },
   projectDivider: { borderBottomWidth: hairline, borderBottomColor: colors.border },
-  sessions: { marginTop: space.sm, gap: 6 },
+  sessions: { marginTop: space.sm, gap: 10 },
   /*
    * A session line carries a label and TWO badges, which is three things
    * on one row — one more than the inquiry row that already needed this.
@@ -1107,9 +1197,18 @@ const styles = StyleSheet.create({
    * keeps a readable floor, and the badges travel together to the right
    * edge of whichever line they land on.
    */
-  sessionLine: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: space.sm },
-  sessionLabel: { ...type.meta, color: colors.fgSecondary, flex: 1, minWidth: 150 },
-  sessionBadges: { flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 'auto' },
+  /*
+   * ITEM 1. A session is a title with its chips underneath, left-aligned,
+   * and `sessions`' own 6px gap is no longer enough to separate two of
+   * those blocks — web's `space-y-1.5` was spacing single lines. 10px
+   * between blocks, 4px between a line and its own chips: the gap inside
+   * a block stays visibly smaller than the gap between blocks, which is
+   * what makes them read as blocks at all.
+   */
+  sessionBlock: { gap: space.xs },
+  sessionLabel: { ...type.meta, color: colors.fgSecondary },
+  /* Chips that sit under the line they belong to, not beside it. */
+  belowChips: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: space.xs },
 
   disabledInline: { paddingVertical: space.sm, opacity: 0.55 },
   disabledInlineLabel: { ...type.small, color: colors.fgMuted },

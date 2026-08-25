@@ -108,8 +108,22 @@ export function Card({ children, style }: { children: ReactNode; style?: StylePr
 }
 
 /**
- * A card's title. Web's `.sc` class at `text-[20px]` — see `type.sectionHeader`
- * for why mobile renders it as uppercase rather than true small-caps.
+ * A card's title.
+ *
+ * SENTENCE CASE, and that is a divergence from web, which sets these in
+ * caps (`.sc` at `text-[20px]`). Owner-directed.
+ *
+ * The uppercasing lived HERE, in this one component, as
+ * `String(children).toUpperCase()` — call sites always passed sentence
+ * case ("Contact info", "Gift cards"). So this is a single change and
+ * every card moved together; no strings were hardcoded in caps.
+ *
+ * Tracking drops with it. `type.sectionHeader` carries 1.02px, which is
+ * 0.06em — letterspacing that exists to keep uppercase from setting
+ * solid. Sentence case has ascenders and descenders doing that work
+ * already, and the same tracking on mixed case reads as a gap between
+ * every letter. `type.sectionHeader` carries the chosen value and the
+ * reasoning behind it.
  */
 export function SectionHeader({
   children,
@@ -123,7 +137,7 @@ export function SectionHeader({
 }) {
   return (
     <Text style={[styles.sectionHeader, style]} numberOfLines={numberOfLines}>
-      {String(children).toUpperCase()}
+      {children}
     </Text>
   );
 }
