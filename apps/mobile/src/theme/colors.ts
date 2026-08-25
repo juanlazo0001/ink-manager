@@ -30,6 +30,17 @@ export const colors = {
   fgSecondary: '#c7bea9',
   /** --color-fg-muted (reference --smoke). Timestamps, labels, hints. */
   fgMuted: '#9b927f',
+  /**
+   * A step below `fgMuted`, for a row's secondary meta line.
+   *
+   * OWNER-DIRECTED, and it has no web counterpart: `fg-muted` is the
+   * dimmest text token web defines, and web's own inquiry table actually
+   * renders channel and submitted-date one step BRIGHTER than this, in
+   * `fg-secondary`. There was nothing to extract, so this is derived --
+   * `fgMuted` pulled toward the page ground until the meta line recedes
+   * behind the description it belongs to.
+   */
+  fgFaint: '#6f6960',
 
   /**
    * --color-accent (reference --gold). The brand primary, and the only

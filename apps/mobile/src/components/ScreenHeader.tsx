@@ -33,7 +33,8 @@ export function ScreenHeader({
   right,
   onBack,
 }: {
-  title: string;
+  /** Omit when the screen's own header card already carries the name. */
+  title?: string;
   subtitle?: string;
   /** Replaces the avatar. Used by screens that need their own action there. */
   right?: ReactNode;
@@ -58,9 +59,11 @@ export function ScreenHeader({
       ) : null}
 
       <View style={styles.titles}>
-        <Text style={styles.title} numberOfLines={1}>
-          {title}
-        </Text>
+        {title ? (
+          <Text style={styles.title} numberOfLines={1}>
+            {title}
+          </Text>
+        ) : null}
         {subtitle ? (
           <Text style={styles.subtitle} numberOfLines={1}>
             {subtitle}

@@ -8,8 +8,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
+import { Card } from '@/components/editorial';
 import { ChannelGlyph, channelLabelFor } from '@/components/ChannelGlyph';
-import { InquiryStatusChip, StatusChip } from '@/components/StatusChip';
+import { InquiryStatusChip, StatusChip, type ChipTone } from '@/components/StatusChip';
 import {
   DownloadIcon,
   GiftCardIcon,
@@ -22,9 +23,17 @@ import { ContactAddSheet } from '@/components/ContactAddSheet';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
-import { buildCustomerDetailsText, clientName, fetchClient, type ClientDetail, type ClientInquiry } from '@/lib/clients';
+import {
+  buildCustomerDetailsText,
+  clientName,
+  fetchClient,
+  type ClientDepositForm,
+  type ClientDetail,
+  type ClientInquiry,
+  type ClientPlannedSession,
+} from '@/lib/clients';
 import { fetchConversations } from '@/lib/conversations';
-import { formatPhone } from '@/lib/format';
+import { calendarDate as dateOnly, formatPhone, stamp } from '@/lib/format';
 import { formatMoney } from '@/lib/giftCards';
 import { statusLabel } from '@/lib/inquiryDisplay';
 import { tabForStatus } from '@/lib/inquiryTabs';
@@ -151,7 +160,13 @@ export default function ClientScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
-      <ScreenHeader title={name} onBack={() => router.back()} />
+      {/*
+        ITEM 2: no title. The header card directly below carries the name
+        at full size, and repeating it in the nav row said the same thing
+        twice in two type sizes. The back button and the rest of the nav
+        anatomy are unchanged.
+      */}
+      <ScreenHeader onBack={() => router.back()} />
 
       {error ? (
         <StateMessage
@@ -165,11 +180,12 @@ export default function ClientScreen() {
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           {/*
-            Web's header card: the avatar, the name, the contact lines
-            under it, the short client code as a chip with its own copy
-            button, and the quick actions to the right.
+            ITEM 5: a `Card`, not a bare bordered box. Every other section
+            on this screen is one; this was the only surface rendering
+            without the card fill and its top highlight, which is exactly
+            why it read darker than the rest.
           */}
-          <View style={styles.headerCard}>
+          <Card>
             <View style={styles.headerTop}>
               <Avatar url={null} initials={initialsOf(name)} size={44} labelStyle={styles.headerInitials} />
               <View style={styles.headerText}>
@@ -186,18 +202,26 @@ export default function ClientScreen() {
                     {formatPhone(client.phones[0]?.phone ?? client.phone)}
                   </Text>
                 ) : null}
-                {client.referralCode ? (
-                  <Pressable
-                    onPress={() => void copyCode(client.referralCode!)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Copy client code ${client.referralCode}`}
-                    style={({ pressed }) => [styles.codeChip, pressed && styles.pressed]}
-                  >
-                    <Text style={styles.codeChipText}>{client.referralCode}</Text>
-                    <Feather name={codeCopied ? 'check' : 'copy'} size={11} color={colors.fgMuted} />
-                  </Pressable>
-                ) : null}
               </View>
+
+              {/*
+                ITEM 1: the client code sits at the card's TOP RIGHT,
+                across from the avatar, rather than under the contact
+                lines. It identifies the record rather than describing the
+                person, so it belongs at the edge of the box, not in the
+                run of their details.
+              */}
+              {client.referralCode ? (
+                <Pressable
+                  onPress={() => void copyCode(client.referralCode!)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Copy client code ${client.referralCode}`}
+                  style={({ pressed }) => [styles.codeChip, pressed && styles.pressed]}
+                >
+                  <Text style={styles.codeChipText}>{client.referralCode}</Text>
+                  <Feather name={codeCopied ? 'check' : 'copy'} size={11} color={colors.fgMuted} />
+                </Pressable>
+              ) : null}
             </View>
 
           <View style={styles.quickRow}>
@@ -225,7 +249,7 @@ export default function ClientScreen() {
                 destructive, neither built. */}
             <QuickAction icon="more-horizontal" label="More" note="Archive and delete live in the portal." />
           </View>
-          </View>
+          </Card>
 
           {copyOpen ? (
             <View style={styles.copyMenu}>
@@ -376,7 +400,14 @@ export default function ClientScreen() {
             {projects.length === 0 ? (
               <Empty text="No projects." />
             ) : (
-              projects.map((i) => <ProjectLine key={i.id} inquiry={i} />)
+              projects.map((i, index) => (
+                <ProjectLine
+                  key={i.id}
+                  inquiry={i}
+                  first={index === 0}
+                  last={index === projects.length - 1}
+                />
+              ))
             )}
           </CollapsibleSection>
 
@@ -617,18 +648,33 @@ function InquiryRowLine({ inquiry, last }: { inquiry: ClientInquiry; last?: bool
 
 /**
  * Web's projects rows: the title with its status chip, then a line per
- * planned session carrying a deposit chip and a booking chip.
+ * planned session carrying BOTH of web's badges — deposit and booking.
  *
- * The BOOKING chip ("Scheduled" / "Not yet booked" / "Completed") needs
- * appointment state, which this payload does not carry — so the session
- * line shows what it can and the report logs the gap rather than
- * guessing a booking status.
+ * The booking badge was reported as blocked in three earlier sessions.
+ * It never was: `GET /clients/:id` returns `plannedSessions[].appointmentId`
+ * and `.appointment.checkedOutAt`, and mobile's own type was dropping
+ * them. See `ClientPlannedSession`.
  */
-function ProjectLine({ inquiry }: { inquiry: ClientInquiry }) {
+function ProjectLine({
+  inquiry,
+  first,
+  last,
+}: {
+  inquiry: ClientInquiry;
+  first?: boolean;
+  last?: boolean;
+}) {
   const sessions = inquiry.plannedSessions ?? [];
   const deposits = inquiry.depositForms ?? [];
   return (
-    <View style={styles.project}>
+    <View
+      style={[
+        styles.project,
+        !last && styles.projectDivider,
+        first && styles.projectFirst,
+        last && styles.projectLast,
+      ]}
+    >
       <View style={styles.line}>
         <View style={styles.lineText}>
           <Text style={styles.lineTitle} numberOfLines={2}>
@@ -645,18 +691,32 @@ function ProjectLine({ inquiry }: { inquiry: ClientInquiry }) {
         <InquiryStatusChip status={inquiry.status} />
       </View>
 
-      {(sessions.length > 0 ? sessions : deposits.length > 0 ? deposits : [null]).map((_, index) => {
-        const number = index + 1;
-        const deposit = deposits.find((d) => (d.sessionNumber ?? 1) === number);
-        return (
-          <View key={number} style={styles.sessionLine}>
-            <Text style={styles.sessionLabel}>Session {number}</Text>
-            <StatusChip label={deposit ? (deposit.paidAt ? 'Deposit paid' : 'Deposit sent') : 'Deposit not yet generated'}
-              tone={deposit?.paidAt ? 'success' : 'neutral'}
-            />
-          </View>
-        );
-      })}
+      <View style={styles.sessions}>
+        {(sessions.length > 0 ? sessions : deposits.length > 0 ? deposits : [null]).map((row, index) => {
+          const session = sessions.length > 0 ? sessions[index] : null;
+          const number = session?.sessionNumber ?? index + 1;
+          // Web resolves the deposit form by sessionNumber, newest first —
+          // never by PlannedSession.depositFormId, which its own comment
+          // records as a fixed linkage bug.
+          const deposit =
+            deposits
+              .filter((d) => (d.sessionNumber ?? 1) === number)
+              .sort((a, b) => (a.signedAt ?? '') < (b.signedAt ?? '') ? 1 : -1)[0] ?? null;
+          const dep = sessionDepositBadge(deposit);
+          const booking = sessionBookingBadge(session);
+          return (
+            <View key={session?.id ?? number} style={styles.sessionLine}>
+              <Text style={styles.sessionLabel} numberOfLines={2}>
+                {sessionLabelFor(number, session)}
+              </Text>
+              <View style={styles.sessionBadges}>
+                <StatusChip label={dep.label} tone={dep.tone} />
+                <StatusChip label={booking.label} tone={booking.tone} />
+              </View>
+            </View>
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -770,6 +830,43 @@ function Banner({ icon, text }: { icon: 'archive' | 'git-merge' | 'log-out'; tex
   );
 }
 
+/**
+ * Web's session badges, `sessionDepositBadge` and `sessionAppointmentBadge`
+ * from `ClientDetail.tsx`, label for label.
+ *
+ * One wording fix falls out of the extraction: mobile said "Deposit sent"
+ * for an unpaid form. Web says **"Deposit pending"**.
+ */
+function sessionDepositBadge(deposit: ClientDepositForm | null): { label: string; tone: ChipTone } {
+  if (!deposit) return { label: 'Deposit not yet generated', tone: 'neutral' };
+  if (deposit.paidAt) return { label: 'Deposit paid', tone: 'success' };
+  return { label: 'Deposit pending', tone: 'warning' };
+}
+
+/**
+ * Web's is `text-accent` for Scheduled, which is the brand gold and not
+ * one of the eight status tones. `highlight` is the warm tone closest to
+ * it in this palette; noted rather than silently substituted.
+ */
+function sessionBookingBadge(session: ClientPlannedSession | null): { label: string; tone: ChipTone } {
+  if (!session?.appointmentId || !session.appointment) {
+    return { label: 'Not yet booked', tone: 'neutral' };
+  }
+  if (session.appointment.checkedOutAt) return { label: 'Completed', tone: 'success' };
+  return { label: 'Scheduled', tone: 'highlight' };
+}
+
+/** Web's session line: "Session 1 — estimated 3-5 hrs ($400-$600)". */
+function sessionLabelFor(number: number, session: ClientPlannedSession | null): string {
+  if (!session) return `Session ${number}`;
+  const { estimatedHoursMin: lo, estimatedHoursMax: hi } = session;
+  const hours = lo != null && hi != null ? ` — estimated ${lo}-${hi} hrs` : '';
+  const { estimatedPriceLow: pLo, estimatedPriceHigh: pHi } = session;
+  const price =
+    pLo != null && pHi != null ? ` (${pLo === pHi ? `$${pLo}` : `$${pLo}-$${pHi}`})` : '';
+  return `Session ${number}${hours}${price}`;
+}
+
 /** Web's gift-card colours: active green, void red, redeemed neutral. */
 function giftCardTone(status: string): keyof typeof tones {
   const s = status.toUpperCase();
@@ -779,41 +876,16 @@ function giftCardTone(status: string): keyof typeof tones {
 }
 
 /** A real instant, as web writes it in these tables. */
-function stamp(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
-/**
- * Waiver dates are calendar dates at UTC midnight — read back with UTC
- * forced, per CLAUDE.md's timezone rule.
- */
-function dateOnly(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    timeZone: 'UTC',
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
-}
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: space.lg, gap: space.md, paddingBottom: space.xxl },
+  /*
+   * ITEM 8. Web's widget list is `flex flex-col gap-6`
+   * (`ReorderableWidgetList.tsx`) -- 24px between boxes. Mobile had 12.
+   */
+  content: { padding: space.lg, gap: space.xl, paddingBottom: space.xxl },
 
-  headerCard: {
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.card,
-    padding: space.lg,
-    gap: space.md,
-  },
-  headerTop: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },
+  headerTop: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start', marginBottom: space.md },
   headerText: { flex: 1, gap: 2 },
   headerInitials: { ...type.label, fontSize: 14, color: colors.fgMuted },
   headerName: { ...type.heading, color: colors.fg },
@@ -822,8 +894,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.xs,
+    // Top right of the header card, level with the avatar.
     alignSelf: 'flex-start',
-    marginTop: space.xs,
     borderWidth: hairline,
     borderColor: colors.borderStrong,
     borderRadius: radius.pill,
@@ -931,7 +1003,18 @@ const styles = StyleSheet.create({
      */
     flexWrap: 'wrap',
     gap: space.md,
-    paddingVertical: space.md,
+    /*
+     * ITEM 3, and the extraction disagreed with the brief. Web's `<td>` is
+     * `py-3` -- 12px -- which is EXACTLY what this already was, so there
+     * was no web value to import. The scrunch is real but its cause is
+     * that a mobile row is two lines (description, then the meta line)
+     * where web's is one, so the same 12px has twice as much to separate.
+     *
+     * Raised to 16 on the owner's instruction. That is a deliberate step
+     * AWAY from web's number, recorded as such rather than dressed up as
+     * parity.
+     */
+    paddingVertical: space.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
@@ -944,8 +1027,9 @@ const styles = StyleSheet.create({
   /* Web's td: 14px over a 20px line. */
   inquiryTitle: { ...type.body, fontSize: 14, lineHeight: 20, color: colors.fg },
   metaLine: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: 3 },
-  metaDot: { ...type.meta, color: colors.fgMuted },
-  metaText: { ...type.meta, color: colors.fgMuted },
+  // ITEM 4: one step below `fgMuted` -- see the token's own note.
+  metaDot: { ...type.meta, color: colors.fgFaint },
+  metaText: { ...type.meta, color: colors.fgFaint },
 
   /* Web: `text-xs font-medium text-fg-secondary`, with the state in its
      own colour -- success when given, muted when not, warning on an
@@ -999,15 +1083,33 @@ const styles = StyleSheet.create({
   },
 
 
-  project: { paddingVertical: space.xs },
-  sessionLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    paddingLeft: space.md,
-    paddingBottom: space.sm,
-  },
-  sessionLabel: { ...type.meta, color: colors.fgMuted, flex: 1 },
+  /*
+   * ITEM 6, extracted from web's projects widget:
+   *
+   *   project block   `py-3 first:pt-0 last:pb-0`   -> 12, divided
+   *   sessions start  `mt-2`                        -> 8 below the title
+   *   between rows    `space-y-1.5`                 -> 6
+   *
+   * Mobile had 4px around the whole project and 8px under each session,
+   * with nothing separating the title row from the first session -- which
+   * is the scrunch: the sessions read as part of the title rather than as
+   * a list beneath it.
+   */
+  project: { paddingVertical: space.md },
+  projectFirst: { paddingTop: 0 },
+  projectLast: { paddingBottom: 0, borderBottomWidth: 0 },
+  projectDivider: { borderBottomWidth: hairline, borderBottomColor: colors.border },
+  sessions: { marginTop: space.sm, gap: 6 },
+  /*
+   * A session line carries a label and TWO badges, which is three things
+   * on one row — one more than the inquiry row that already needed this.
+   * Same rule as everywhere else on this screen: the row wraps, the label
+   * keeps a readable floor, and the badges travel together to the right
+   * edge of whichever line they land on.
+   */
+  sessionLine: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: space.sm },
+  sessionLabel: { ...type.meta, color: colors.fgSecondary, flex: 1, minWidth: 150 },
+  sessionBadges: { flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 'auto' },
 
   disabledInline: { paddingVertical: space.sm, opacity: 0.55 },
   disabledInlineLabel: { ...type.small, color: colors.fgMuted },

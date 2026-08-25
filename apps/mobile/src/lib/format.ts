@@ -53,3 +53,47 @@ export function formatPhone(value: string | null | undefined): string {
 
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
+
+/**
+ * A real instant, as web writes one in these tables: `Aug 14, 2026, 2:20 PM`.
+ *
+ * Lived as a private copy inside the client detail screen until the gift
+ * card screen needed the same thing; one implementation rather than two
+ * that can drift.
+ */
+export function stamp(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+/**
+ * A pure calendar date — gift card `expiresAt`, waiver `dateOfBirth` —
+ * stored as UTC midnight and therefore READ BACK WITH UTC FORCED.
+ *
+ * This is CLAUDE.md's timezone rule, and the reason it exists: a bare
+ * `toLocaleDateString()` re-interprets that midnight in the viewer's own
+ * zone and shows the previous day to anyone west of UTC. Web's own
+ * counterpart is `formatCalendarDateOnly`.
+ */
+export function calendarDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    timeZone: 'UTC',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+/** A day heading for grouped feeds — web's `formatDateOnly`. */
+export function dayHeading(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}

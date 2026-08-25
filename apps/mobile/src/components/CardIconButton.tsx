@@ -107,13 +107,26 @@ function glyphColor(enabled: boolean, tone: 'default' | 'danger'): string {
   return enabled ? colors.fg : colors.fgMuted;
 }
 
-/** The row these sit in — right-aligned, as web aligns them. */
-export function CardActionRow({ children }: { children: React.ReactNode }) {
-  return <View style={styles.row}>{children}</View>;
+/**
+ * The row these sit in — right-aligned, as web aligns them.
+ *
+ * `wrap` mirrors web's own `flex-wrap` on rows that hold more than two:
+ * the gift card's action row carries four, which is 200pt of buttons
+ * against a 236pt card at 320. Web wraps there and so does this.
+ */
+export function CardActionRow({
+  children,
+  wrap = false,
+}: {
+  children: React.ReactNode;
+  wrap?: boolean;
+}) {
+  return <View style={[styles.row, wrap && styles.rowWrap]}>{children}</View>;
 }
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'flex-end', gap: space.sm },
+  rowWrap: { flexWrap: 'wrap', rowGap: space.sm },
   button: {
     width: 44,
     height: 44,

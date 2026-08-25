@@ -49,7 +49,28 @@ export interface ClientInquiry {
   priceEstimateLow: number | null;
   priceEstimateHigh: number | null;
   depositForms: ClientDepositForm[];
-  plannedSessions: { id: string; sessionNumber?: number }[];
+  plannedSessions: ClientPlannedSession[];
+}
+
+/**
+ * A planned session, as `GET /clients/:id` actually returns one.
+ *
+ * THIS TYPE USED TO BE `{ id, sessionNumber? }` AND THAT WAS WRONG. The
+ * API selects estimates, `appointmentId` and the appointment's
+ * `checkedOutAt` as well (`apps/api/src/routes/clients.ts`), and mobile
+ * was discarding all of it at the type boundary. Sessions P, Q and R each
+ * reported the booking chip as blocked on missing API surface; it never
+ * was — the data was in the payload the whole time.
+ */
+export interface ClientPlannedSession {
+  id: string;
+  sessionNumber?: number;
+  estimatedHoursMin: number | null;
+  estimatedHoursMax: number | null;
+  estimatedPriceLow: number | null;
+  estimatedPriceHigh: number | null;
+  appointmentId: string | null;
+  appointment: { checkedOutAt: string | null } | null;
 }
 
 /** A row of web's Deposit Forms table. */
