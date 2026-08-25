@@ -6,6 +6,7 @@ import type { ClientDetail, ClientEmail, ClientPhone } from './clients';
  *
  * ─── THE INVENTORY, read off `apps/api/src/routes/clients.ts` ───────
  *
+ *   POST   /clients                              clients.edit
  *   PATCH  /clients/:id                          clients.edit
  *   POST   /clients/:id/phones                   clients.edit
  *   DELETE /clients/:id/phones/:phoneId          clients.edit
@@ -43,6 +44,40 @@ import type { ClientDetail, ClientEmail, ClientPhone } from './clients';
  *   - A merged client is REFUSED (400): "This client has been merged and
  *     can no longer be edited directly."
  */
+
+/**
+ * `POST /clients` — the only field set it reads.
+ *
+ * The route destructures `{ firstName, lastName, email, phone, address }`
+ * and requires the two names to be non-empty (400 with the missing ones
+ * named). `address` is accepted here even though web's own Add Client
+ * modal does not offer it; this does not offer it either, so the two
+ * clients create the same shape of record. The referral code is the
+ * server's to generate — `generateUniqueReferralCode()` — never a
+ * client's to send.
+ */
+export interface NewClient {
+  firstName: string;
+  lastName: string;
+  email?: string;
+  phone?: string;
+}
+
+export function createClient(token: string, input: NewClient): Promise<ClientDetail> {
+  return apiFetch<ClientDetail>('/clients', {
+    method: 'POST',
+    token,
+    // `|| undefined` rather than `null`, matching web: the route spreads
+    // these into `createClientFromFields` and an explicit null is not the
+    // same as an absent field there.
+    body: JSON.stringify({
+      firstName: input.firstName,
+      lastName: input.lastName,
+      email: input.email || undefined,
+      phone: input.phone || undefined,
+    }),
+  });
+}
 
 export interface ClientPatch {
   firstName?: string;

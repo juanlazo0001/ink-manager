@@ -8,7 +8,7 @@ import { NewTaskBar } from '@/components/NewTaskBar';
 import { PillMenu } from '@/components/PillMenu';
 import { PillRow } from '@/components/Pill';
 import { SegmentedControl } from '@/components/SegmentedControl';
-import { Card, Eyebrow, SectionHeader } from '@/components/editorial';
+import { Card, SectionHeader } from '@/components/editorial';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { PersonalTaskRow, SystemTaskRow } from '@/components/TaskRow';
 import { SkeletonList } from '@/components/Skeleton';
@@ -336,14 +336,9 @@ export default function TasksScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={() => load('refresh')} tintColor={colors.fgMuted} />
         }
       >
-        {/*
-          Web leads the page with this line and then its own `h1`. The
-          serif title is already in the header above, so this is the
-          eyebrow alone — saying "Tasks" twice on one screen is what
-          session U took off the client detail.
-        */}
-        <Eyebrow>Everything needing attention, plus your own to-dos.</Eyebrow>
-
+        {/* ITEM 2: the eyebrow is gone. The header above already names
+            the screen and the tabs below already say what each list is;
+            a standing caption between them was a third voice. */}
         {/* Only the segments this person's permissions actually earn —
             the same two keys the cards themselves are gated on. */}
         <View style={styles.segments}>

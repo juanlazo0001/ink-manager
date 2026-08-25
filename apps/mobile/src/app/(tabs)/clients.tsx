@@ -2,14 +2,14 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { ScreenShell, SCREEN_TOP_INSET } from '@/components/ScreenShell';
+import { ScreenShell } from '@/components/ScreenShell';
+import { countLine, ScreenTitle, TitleAction } from '@/components/ScreenTitle';
 import { Appear } from '@/components/Appear';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { Pill, PillRow } from '@/components/Pill';
 import { TopBar } from '@/components/TopBar';
 import { CardIconButton } from '@/components/CardIconButton';
-import { Eyebrow } from '@/components/editorial';
-import { MessageIcon } from '@/components/icons';
+import { MessageIcon, PlusIcon } from '@/components/icons';
 import { SkeletonList } from '@/components/Skeleton';
 import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -116,6 +116,13 @@ export default function ClientsScreen() {
 
   const visible = useMemo(() => filterClients(rows ?? [], search), [rows, search]);
 
+  /**
+   * `POST /clients` is gated `clients.edit`, so the control is absent
+   * without it rather than present-and-refused. Web's own `canAddClient`
+   * reads the same permission off the same profile.
+   */
+  const canAddClient = session?.profile.permissions.includes('clients.edit') ?? false;
+
   return (
     <ScreenShell edges={['top']}>
       {/*
@@ -128,16 +135,35 @@ export default function ClientsScreen() {
       <TopBar />
 
       {/*
-        ITEM 6c: web's Clients page leads with an eyebrow over a display
-        serif title — `<Eyebrow>Everyone who's booked with your studio.</Eyebrow>`
-        above an `h1` in `font-display`. The nav row no longer repeats the
-        word, the same way the client detail's does not (session U).
+        ITEM 3c. The eyebrow is gone — REVERSING sessions X and Z, on the
+        owner's call. "Everyone who's booked with you" is a standing
+        caption that says the same thing on every visit; the count line
+        underneath the title says something different every time, which is
+        the job that space is better spent on.
+
+        The archived figure only appears when the toggle is on, and that
+        is not a display choice: `GET /clients` excludes archived rows
+        unless `includeArchived` is set, so with the pill off this screen
+        genuinely does not know how many there are. Counting the filtered
+        rows rather than the fetched ones means the line always describes
+        what is actually on screen while a search is running.
       */}
-      <View style={styles.pageHead}>
-        <Eyebrow>Everyone who&apos;s booked with you.</Eyebrow>
-        {/* ITEM 3: Home's "Welcome, Juan" token exactly — `type.welcome`. */}
-        <Text style={styles.pageTitle}>Clients</Text>
-      </View>
+      <ScreenTitle
+        title="Clients"
+        counts={
+          rows === null
+            ? null
+            : countLine(
+                [visible.filter((c) => !c.archivedAt).length, 'client'],
+                [visible.filter((c) => c.archivedAt).length, 'archived', 'archived'],
+              )
+        }
+        action={
+          canAddClient ? (
+            <TitleAction Icon={PlusIcon} label="New client" onPress={() => router.push('/client-new')} />
+          ) : null
+        }
+      />
 
       <View style={styles.controls}>
         <TextInput
@@ -282,14 +308,7 @@ function ClientRow({
 const styles = StyleSheet.create({
   /* Web: an eyebrow, then `font-display` at clamp(28,3.4vw,38). */
   /* ITEM 2: the same air Home puts above its eyebrow. */
-  pageHead: {
-    paddingHorizontal: space.lg,
-    paddingTop: SCREEN_TOP_INSET,
-    paddingBottom: space.md,
-    gap: space.xs,
-  },
   /* ITEM 3: the same token Home's "Welcome, Juan" uses, not a lookalike. */
-  pageTitle: { ...type.welcome, color: colors.fg },
 
   controls: { paddingHorizontal: space.lg, paddingBottom: space.sm },
   search: {

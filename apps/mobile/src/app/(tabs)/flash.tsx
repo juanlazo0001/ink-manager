@@ -5,7 +5,9 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
-import { ScreenShell, SCREEN_TOP_INSET } from '@/components/ScreenShell';
+import { ScreenShell } from '@/components/ScreenShell';
+import { ScreenTitle, TitleAction } from '@/components/ScreenTitle';
+import { PlusIcon } from '@/components/icons';
 import { PhotoViewer } from '@/components/PhotoViewer';
 import { Pill } from '@/components/Pill';
 import { TopBar } from '@/components/TopBar';
@@ -109,24 +111,23 @@ export default function FlashGalleryScreen() {
       */}
       <TopBar />
 
-      <View style={styles.pageHead}>
-        <View style={styles.pageHeadText}>
-          <Text style={styles.pageTitle}>Flash</Text>
-          {pieces ? <Text style={styles.pageSubtitle}>{summarize(pieces)}</Text> : null}
-        </View>
-        {
-          <Pressable
+      {/*
+        ITEM 3a. This screen invented the pattern — serif title, a live
+        summary line, one action at the right — and the owner made it the
+        house shape. It is the shared component now, rendering the same
+        thing it did before.
+      */}
+      <ScreenTitle
+        title="Flash"
+        counts={pieces ? summarize(pieces) : null}
+        action={
+          <TitleAction
+            Icon={PlusIcon}
+            label="New flash piece"
             onPress={() => router.push('/flash-piece')}
-            accessibilityRole="button"
-            accessibilityLabel="New flash piece"
-            hitSlop={8}
-            style={({ pressed }) => [styles.newButton, pressed && styles.pressed]}
-          >
-            <Feather name="plus" size={16} color={colors.accentFg} />
-            <Text style={styles.newLabel}>NEW</Text>
-          </Pressable>
+          />
         }
-      </View>
+      />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -236,30 +237,9 @@ export default function FlashGalleryScreen() {
 }
 
 const styles = StyleSheet.create({
-  pageHead: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: space.md,
-    paddingHorizontal: space.lg,
-    paddingTop: SCREEN_TOP_INSET,
-    paddingBottom: space.md,
-  },
-  pageHeadText: { flex: 1, gap: 2 },
-  pageTitle: { ...type.welcome, color: colors.fg },
-  pageSubtitle: { ...type.small, color: colors.fgMuted },
 
   content: { paddingBottom: space.xxxl },
 
-  newButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.xs,
-    backgroundColor: colors.accentButton,
-    borderRadius: radius.button,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-  },
-  newLabel: { ...type.button, fontSize: 12, color: colors.accentFg },
 
   filterStrip: { flexGrow: 0 },
   filters: { flexDirection: 'row', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.lg },

@@ -1,5 +1,13 @@
 import { useState } from 'react';
-import { Alert, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  StyleSheet,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
 import { colors, radius, space, tones } from '@/theme';
 
@@ -44,6 +52,7 @@ export function CardIconButton({
   label,
   onPress,
   unavailableNote,
+  busy = false,
   tone = 'default',
   style,
 }: {
@@ -54,6 +63,13 @@ export function CardIconButton({
   /** Shown when tapped, if the action is not built yet. */
   unavailableNote?: string;
   /**
+   * The action is running. The glyph becomes a spinner in place and the
+   * button stops accepting taps — a document fetch is a round trip over
+   * the network, and a control that looks idle while it works invites a
+   * second tap and a second download.
+   */
+  busy?: boolean;
+  /**
    * `danger` for a destructive control. Web writes its Remove links in
    * `text-danger`, and losing that colour when the words became a glyph
    * would strip the row's only warning that the button deletes something.
@@ -61,11 +77,12 @@ export function CardIconButton({
   tone?: 'default' | 'danger';
   style?: StyleProp<ViewStyle>;
 }) {
-  const enabled = !!onPress;
+  const enabled = !!onPress && !busy;
   const [pressedNote, setPressedNote] = useState(false);
 
   function handlePress() {
-    if (enabled) {
+    if (busy) return;
+    if (enabled && onPress) {
       onPress();
       return;
     }
@@ -83,16 +100,22 @@ export function CardIconButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       // Not `disabled`: the button still answers, it just cannot act.
-      accessibilityState={{ disabled: !enabled }}
+      accessibilityState={{ disabled: !enabled, busy }}
       accessibilityHint={enabled ? undefined : unavailableNote}
       style={({ pressed }) => [
         styles.button,
-        !enabled && styles.disabled,
+        // Busy is not the dimmed treatment: the spinner reads as work in
+        // progress, and half-opacity on it reads as broken.
+        !enabled && !busy && styles.disabled,
         (pressed || pressedNote) && styles.pressed,
         style,
       ]}
     >
-      <Icon size={16} color={glyphColor(enabled, tone)} />
+      {busy ? (
+        <ActivityIndicator size="small" color={colors.accent} />
+      ) : (
+        <Icon size={16} color={glyphColor(enabled, tone)} />
+      )}
     </Pressable>
   );
 }

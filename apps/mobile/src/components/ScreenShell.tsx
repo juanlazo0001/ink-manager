@@ -107,3 +107,13 @@ export const SCREEN_CONTENT_INSET = { padding: 16, paddingBottom: 32 } as const;
  * three cannot drift apart again.
  */
 export const SCREEN_TOP_INSET = 24;
+
+/**
+ * The gap between an eyebrow and the title under it.
+ *
+ * OWNER-DIRECTED DIVERGENCE. Web is `mt-1` — 4px — and session Z matched
+ * it exactly. The owner wants more air, so this is one step up the scale
+ * rather than a number picked by eye: 8px. Recorded as a divergence from
+ * web, because that is what it is.
+ */
+export const EYEBROW_TITLE_GAP = 8;

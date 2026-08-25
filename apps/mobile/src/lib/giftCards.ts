@@ -38,3 +38,40 @@ export function fetchGiftCard(token: string, id: string, signal?: AbortSignal): 
 export function formatMoney(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
+
+/**
+ * `PATCH /gift-cards/:id/attachment` — which appointment this card is
+ * aimed at. Gated `giftCards.issue`, evaluated at the CARD's own studio.
+ *
+ * ─── THIS IS AN ASSOCIATION, NOT A PAYMENT ──────────────────────────
+ *
+ * Worth stating plainly, because the name invites the opposite reading.
+ * The route sets `appointmentId` and writes a `rollover` audit row. It
+ * moves no money, redeems nothing, and touches no balance — apps/web's
+ * own call site says as much: "This just sets which appointment the card
+ * is aimed at; no new balance/redemption math lives here."
+ *
+ * The money check people expect to find here — summing card values
+ * against a required deposit and refusing a shortfall — is
+ * `validateGiftCardsForAttachment`, and it lives on a DIFFERENT path:
+ * creating an appointment (`POST /appointments`) and scheduling from an
+ * inquiry. Neither is reachable from this screen.
+ *
+ * Two server rules the UI has to respect:
+ *
+ *   - only an ACTIVE or EXEMPT card can be moved (400 naming the status
+ *     otherwise);
+ *   - the appointment must belong to THIS card's client, in this studio
+ *     (400 otherwise).
+ */
+export function attachGiftCardToAppointment(
+  token: string,
+  id: string,
+  appointmentId: string | null,
+): Promise<GiftCard> {
+  return apiFetch<GiftCard>(`/gift-cards/${encodeURIComponent(id)}/attachment`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify({ appointmentId }),
+  });
+}

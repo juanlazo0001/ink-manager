@@ -1,10 +1,12 @@
 import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
 import { ActivityHistory } from '@/components/ActivityHistory';
+import { AttachSessionSheet } from '@/components/AttachSessionSheet';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { QrCode } from '@/components/QrCode';
@@ -47,7 +49,28 @@ export default function GiftCardScreen() {
   const [card, setCard] = useState<GiftCard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
   const [open, setOpen] = useState<Record<string, boolean>>({ activity: true });
+  const [attaching, setAttaching] = useState(false);
+
+  /**
+   * The one live action here, and the reasons it can be refused are the
+   * server's own, said in its words rather than a generic "not allowed":
+   *
+   *   - `giftCards.issue` gates the route (evaluated at the CARD's
+   *     studio, not the caller's home studio);
+   *   - only an ACTIVE or EXEMPT card can be moved;
+   *   - a card with no holder has no appointments to choose from.
+   */
+  const canIssue = session?.profile.permissions.includes('giftCards.issue') ?? false;
+  const attachBlockedReason = !canIssue
+    ? "You don't have permission to move gift cards."
+    : card && card.status !== 'ACTIVE' && card.status !== 'EXEMPT'
+      ? `Only an active card can be attached to a session — this one is ${card.status.toLowerCase()}.`
+      : card && !(card.client?.id ?? card.clientId)
+        ? 'This card has no holder yet, so there are no sessions to attach it to.'
+        : null;
+  const canAttach = attachBlockedReason === null;
 
   const load = useCallback(async () => {
     if (!token || !id) return;
@@ -68,8 +91,25 @@ export default function GiftCardScreen() {
   // neither a public link nor a QR.
   const isExempt = card?.status === 'EXEMPT';
 
+  /**
+   * ITEM 4 — the code itself is copyable.
+   *
+   * It is the one thing on this screen someone reads down a phone line or
+   * pastes into a checkout, and copying it touches no record at all. The
+   * haptic is the point: a tap whose entire result lives in an invisible
+   * clipboard needs to be felt, not inferred from a label that changes
+   * for two seconds.
+   */
+  async function copyCode(code: string) {
+    await Clipboard.setStringAsync(code);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
+  }
+
   async function copyLink(url: string) {
     await Clipboard.setStringAsync(url);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
@@ -103,9 +143,19 @@ export default function GiftCardScreen() {
                     {holder}
                   </Text>
                 ) : null}
-                <Text style={styles.code} selectable>
-                  {card.code}
-                </Text>
+                <Pressable
+                  onPress={() => void copyCode(card.code)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Copy gift card code ${card.code}`}
+                  accessibilityHint="Copies the code to the clipboard"
+                  hitSlop={6}
+                  style={({ pressed }) => [styles.codeRow, pressed && styles.codePressed]}
+                >
+                  <Text style={styles.code} selectable>
+                    {card.code}
+                  </Text>
+                  <CopyIcon size={13} color={codeCopied ? colors.accent : colors.fgMuted} />
+                </Pressable>
               </View>
 
               {/* Web renders the QR from the card's `publicUrl`, and hides
@@ -160,15 +210,16 @@ export default function GiftCardScreen() {
               {card.status !== 'VOID' ? (
                 <CardIconButton
                   Icon={CalendarIcon}
-                  label="Edit expiration"
-                  unavailableNote="Changing an expiry date is done in the portal."
+                  label={card.appointmentId ? 'Move to another session' : 'Attach to a session'}
+                  onPress={canAttach ? () => setAttaching(true) : undefined}
+                  unavailableNote={attachBlockedReason ?? undefined}
                 />
               ) : null}
               {card.status !== 'VOID' ? (
                 <CardIconButton
                   Icon={TransferIcon}
                   label="Transfer to client"
-                  unavailableNote="Transferring a card to another client is done in the portal."
+                  unavailableNote="Coming soon. Moving a card between clients lives in the portal for now."
                 />
               ) : null}
               {card.status !== 'VOID' ? (
@@ -176,11 +227,26 @@ export default function GiftCardScreen() {
                   Icon={BanIcon}
                   tone="danger"
                   label="Void card"
-                  unavailableNote="Voiding a card destroys its value — portal only."
+                  unavailableNote="Coming soon. Voiding destroys the card's value, so it stays in the portal for now."
                 />
               ) : null}
             </CardActionRow>
           </Card>
+
+          <AttachSessionSheet
+            visible={attaching}
+            card={card}
+            token={token}
+            onClose={() => setAttaching(false)}
+            onAttached={(updated) => {
+              setAttaching(false);
+              // The server decides the resulting shape; take what it
+              // returned rather than patching the local copy, then re-read
+              // so the activity history picks up the new `rollover` row.
+              setCard(updated);
+              void load();
+            }}
+          />
 
           <CollapsibleSection
             title="Activity history"
@@ -224,7 +290,9 @@ const styles = StyleSheet.create({
   title: { ...type.heading, color: colors.fg },
   subtitle: { ...type.small, color: colors.fgSecondary },
   // Web: `mt-3 font-mono text-xs text-fg-muted`.
-  code: { ...type.meta, color: colors.fgMuted, letterSpacing: 1, marginTop: space.sm },
+  codeRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.sm },
+  code: { ...type.meta, color: colors.fgMuted, letterSpacing: 1 },
+  codePressed: { opacity: 0.6 },
 
   // Web: `grid grid-cols-2 gap-4`.
   grid: {

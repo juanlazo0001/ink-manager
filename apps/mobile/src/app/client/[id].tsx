@@ -38,6 +38,7 @@ import {
 } from '@/lib/clients';
 import { fetchConversations } from '@/lib/conversations';
 import { fetchWidgetLayout } from '@/lib/artists';
+import { shareDocument, type DocumentRef } from '@/lib/documents';
 import {
   addClientEmail,
   addClientPhone,
@@ -140,6 +141,8 @@ export default function ClientScreen() {
   const [mergeOpen, setMergeOpen] = useState(false);
   /** A write that failed, said once, above the card it failed in. */
   const [writeError, setWriteError] = useState<string | null>(null);
+  /** The one document currently being fetched, so its own row can spin. */
+  const [sharingId, setSharingId] = useState<string | null>(null);
   /**
    * ITEM 5. Web's client detail fires `GET /appointments?clientId=` right
    * beside `GET /clients/:id` — the appointments were never on the client
@@ -277,6 +280,28 @@ export default function ClientScreen() {
     () => (client?.inquiries ?? []).flatMap((i) => i.depositForms ?? []),
     [client],
   );
+
+  /**
+   * ITEM 5 — deposit forms and waivers, out through the share sheet.
+   *
+   * Both PDFs come from the same shape of authenticated route; see
+   * `lib/documents.ts` for why a share sheet is the honest reading of
+   * "download" on a phone. Failures land in the same `writeError` line
+   * the contact writes use, so this card has one place that reports
+   * trouble rather than two.
+   */
+  async function share(doc: DocumentRef) {
+    if (!token) return;
+    setSharingId(doc.id);
+    setWriteError(null);
+    try {
+      await shareDocument(token, doc);
+    } catch (err) {
+      setWriteError(err instanceof Error ? err.message : 'The document could not be downloaded.');
+    } finally {
+      setSharingId(null);
+    }
+  }
 
   function markBusy(key: string, busy: boolean) {
     setBusyIds((current) => {
@@ -793,7 +818,14 @@ export default function ClientScreen() {
                     <CardIconButton
                       Icon={DownloadIcon}
                       label="Download deposit form"
-                      unavailableNote="Downloading a PDF is a portal action for now."
+                      busy={sharingId === d.id}
+                      onPress={() =>
+                        void share({
+                          kind: 'deposit-forms',
+                          id: d.id,
+                          filename: `deposit-form-session-${d.sessionNumber ?? 1}.pdf`,
+                        })
+                      }
                     />
                   ) : null}
                 </View>
@@ -845,7 +877,8 @@ export default function ClientScreen() {
                     <CardIconButton
                       Icon={DownloadIcon}
                       label="Download waiver"
-                      unavailableNote="Downloading a PDF is a portal action for now."
+                      busy={sharingId === w.id}
+                      onPress={() => void share({ kind: 'waivers', id: w.id, filename: `waiver-${w.id}.pdf` })}
                     />
                   ) : null}
                   <StatusChip label={w.signedAt ? 'Signed' : (w.status ?? 'Pending')}

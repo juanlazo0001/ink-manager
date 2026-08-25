@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
+import { countLine, ScreenTitle } from '@/components/ScreenTitle';
 import { InquiryRow, type InquiryRowData } from '@/components/InquiryRow';
 import { TopBar } from '@/components/TopBar';
 import { SegmentedControl } from '@/components/SegmentedControl';
@@ -164,6 +165,28 @@ export default function InquiriesScreen() {
   return (
     <ScreenShell edges={['top']}>
       <TopBar />
+
+      {/*
+        ITEM 3b. The house title pattern, with the live line the segmented
+        control's own counts already compute — so the two can never
+        disagree about how many inquiries there are.
+
+        NO ACTION BUTTON, deliberately. The `+` would have to open
+        web's `StaffInquiryForm`, and that is not a form this can honestly
+        shrink: it requires two image uploads (reference and placement)
+        before it will submit, on top of client selection, artist
+        assignment, size, placement and budget. A `+` that opened a
+        half-form would create inquiries the portal treats as incomplete.
+        It is a session of its own.
+      */}
+      <ScreenTitle
+        title="Inquiries"
+        counts={
+          items === null
+            ? null
+            : countLine([counts.inquiries, 'inquiry', 'inquiries'], [counts.projects, 'project'])
+        }
+      />
 
       <SegmentedControl
         segments={INQUIRY_TABS.map((v) => ({ key: v.key, label: v.label.toUpperCase(), count: counts[v.key] }))}
