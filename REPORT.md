@@ -26252,3 +26252,173 @@ Restart any `expo start` already running from the primary checkout first — the
 4. **The eyebrows, everywhere** — Home, Tasks, Clients, the sheets. They should all look like Home's:
    muted text, red `+` at each end. Any gold or red *text* is drift I missed.
 5. **Clients** — the chip should sit right beside the name.
+
+# Mobile session Z — eyebrow/drawer/chrome convergence
+
+**Base: `mobile/session-y` at `616f2eb`.** T2, T3, U, V, W, X, Y are all unmerged (`main` is at
+`151c0d8`, carrying S and T). Worktree cut from Y; two commits, pushed.
+
+---
+
+## 3 — The background, root-caused. It was never the navigator.
+
+**Every screen was painting its own opaque page ground on top of the shared photo.**
+
+The photo/wash/grain is rendered **once**, at the root, as a sibling of the navigator. For it to show,
+every screen above it must be transparent — and until now each screen declared that for itself:
+
+| Screen | `screen:` style | |
+| --- | --- | --- |
+| `home.tsx` | `backgroundColor: 'transparent'` | ✓ |
+| `schedule.tsx` | `backgroundColor: 'transparent'` | ✓ |
+| **`clients.tsx`** | **`backgroundColor: colors.bg`** | ✗ |
+| **`team.tsx`** | **`backgroundColor: colors.bg`** | ✗ |
+| **`tasks.tsx`** | **`backgroundColor: colors.bg`** | ✗ |
+| **`scan.tsx`** | **`backgroundColor: colors.bg`** | ✗ |
+
+That is the whole bug, both times. Session X moved Clients into the tab navigator — which fixed the
+tab bar and **could not have fixed this**, because the navigator was never what covered the photo.
+
+### The fix is structural, because the bug is
+
+A per-screen decision that must be right on **every** screen will be wrong on some of them, and was
+— twice. So it is not a per-screen decision any more. **`ScreenShell`** owns it and **all 22 screens
+are migrated**. Two additions make the class of drift hard to reintroduce:
+
+- **A dev assertion.** Passing a `backgroundColor` through `style` **throws in development**. This
+  bug's failure mode has always been that the screen looks *fine*, just flat — so it needed something
+  louder than review. (It is correctly **absent from the production bundle**: `__DEV__` strips it.)
+- **`OpaqueScreenShell`**, separately named, for the two screens that genuinely want an opaque ground
+  (the camera, login). A named component rather than a flag, so choosing it is a decision someone
+  made on purpose and can be found by grepping.
+
+`z-02` shows the photo coming through Clients — the harness mounts the real `ScreenBackground`, since
+it bypasses the root layout.
+
+## 1 — The eyebrow, extracted
+
+From `apps/web/src/components/Eyebrow.tsx`, not measured off an image:
+
+| Property | Web | Mobile after |
+| --- | --- | --- |
+| size | `text-[11px]` | **11px** ✓ |
+| weight | `font-semibold` | **Jura_600SemiBold** ✓ |
+| tracking | `tracking-[0.34em]` | **3.74px** ✓ |
+| colour | `text-fg-muted` | **rgb(155, 146, 127)** ✓ |
+| gap | `gap-3` | **12px** ✓ |
+| tick size | `text-[13px]` | **13px** ✓ |
+| tick colour | `text-danger-strong` | **rgb(194, 64, 47)** ✓ |
+| tick tracking | `tracking-normal` | **0** ✓ |
+| title gap | `mt-1` | **4px** ✓ |
+
+Read off the running component, not asserted. One reading needs explaining: **computed
+`font-weight` reports 400** while the *family* is `Jura_600SemiBold` — React Native selects a weight
+by font **file**, not by the CSS property, so the glyphs are semibold and the property is inert.
+
+**`type.eyebrow` already held every one of those numbers.** What diverged was a step **I added in
+session Y** — 9.5px at 0.5px tracking past 24 characters — to stop one label overflowing at 320pt.
+That made two screens render as a visibly different component from the rest, which is what kept
+being reported across three rounds. It is gone. Home's title margin also moves 12 → 4.
+
+**The cost, stated plainly:** at **320pt the Clients eyebrow no longer fits.** It needs **316px** and
+has **247** — short by **69**. It ellipsizes; the ticks stay put. At 390 it fits. The lever is the
+copy, and the copy is yours: `EVERYONE WHO'S BOOKED.` (22 chars, ~202px) would clear it at every
+width. I did not shorten your line without asking.
+
+## 2 — The drawer
+
+**Web literally specifies the width you asked for.** `Sidebar.tsx` is `w-[80vw]` — the "~80%" is
+web's own number, not an approximation of one. A fixed **288** was right on a 360pt phone and wrong
+on every other size.
+
+Re-verified against *current* web, since session O's extraction predates the logo change:
+
+| Property | Web | Was | Now |
+| --- | --- | --- | --- |
+| width | `w-[80vw]` | 288 fixed | **80% of screen** |
+| logo cap | `max-h-28` | 96 | **112** |
+| row padding | `px-3 py-2.5` | 12 / 12 | **12 / 10** |
+| row gap | `gap-1` | 0 | **4** |
+| label | `text-[15px]` | body default | **15px** |
+| **active marker** | `::before` **3×20, danger-strong**, radius `0 2px 2px 0` | **2px full-height GOLD** | **web's red bar** |
+| active row | `.on` → surface fill + border | gold tint at 8% | **surface + border** |
+
+The marker is the substantive one: it was gold, and web has always drawn it red. That is one of the
+few places red is not punctuation in this design — it is the sidebar's "you are here".
+
+## 4 — Direct drag, and it did not fight
+
+**No mode.** The toggle is gone; every card wears web's six-dot handle permanently (its
+`DragHandleIcon`, dot for dot — the one glyph web fills rather than strokes).
+
+**The handle is the only drag surface, and that is what made it tractable.** The pan gesture lives on
+a 44pt target in the card header; the card body keeps ordinary scroll and tap. The two never contend
+for the same touch, so the ScrollView conflict that got this timeboxed in session W does not arise.
+Scroll is frozen for the duration of a drag and thawed on release.
+
+**Heights are measured, not assumed** (`onLayout` per card): these range from one collapsed line to a
+full inquiries table, so any fixed row step would be wrong for every one of them.
+
+**Not built: the haptic on lift.** `expo-haptics` is not a dependency, and adding one for a single
+tick was not worth it against everything else in this session. One line if you want it.
+
+**Honest limit:** this is verified by construction and by typecheck, not by a drag in the preview —
+a synthetic pointer sequence through react-native-web's gesture bridge would prove very little about
+the native gesture. The device gate is the real test, and if it misbehaves there the fallback the
+brief named (handle visible, long-press to lift) is a one-line change to `.activateAfterLongPress()`.
+
+## 5 — Team
+
+The Clients anatomy: tab chrome, the shared ground, eyebrow and serif title. **Web's Team page has
+its own eyebrow — "The Roster"** (`pages/Team.tsx`) — so that is the copy rather than the invented
+line the brief offered as a fallback. Segments and rows unchanged (`z-03`).
+
+**Scan keeps its own chrome deliberately.** It is on `ScreenShell`'s opaque variant, because a photo
+behind a camera viewfinder is noise. Flash was already a tab.
+
+## Verification
+
+`apps/mobile/parity-audit/`: `z-01-eyebrow.png` (web's literal values, with the title at `mt-1`),
+`z-02-clients-background.png` (the ground showing through), `z-03-team.png`.
+
+Every eyebrow value above was **read from computed style**, not eyeballed — this being the third
+round, that seemed like the point.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 21.04s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.92 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | `The Roster`, the handle's labels present; the client-detail reorder **mode** absent; the dev assertion correctly stripped by `__DEV__`; harness absent |
+
+One bundle string needs a note so it is not misread: **`Done reordering` is still present** — that
+is the **artist profile editor**'s own reorder mode (session B), which item 4 did not cover and I did
+not touch. The client-detail mode is gone (`Move Contact info up` absent).
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **Clients and Team** — the photo should be behind them, exactly as on Home. This is the one to
+   check first.
+2. **The drawer** — it should open to 80% of your screen, with a bigger logo and a **red** bar beside
+   the active row.
+3. **A client → grab a card's six-dot handle and drag.** The list should not scroll while you hold
+   it. If it fights, tell me and I will switch it to long-press-to-lift.
+4. **The eyebrows** — compare Home against your web screenshot side by side; they should now measure
+   the same.
+5. **Clients at 320pt** — its eyebrow will ellipsize. That is item 1's cost, and shortening the line
+   is your call.
