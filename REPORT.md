@@ -26123,3 +26123,132 @@ Restart any `expo start` already running from the primary checkout first — the
 4. **The rows** — a chip reading BOOKED on any client with a confirmed appointment coming up.
 5. **Team / Scan / Settings / Profile** still show the cluster. That is deliberate for now — item 1
    above explains the distinction, and it is one line each if you want them changed.
+
+# Mobile session Y — Tasks restructure, eyebrow canon
+
+**Base: `mobile/session-x` at `9d02c2b`.** T2, T3, U, V, W, X are all unmerged (`main` is at
+`151c0d8`, carrying S and T). Worktree cut from X; three commits, pushed.
+
+---
+
+## 1 & 2 — Tasks, rebuilt as web's stacked page
+
+One scrolling page, three cards, read off `apps/web/src/pages/Tasks.tsx` rather than remembered.
+
+| Card | What web gives it | Gate |
+| --- | --- | --- |
+| **Studio queue** *(solo: "Queue")* | explainer — both wordings are web's, solo and multi; its own **type** Filter; groups **derived** from the tasks present; rows with dismiss | `tasks.viewQueue` |
+| **Assigned to me** *(solo: "Personal")* | Filter + Sort, the composer, check-off, due chip | always |
+| **Assigned by me** | web's explainer verbatim; rows with **no checkbox** | `tasks.assignToOthers` |
+
+Two details taken from web rather than invented:
+
+- **The queue's Filter only appears past one group.** Web's condition is `systemGroups.length > 1`,
+  and the reason is sound — a filter over a single group narrows nothing.
+- **The groups are derived, never hardcoded.** A type with nothing in it produces no heading. The
+  headings use web's own `TASK_TYPE_LABELS`, which are **plural** ("Unanswered inquiries") because
+  each names a group; mobile's `systemTaskLabel` is the **singular** row label and stays where it is.
+  Two different jobs, and mobile already had the second one.
+- **"Assigned by me" rows carry no checkbox** because the API's `PATCH` is assignee-only — which is
+  precisely what web's own explainer line tells the reader. A tick that cannot be honoured is worse
+  than none.
+
+**The scope filter is gone**, and so is its vocabulary: `taskSegmentsFor`, `segmentCount` and the
+MINE/DELEGATED/QUEUE labels had no callers once each card owned its data, and were still shipping in
+the bundle. Removed in their own commit — a dead scope vocabulary lying around is an invitation to
+reach for it again. `TaskSegment` itself stays; `taskFiltersFor` still needs to know which card asks.
+
+**The composer gained an assignee picker**, because the check said to: `CreatePersonalTaskRequest`
+has always taken an optional `userId`. Teammates are fetched only for someone who can actually
+assign, and only active, non-pending members — assigning work to a deactivated account creates a
+task nobody sees. **A task assigned to someone else is inserted into `assignedByMe`, not
+`personal`**: the wrong bucket would have shown it under "Assigned to me" with a checkbox this
+person may not use.
+
+Item 1's collision is fixed by giving the page a real content inset — the Filter row had none and
+sat flush against the header.
+
+**One deliberate call:** the header already carries the serif "Tasks", so the page body gets the
+eyebrow alone rather than a second title. Saying "Tasks" twice on one screen is what session U took
+off the client detail.
+
+## 3 — Eyebrow canon, and a second bug underneath it
+
+**Root cause: session W passed `tone="alert"` on the Clients eyebrow.** I read "red-tick eyebrow" as
+"red eyebrow". They are different things — **the ticks are always red regardless of tone**; `tone`
+recoloured the *text*. So Clients had red text where Home has muted.
+
+The prop is **gone entirely**. Home's rendering is the only one.
+
+**The type error did the sweep better than my grep had.** I found five call sites by grepping
+`<Eyebrow`; removing the prop surfaced **five more** whose `tone` sat on its own line —
+`InquiryRespondSheet` (×2), `PillMenu` (×2), and `StateMessage` in `ui.tsx`. Also removed: four
+`color: colors.accent` declarations on eyebrow *row* styles, which never reached the text at all
+(the component applies `style` to the row) — dead intent, no visual effect.
+
+**And removing it exposed a real bug.** The colour *came from* that prop, so with it gone the text
+had **no colour at all** — rendering **black on a black page**. The canonical `fgMuted` is baked into
+the component now.
+
+That one is worth keeping as a method note: the render merely *looked* dim, and I only caught it
+because I measured the computed colour (`rgb(0,0,0)`) instead of trusting my eyes. **After the fix:
+`rgb(155, 146, 127)`, matching Home.**
+
+Clients text shortened to "Everyone who's booked with you."
+
+## 4 — Chip placement, and the stray dot
+
+The chip sits **immediately after the name, on its baseline**. Measured at 320pt: chip starts right
+of the name's edge, centres within 4px of it, and the name is the only shrinkable thing in the line
+— so it truncates and the chip never wraps. Message icon still holds the right edge.
+
+**The stray red dot is real, and the cause is general.** `StatusChip` drew its dot **before** the
+label, unconditionally — so **any blank status renders as a bare coloured dot with no chip**. Several
+call sites can produce one: `label={g.status}` on a gift-card row, `label={w.status ?? 'Pending'}` on
+a waiver, any status the API returns as `""`.
+
+Fixed **in the component**, not at a call site: a chip with nothing to say now renders nothing. I
+could not pin which row in the screenshot produced it without the image, but the hole is closed for
+every call site rather than one.
+
+## Verification
+
+`apps/mobile/parity-audit/`: `y-01-tasks.png` (the three cards, groups derived, composer, dismiss),
+`y-02-clients.png` (muted eyebrow at 320 and 390, chip beside the name).
+
+Measured rather than eyeballed: eyebrow `rgb(155,146,127)` and untruncated at both widths; chip
+after the name and on its baseline.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 18.55s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.92 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | all three card titles, web's group labels and both queue explainers present; `DELEGATED` **absent** after the cleanup; harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **Tap the tasks icon.** One page, three cards, no scope filter. The Filter/Sort row should have
+   air above it now.
+2. **Studio queue** — grouped headings, each row dismissable with the ×. Its Filter only appears when
+   there is more than one group, which is deliberate.
+3. **Type a task** — the date row appears, and if you can assign, a "ME / …teammates" row under it.
+   Assign one to someone and it should land in **Assigned by me**, not your own list.
+4. **The eyebrows, everywhere** — Home, Tasks, Clients, the sheets. They should all look like Home's:
+   muted text, red `+` at each end. Any gold or red *text* is drift I missed.
+5. **Clients** — the chip should sit right beside the name.
