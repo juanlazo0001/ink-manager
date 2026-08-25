@@ -64,6 +64,31 @@ export function resolveTwilioSender(metadata: SmsIntegrationMetadata | null | un
   return null;
 }
 
+// Does TWILIO already answer STOP/START/HELP for this integration, making
+// an app-side auto-reply a duplicate?
+//
+// Yes, whenever the studio sends through a Messaging Service. Twilio
+// intercepts the keyword families at the platform level there and sends
+// its own response (customised under Messaging > Opt-Out Management when
+// Advanced Opt-Out is on, default copy otherwise) -- so routes/webhooks.ts
+// firing its own optInConfirmation/helpResponse on top lands the customer
+// TWO texts for one keyword.
+//
+// This is not theoretical: it was observed live during the A2P
+// verification. Texting START produced Twilio's confirmation plus
+// "Black Hive Ink and Arts: You are now opted-in...", and HELP likewise.
+// Duplicate keyword responses are exactly what a carrier audit looks for,
+// and Twilio's copy is the copy the campaign was approved against -- so
+// where the two collide, Twilio's wins and ours stands down.
+//
+// Deliberately keyed on the Messaging Service rather than applied
+// unconditionally: a studio still on a bare From number has no observed
+// duplication, and suppressing there could leave a keyword with NO reply
+// at all. Narrow to the case actually seen to misbehave.
+export function twilioOwnsKeywordReplies(metadata: SmsIntegrationMetadata | null | undefined): boolean {
+  return Boolean(metadata?.messagingServiceSid?.trim());
+}
+
 // Confirms the Account SID/Auth Token pair is real (Twilio rejects a bad
 // pair immediately) AND that the given From number actually belongs to
 // this account -- both checked before anything is persisted, so a typo'd

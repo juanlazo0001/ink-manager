@@ -10,7 +10,12 @@ import {
   MessageDirection,
 } from "../../generated/prisma/enums";
 import { decryptSecret } from "../lib/secrets";
-import { verifyTwilioSignature, type TwilioCredentials } from "../lib/twilio";
+import {
+  twilioOwnsKeywordReplies,
+  verifyTwilioSignature,
+  type SmsIntegrationMetadata,
+  type TwilioCredentials,
+} from "../lib/twilio";
 import { TWILIO_SMS_WEBHOOK_URL, TWILIO_STATUS_CALLBACK_URL } from "../lib/publicUrl";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { normalizePhone } from "../lib/phone";
@@ -147,6 +152,13 @@ router.post("/twilio/sms", async (req, res) => {
     return res.status(403).send("Could not verify signature");
   }
 
+  // Read off the integration already resolved above -- no extra query.
+  // Governs whether the keyword auto-replies further down would duplicate
+  // Twilio's own; see twilioOwnsKeywordReplies for the full reasoning.
+  const keywordRepliesHandledByTwilio = twilioOwnsKeywordReplies(
+    integration.metadata as SmsIntegrationMetadata | null,
+  );
+
   const signatureValid = verifyTwilioSignature(
     credentials.authToken,
     req.header("X-Twilio-Signature"),
@@ -256,9 +268,18 @@ router.post("/twilio/sms", async (req, res) => {
         ...(consentWasOnFile ? {} : { consentRecorded: true }),
       },
     });
-    await sendOptInConfirmation(studioId, client.id);
+    // Suppressed when Twilio already answers this keyword itself -- see
+    // twilioOwnsKeywordReplies. NOTE the equivalent call in
+    // routes/smsConsent.ts (the self-serve consent link) is deliberately
+    // NOT gated: a web opt-in produces no inbound message, so Twilio sends
+    // nothing there and ours is the only confirmation the client gets.
+    if (!keywordRepliesHandledByTwilio) {
+      await sendOptInConfirmation(studioId, client.id);
+    }
   } else if (HELP_KEYWORDS.has(keyword)) {
-    await sendHelpResponse(studioId, client.id);
+    if (!keywordRepliesHandledByTwilio) {
+      await sendHelpResponse(studioId, client.id);
+    }
   }
 
   // A2P compliance fix, second consent path: a client who TEXTS THIS STUDIO

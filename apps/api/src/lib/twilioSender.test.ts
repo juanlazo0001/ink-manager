@@ -14,7 +14,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveTwilioSender } from "./twilio";
+import { resolveTwilioSender, twilioOwnsKeywordReplies } from "./twilio";
 
 test("a configured Messaging Service wins over the raw From number", () => {
   const sender = resolveTwilioSender({
@@ -72,4 +72,41 @@ test("surrounding whitespace is trimmed off both sender kinds", () => {
     resolveTwilioSender({ phoneNumber: "+18508804483", messagingServiceSid: " MGe6606bd387959d7a74f4b2f91b9d8b93 " }),
     { kind: "messagingService", messagingServiceSid: "MGe6606bd387959d7a74f4b2f91b9d8b93" },
   );
+});
+
+// --- Keyword auto-reply suppression -------------------------------------
+//
+// Observed live during the A2P verification: with a Messaging Service in
+// play, texting START landed BOTH Twilio's own opt-in confirmation and the
+// app's optInConfirmation template on the handset; HELP did the same. These
+// pin which side stands down.
+
+test("Twilio owns the keyword replies when a Messaging Service is configured", () => {
+  assert.equal(
+    twilioOwnsKeywordReplies({
+      phoneNumber: "+18508804483",
+      messagingServiceSid: "MGe6606bd387959d7a74f4b2f91b9d8b93",
+    }),
+    true,
+  );
+});
+
+test("a studio on a bare From number keeps its own keyword replies", () => {
+  // Narrow on purpose: no duplication has been observed without a Messaging
+  // Service, and suppressing there could leave a keyword with NO reply.
+  assert.equal(twilioOwnsKeywordReplies({ phoneNumber: "+19195551234" }), false);
+});
+
+test("a blank or whitespace Messaging Service SID does not suppress our replies", () => {
+  // Same trap resolveTwilioSender guards: a blank field submitted from
+  // Settings arrives as "". Treating it as a configured service would
+  // silence the only reply the client would get.
+  assert.equal(twilioOwnsKeywordReplies({ phoneNumber: "+19195551234", messagingServiceSid: "" }), false);
+  assert.equal(twilioOwnsKeywordReplies({ phoneNumber: "+19195551234", messagingServiceSid: "   " }), false);
+});
+
+test("missing metadata never suppresses", () => {
+  assert.equal(twilioOwnsKeywordReplies(null), false);
+  assert.equal(twilioOwnsKeywordReplies(undefined), false);
+  assert.equal(twilioOwnsKeywordReplies({}), false);
 });
