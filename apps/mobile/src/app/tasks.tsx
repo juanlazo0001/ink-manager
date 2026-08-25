@@ -7,6 +7,7 @@ import { ScreenShell } from '@/components/ScreenShell';
 import { NewTaskBar } from '@/components/NewTaskBar';
 import { PillMenu } from '@/components/PillMenu';
 import { PillRow } from '@/components/Pill';
+import { SegmentedControl } from '@/components/SegmentedControl';
 import { Card, Eyebrow, SectionHeader } from '@/components/editorial';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { PersonalTaskRow, SystemTaskRow } from '@/components/TaskRow';
@@ -48,6 +49,20 @@ export default function TasksScreen() {
    * the old scope filter used.
    */
   const [queueType, setQueueType] = useState<string>('all');
+  /**
+   * ITEM 3, and it REVERSES session Y.
+   *
+   * Y stacked the three cards on one scrolling page because that is what
+   * apps/web does. The owner has seen it on the device and prefers tabs,
+   * so tabs it is — the cards' own content is untouched, only what is on
+   * screen at once. Recorded as a deliberate divergence from web rather
+   * than as parity, because it is one.
+   *
+   * The scope segments session Y deleted are NOT coming back: those were
+   * a filter over one list. These are three lists, each still owning its
+   * own data and its own controls.
+   */
+  const [tab, setTab] = useState<'queue' | 'mine' | 'others'>('mine');
   const [teammates, setTeammates] = useState<{ id: string; name: string }[]>([]);
   const [data, setData] = useState<TasksResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -329,12 +344,26 @@ export default function TasksScreen() {
         */}
         <Eyebrow>Everything needing attention, plus your own to-dos.</Eyebrow>
 
+        {/* Only the segments this person's permissions actually earn —
+            the same two keys the cards themselves are gated on. */}
+        <View style={styles.segments}>
+          <SegmentedControl
+            value={tab}
+            onChange={setTab}
+            segments={[
+              ...(canSeeQueue ? [{ key: 'queue' as const, label: solo ? 'Queue' : 'Studio queue' }] : []),
+              { key: 'mine' as const, label: solo ? 'Personal' : 'Mine' },
+              ...(canAssign ? [{ key: 'others' as const, label: 'Others' }] : []),
+            ]}
+          />
+        </View>
+
         {!data ? (
           <SkeletonList rows={4} avatar={false} />
         ) : (
           <>
             {/* ─── a. STUDIO QUEUE ─────────────────────────────── */}
-            {canSeeQueue ? (
+            {canSeeQueue && tab === 'queue' ? (
               <Card>
                 <SectionHeader>{solo ? 'Queue' : 'Studio queue'}</SectionHeader>
                 <Text style={styles.explainer}>
@@ -393,6 +422,7 @@ export default function TasksScreen() {
             ) : null}
 
             {/* ─── b. ASSIGNED TO ME ───────────────────────────── */}
+            {tab === 'mine' ? (
             <Card>
               <SectionHeader>{solo ? 'Personal' : 'Assigned to me'}</SectionHeader>
 
@@ -456,9 +486,10 @@ export default function TasksScreen() {
                 </>
               ) : null}
             </Card>
+            ) : null}
 
             {/* ─── c. ASSIGNED BY ME ───────────────────────────── */}
-            {canAssign ? (
+            {canAssign && tab === 'others' ? (
               <Card>
                 <SectionHeader>Assigned by me</SectionHeader>
                 <Text style={styles.explainer}>
@@ -495,6 +526,7 @@ const styles = StyleSheet.create({
    */
   content: { padding: space.lg, gap: space.xl, paddingBottom: space.xxl },
 
+  segments: { marginTop: space.md, marginBottom: space.xs },
   explainer: { ...type.small, color: colors.fgMuted, marginTop: space.xs },
   cardControls: { marginTop: space.md },
 

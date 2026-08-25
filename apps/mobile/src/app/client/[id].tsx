@@ -4,8 +4,6 @@ import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Gesture } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
 
 import { ScreenShell } from '@/components/ScreenShell';
 import { Avatar, initialsOf } from '@/components/Avatar';
@@ -20,9 +18,12 @@ import {
   PlusIcon,
   SearchIcon,
   SendIcon,
+  StarIcon,
   TrashIcon,
 } from '@/components/icons';
 import { ContactAddSheet } from '@/components/ContactAddSheet';
+import { ClientMoreSheet } from '@/components/ClientMoreSheet';
+import { MergeClientSheet } from '@/components/MergeClientSheet';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -36,7 +37,17 @@ import {
   type ClientPlannedSession,
 } from '@/lib/clients';
 import { fetchConversations } from '@/lib/conversations';
-import { fetchWidgetLayout, saveWidgetLayout } from '@/lib/artists';
+import { fetchWidgetLayout } from '@/lib/artists';
+import {
+  addClientEmail,
+  addClientPhone,
+  archiveClient,
+  makeClientEmailPrimary,
+  makeClientPhonePrimary,
+  removeClientEmail,
+  removeClientPhone,
+  unarchiveClient,
+} from '@/lib/clientWrites';
 import { appointmentBadge, type AppointmentTone } from '@/lib/appointmentDisplay';
 import { fetchAppointments } from '@/lib/appointments';
 import { giftCardTone } from '@/lib/giftCardDisplay';
@@ -121,6 +132,15 @@ export default function ClientScreen() {
   /** The Contact Info card's "+" sheet. Opening is free; writing is not. */
   const [addContactOpen, setAddContactOpen] = useState(false);
   /**
+   * Rows mid-write, so a control shows a spinner rather than lying about
+   * having finished. Keyed by the row's own id.
+   */
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  /** A write that failed, said once, above the card it failed in. */
+  const [writeError, setWriteError] = useState<string | null>(null);
+  /**
    * ITEM 5. Web's client detail fires `GET /appointments?clientId=` right
    * beside `GET /clients/:id` — the appointments were never on the client
    * payload for either client, and mobile simply never made the second
@@ -140,21 +160,18 @@ export default function ClientScreen() {
    */
   const [order, setOrder] = useState<string[]>(CLIENT_SECTION_ORDER);
   /**
-   * ITEM 4 (session Z): DIRECT DRAG, no mode.
+   * REMOVED IN SESSION AA, on the owner's verdict: drag-to-reorder was
+   * not smooth enough to keep. Cards render in the saved order and that
+   * is all.
    *
-   * The reorder toggle is gone. Every card wears web's six-dot handle
-   * permanently and the handle is the ONLY drag surface — which is the
-   * whole reason this works inside a ScrollView. The pan gesture lives on
-   * a 44pt target; the card body keeps ordinary scroll and tap, and the
-   * two never contend for the same touch.
-   *
-   * Heights are measured rather than assumed: these cards range from one
-   * collapsed line to a full inquiries table, so a fixed row step would
-   * be wrong for every one of them.
+   * THE PERSISTENCE IS DELIBERATELY LEFT WIRED. `fetchWidgetLayout` still
+   * reads the order on load, `mergeOrder` still reconciles it against the
+   * sections this build has, and the key is still web's own
+   * `client-detail` — so an order arranged ON WEB is honoured here, and
+   * whatever the owner had already arranged survives. What is gone is the
+   * gesture, the handles and the write. `saveWidgetLayout` has no caller
+   * on this screen any more; that is intentional, not an oversight.
    */
-  const [dragId, setDragId] = useState<string | null>(null);
-  const cardLayouts = useRef<Record<string, { y: number; height: number }>>({});
-  const scrollEnabled = dragId === null;
   /**
    * Whatever the server currently holds for collapse, carried through
    * untouched on every write. Mobile keeps its own collapse in local
@@ -231,93 +248,6 @@ export default function ClientScreen() {
    * lands on screen immediately and a failed PUT only means it does not
    * survive a relaunch. Never worth blocking a drag over.
    */
-  function moveTo(id: string, to: number) {
-    setOrder((current) => {
-      const from = current.indexOf(id);
-      if (from < 0 || to < 0 || to >= current.length || to === from) return current;
-      const next = [...current];
-      next.splice(to, 0, next.splice(from, 1)[0]);
-      if (token) // `collapsedWidgetIds` is sent empty: mobile keeps collapse in
-      // local state per screen, and writing [] would otherwise clear
-      // whatever the same user collapsed on web. Preserved verbatim.
-      void saveWidgetLayout(token, 'client-detail', {
-        widgetOrder: next,
-        collapsedWidgetIds: savedCollapsed.current,
-      }).catch(() => {});
-      return next;
-    });
-  }
-
-  /**
-   * One pan gesture per card, built from its id.
-   *
-   * `onStart` freezes the scroll; `onUpdate` walks the measured layouts to
-   * find which slot the finger is over; `onEnd` commits and thaws. The
-   * commit runs on the JS thread via `runOnJS` because it touches React
-   * state and the network.
-   */
-  const dragGestures = useMemo(
-    () =>
-      Object.fromEntries(
-        CLIENT_SECTION_ORDER.map((sectionId) => [sectionId, buildDrag(sectionId)]),
-      ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
-
-  function buildDrag(sectionId: string) {
-    return (
-      Gesture.Pan()
-        .activateAfterLongPress(0)
-        .onStart(() => {
-          runOnJS(setDragId)(sectionId);
-        })
-        .onUpdate((e) => {
-          runOnJS(previewDrag)(sectionId, e.translationY);
-        })
-        .onEnd(() => {
-          runOnJS(commitDrag)();
-        })
-        .onFinalize(() => {
-          runOnJS(setDragId)(null);
-        })
-    );
-  }
-
-  /** Where the dragged card would land, recomputed as the finger moves. */
-  const pendingIndex = useRef<number | null>(null);
-
-  function previewDrag(sectionId: string, translationY: number) {
-    const layouts = cardLayouts.current;
-    const self = layouts[sectionId];
-    if (!self) return;
-    const centre = self.y + self.height / 2 + translationY;
-    const ordered = orderRef.current;
-    let target = ordered.indexOf(sectionId);
-    for (let i = 0; i < ordered.length; i += 1) {
-      const other = layouts[ordered[i]];
-      if (!other) continue;
-      if (centre > other.y && centre < other.y + other.height) {
-        target = i;
-        break;
-      }
-    }
-    pendingIndex.current = target;
-  }
-
-  function commitDrag() {
-    const sectionId = dragIdRef.current;
-    const target = pendingIndex.current;
-    pendingIndex.current = null;
-    if (sectionId && target !== null) moveTo(sectionId, target);
-  }
-
-  /* Refs the worklet-side callbacks read — state would be stale there. */
-  const orderRef = useRef(order);
-  orderRef.current = order;
-  const dragIdRef = useRef(dragId);
-  dragIdRef.current = dragId;
-
   useEffect(() => {
     if (!token || !id) return;
     let cancelled = false;
@@ -347,6 +277,123 @@ export default function ClientScreen() {
     () => (client?.inquiries ?? []).flatMap((i) => i.depositForms ?? []),
     [client],
   );
+
+  function markBusy(key: string, busy: boolean) {
+    setBusyIds((current) => {
+      const next = new Set(current);
+      if (busy) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }
+
+  /**
+   * Every contact write goes through here.
+   *
+   * OPTIMISTIC, WITH A VISIBLE REVERT. The row changes immediately; if
+   * the request fails the previous client object is put back exactly as
+   * it was and the reason is shown. A write that silently didn't happen
+   * is the one outcome worth engineering against — the screen would keep
+   * claiming a number the studio no longer has.
+   */
+  async function contactWrite(
+    key: string,
+    optimistic: (current: ClientDetail) => ClientDetail,
+    request: () => Promise<unknown>,
+  ) {
+    if (!client) return;
+    const previous = client;
+    markBusy(key, true);
+    setWriteError(null);
+    setClient(optimistic(previous));
+    try {
+      await request();
+      // Re-read rather than trust the optimistic shape: adding a phone can
+      // also change which row is primary, and the server decides that.
+      if (token && id) setClient(await fetchClient(token, id));
+    } catch (err) {
+      setClient(previous);
+      setWriteError(screenErrorMessage(err, 'That change did not save.'));
+    } finally {
+      markBusy(key, false);
+    }
+  }
+
+  function addPhone(phone: string, label: string | null) {
+    if (!token || !id) return;
+    void contactWrite(
+      'add-phone',
+      (c) => ({
+        ...c,
+        phones: [...c.phones, { id: `pending-${Date.now()}`, phone, label, isPrimary: c.phones.length === 0 }],
+      }),
+      () => addClientPhone(token, id, { phone, label }),
+    );
+  }
+
+  function addEmail(email: string, label: string | null) {
+    if (!token || !id) return;
+    void contactWrite(
+      'add-email',
+      (c) => ({
+        ...c,
+        emails: [...c.emails, { id: `pending-${Date.now()}`, email, label, isPrimary: c.emails.length === 0 }],
+      }),
+      () => addClientEmail(token, id, { email, label }),
+    );
+  }
+
+  function removePhone(phoneId: string) {
+    if (!token || !id) return;
+    void contactWrite(
+      phoneId,
+      (c) => ({ ...c, phones: c.phones.filter((row) => row.id !== phoneId) }),
+      () => removeClientPhone(token, id, phoneId),
+    );
+  }
+
+  function removeEmail(emailId: string) {
+    if (!token || !id) return;
+    void contactWrite(
+      emailId,
+      (c) => ({ ...c, emails: c.emails.filter((row) => row.id !== emailId) }),
+      () => removeClientEmail(token, id, emailId),
+    );
+  }
+
+  function makePhonePrimary(phoneId: string) {
+    if (!token || !id) return;
+    void contactWrite(
+      phoneId,
+      (c) => ({ ...c, phones: c.phones.map((row) => ({ ...row, isPrimary: row.id === phoneId })) }),
+      () => makeClientPhonePrimary(token, id, phoneId),
+    );
+  }
+
+  function makeEmailPrimary(emailId: string) {
+    if (!token || !id) return;
+    void contactWrite(
+      emailId,
+      (c) => ({ ...c, emails: c.emails.map((row) => ({ ...row, isPrimary: row.id === emailId })) }),
+      () => makeClientEmailPrimary(token, id, emailId),
+    );
+  }
+
+  /** Archive and unarchive, web's own reversible pair. */
+  async function toggleArchive() {
+    if (!token || !id || !client) return;
+    const archiving = client.archivedAt === null;
+    markBusy('archive', true);
+    setWriteError(null);
+    try {
+      const updated = archiving ? await archiveClient(token, id) : await unarchiveClient(token, id);
+      setClient((current) => (current ? { ...current, archivedAt: updated.archivedAt } : current));
+    } catch (err) {
+      setWriteError(screenErrorMessage(err, 'That change did not save.'));
+    } finally {
+      markBusy('archive', false);
+    }
+  }
 
   async function copyCode(code: string) {
     await Clipboard.setStringAsync(code);
@@ -384,7 +431,7 @@ export default function ClientScreen() {
       ) : !client ? (
         <ScreenLoading />
       ) : (
-        <ScrollView contentContainerStyle={styles.content} scrollEnabled={scrollEnabled}>
+        <ScrollView contentContainerStyle={styles.content}>
           {/*
             ITEM 5: a `Card`, not a bare bordered box. Every other section
             on this screen is one; this was the only surface rendering
@@ -449,11 +496,22 @@ export default function ClientScreen() {
             <QuickAction
               icon="edit-2"
               label="Edit"
-              note="Editing a client is done in the portal."
+              onPress={() => router.push({ pathname: '/client-edit', params: { id: id! } })}
             />
-            {/* Web's overflow (…) holds archive and delete — both
-                destructive, neither built. */}
-            <QuickAction icon="more-horizontal" label="More" note="Archive and delete live in the portal." />
+            {/*
+              ITEM 6d. Web's overflow holds Archive/Unarchive and Delete.
+              Archive is live — it is soft and reversible, and web's own
+              route comment says so. DELETE IS NOT: it is permanent, it is
+              OWNER-only, and it is not in the set this session was
+              cleared for. Web also guards it with a typed confirmation
+              over a server-rendered preview of what would be destroyed,
+              which is its own piece of work.
+            */}
+            <QuickAction
+              icon="more-horizontal"
+              label="More"
+              onPress={() => setMoreOpen(true)}
+            />
           </View>
           </Card>
 
@@ -504,8 +562,6 @@ export default function ClientScreen() {
             const SECTIONS: Record<string, React.ReactNode> = {
     'contact-info': (
           <CollapsibleSection
-            dragGesture={dragGestures['contact-info']}
-            dragging={dragId === 'contact-info'}
             title="Contact info"
             open={!!open.contact}
             onToggle={() => toggle('contact')}
@@ -519,7 +575,7 @@ export default function ClientScreen() {
                 <CardIconButton
                   Icon={SearchIcon}
                   label="Merge with another client"
-                  unavailableNote="Merging is destructive — portal only."
+                  onPress={() => setMergeOpen(true)}
                 />
               </CardActionRow>
             }
@@ -548,7 +604,17 @@ export default function ClientScreen() {
             <SubHead>Phones</SubHead>
             {client.phones.length > 0 ? (
               client.phones.map((p) => (
-                <ContactLine key={p.id} value={p.phone} label={p.label} primary={p.isPrimary} kind="phone" />
+                <ContactLine
+                  key={p.id}
+                  value={p.phone}
+                  label={p.label}
+                  primary={p.isPrimary}
+                  kind="phone"
+                  busy={busyIds.has(p.id)}
+                  removable={!p.isPrimary || client.phones.length === 1}
+                  onRemove={() => removePhone(p.id)}
+                  onMakePrimary={() => makePhonePrimary(p.id)}
+                />
               ))
             ) : client.phone ? (
               <ContactLine value={client.phone} label={null} primary kind="phone" />
@@ -559,7 +625,17 @@ export default function ClientScreen() {
             <SubHead>Emails</SubHead>
             {client.emails.length > 0 ? (
               client.emails.map((e) => (
-                <ContactLine key={e.id} value={e.email} label={e.label} primary={e.isPrimary} kind="email" />
+                <ContactLine
+                  key={e.id}
+                  value={e.email}
+                  label={e.label}
+                  primary={e.isPrimary}
+                  kind="email"
+                  busy={busyIds.has(e.id)}
+                  removable={!e.isPrimary || client.emails.length === 1}
+                  onRemove={() => removeEmail(e.id)}
+                  onMakePrimary={() => makeEmailPrimary(e.id)}
+                />
               ))
             ) : client.email ? (
               <ContactLine value={client.email} label={null} primary kind="email" />
@@ -574,8 +650,6 @@ export default function ClientScreen() {
     ),
     'inquiries': (
           <CollapsibleSection
-            dragGesture={dragGestures['inquiries']}
-            dragging={dragId === 'inquiries'}
             title="Inquiries"
             open={!!open.inquiries}
             onToggle={() => toggle('inquiries')}
@@ -614,8 +688,6 @@ export default function ClientScreen() {
     ),
     'projects': (
           <CollapsibleSection
-            dragGesture={dragGestures['projects']}
-            dragging={dragId === 'projects'}
             title="Projects"
             open={!!open.projects}
             onToggle={() => toggle('projects')}
@@ -636,8 +708,6 @@ export default function ClientScreen() {
     ),
     'gift-cards': (
           <CollapsibleSection
-            dragGesture={dragGestures['gift-cards']}
-            dragging={dragId === 'gift-cards'}
             title="Gift cards"
             open={!!open.gift}
             onToggle={() => toggle('gift')}
@@ -682,8 +752,6 @@ export default function ClientScreen() {
     ),
     'deposit-forms': (
           <CollapsibleSection
-            dragGesture={dragGestures['deposit-forms']}
-            dragging={dragId === 'deposit-forms'}
             title="Deposit forms"
             open={!!open.deposits}
             onToggle={() => toggle('deposits')}
@@ -734,7 +802,7 @@ export default function ClientScreen() {
           </CollapsibleSection>
     ),
     'appointments': (
-          <CollapsibleSection dragGesture={dragGestures['appointments']} dragging={dragId === 'appointments'} title="Appointments" open={!!open.appointments} onToggle={() => toggle('appointments')}>
+          <CollapsibleSection title="Appointments" open={!!open.appointments} onToggle={() => toggle('appointments')}>
             {appointments === null ? (
               <Empty text="Loading appointments…" />
             ) : appointments.length === 0 ? (
@@ -748,8 +816,6 @@ export default function ClientScreen() {
     ),
     'waivers': (
           <CollapsibleSection
-            dragGesture={dragGestures['waivers']}
-            dragging={dragId === 'waivers'}
             title="Waivers"
             open={!!open.waivers}
             onToggle={() => toggle('waivers')}
@@ -791,7 +857,7 @@ export default function ClientScreen() {
           </CollapsibleSection>
     ),
     'notes': (
-          <CollapsibleSection dragGesture={dragGestures['notes']} dragging={dragId === 'notes'} title="Notes" open={!!open.notes} onToggle={() => toggle('notes')}>
+          <CollapsibleSection title="Notes" open={!!open.notes} onToggle={() => toggle('notes')}>
             {/* Web's explainer, verbatim. */}
             <Text style={styles.explainer}>
               Every note written on this client&apos;s inquiries, projects, and appointments —
@@ -802,7 +868,7 @@ export default function ClientScreen() {
           </CollapsibleSection>
     ),
     'activity-history': (
-          <CollapsibleSection dragGesture={dragGestures['activity-history']} dragging={dragId === 'activity-history'} title="Activity history" open={!!open.activity} onToggle={() => toggle('activity')}>
+          <CollapsibleSection title="Activity history" open={!!open.activity} onToggle={() => toggle('activity')}>
             {/* Web groups this by date with a description per change. The
                 client payload carries no audit trail, so the card keeps
                 web's place and says so rather than showing nothing. */}
@@ -811,31 +877,49 @@ export default function ClientScreen() {
     ),
   };
             return order.map((sectionId) => (
-              <View
-                key={sectionId}
-                onLayout={(e) => {
-                  const { y, height } = e.nativeEvent.layout;
-                  cardLayouts.current[sectionId] = { y, height };
-                }}
-                style={dragId === sectionId ? styles.dragging : undefined}
-              >
-                {SECTIONS[sectionId]}
-              </View>
+              <View key={sectionId}>{SECTIONS[sectionId]}</View>
             ));
           })()}
         </ScrollView>
       )}
 
+      <ClientMoreSheet
+        visible={moreOpen}
+        archived={!!client?.archivedAt}
+        busy={busyIds.has('archive')}
+        onClose={() => setMoreOpen(false)}
+        onToggleArchive={() => {
+          setMoreOpen(false);
+          void toggleArchive();
+        }}
+      />
+
+      {client ? (
+        <MergeClientSheet
+          visible={mergeOpen}
+          survivor={client}
+          token={token}
+          onClose={() => setMergeOpen(false)}
+          onMerged={(updated) => {
+            setMergeOpen(false);
+            setClient(updated);
+            // Everything moved: inquiries, appointments, gift cards and
+            // the threads. Re-read rather than patch nine lists by hand.
+            if (token && id) void fetchClient(token, id).then(setClient).catch(() => {});
+          }}
+        />
+      ) : null}
+
       <ContactAddSheet
         visible={addContactOpen}
         onClose={() => setAddContactOpen(false)}
-        onAddPhone={() => {
+        onAddPhone={(phone, label) => {
           setAddContactOpen(false);
-          Alert.alert('Add phone', 'Adding a number is done in the portal.');
+          addPhone(phone, label);
         }}
-        onAddEmail={() => {
+        onAddEmail={(email, label) => {
           setAddContactOpen(false);
-          Alert.alert('Add email', 'Adding an address is done in the portal.');
+          addEmail(email, label);
         }}
       />
     </ScreenShell>
@@ -1006,11 +1090,30 @@ function ContactLine({
   label,
   primary,
   kind,
+  busy,
+  onRemove,
+  onMakePrimary,
+  removable,
 }: {
   value: string;
   label: string | null;
   primary: boolean;
   kind: 'phone' | 'email';
+  busy?: boolean;
+  onRemove?: () => void;
+  /** Absent on the row that is already primary — web hides it there too. */
+  onMakePrimary?: () => void;
+  /**
+   * False when the server would refuse this delete.
+   *
+   * FOUND BY EXERCISING THE REAL API, not by reading the route: deleting
+   * the PRIMARY row 400s with "Make another phone primary before removing
+   * this one" — unless it is the only row, in which case it is allowed
+   * and the client's own `phone`/`email` column is nulled with it. The
+   * button would have been permanently broken on exactly one row per
+   * group, and only on records with more than one.
+   */
+  removable?: boolean;
 }) {
   // Formatted once: the row shows it, and the remove button SPEAKS it.
   // A screen reader announcing "Remove 3052997957" while the screen reads
@@ -1024,15 +1127,28 @@ function ContactLine({
         {label ? <Text style={styles.contactLabel}> ({label})</Text> : null}
       </Text>
       {primary ? <PrimaryTag /> : null}
+
+      {/* Web offers "Make primary" on every row that is not already it —
+          same rule here. */}
+      {!primary && onMakePrimary ? (
+        <CardIconButton
+          Icon={StarIcon}
+          label={`Make ${shown} primary`}
+          onPress={busy ? undefined : onMakePrimary}
+          unavailableNote="Saving…"
+        />
+      ) : null}
+
       <CardIconButton
         Icon={TrashIcon}
         tone="danger"
         style={styles.contactRemove}
         label={`Remove ${shown}`}
+        onPress={busy || removable === false ? undefined : onRemove}
         unavailableNote={
-          kind === 'phone'
-            ? 'Removing a number is done in the portal.'
-            : 'Removing an address is done in the portal.'
+          removable === false
+            ? `Make another ${kind === 'phone' ? 'number' : 'address'} primary before removing this one.`
+            : 'Saving…'
         }
       />
     </View>
@@ -1384,6 +1500,7 @@ const styles = StyleSheet.create({
   contactValue: { ...type.body, color: colors.fg, flexShrink: 1 },
   // Holds the right edge, in one column with the group heading's add button.
   contactRemove: { marginLeft: 'auto' },
+  writeError: { ...type.small, color: tones.danger, marginTop: space.sm },
   contactLabel: { ...type.meta, color: colors.fgMuted },
 
   /* Web's Primary tag, verbatim:

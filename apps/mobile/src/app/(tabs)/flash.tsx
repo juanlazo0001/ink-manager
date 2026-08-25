@@ -5,10 +5,10 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
-import { ScreenShell } from '@/components/ScreenShell';
+import { ScreenShell, SCREEN_TOP_INSET } from '@/components/ScreenShell';
 import { PhotoViewer } from '@/components/PhotoViewer';
 import { Pill } from '@/components/Pill';
-import { ScreenHeader } from '@/components/ScreenHeader';
+import { TopBar } from '@/components/TopBar';
 import { Chip, ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { fetchFlashPieces } from '@/lib/flash';
@@ -90,7 +90,7 @@ export default function FlashGalleryScreen() {
   if (!pieces && !error) {
     return (
       <ScreenShell edges={['top']}>
-        <ScreenHeader title="Flash" onBack={() => router.back()} right={<View />} />
+        <TopBar />
         <ScreenLoading />
       </ScreenShell>
     );
@@ -98,11 +98,23 @@ export default function FlashGalleryScreen() {
 
   return (
     <ScreenShell edges={['top']}>
-      <ScreenHeader
-        title="Flash"
-        subtitle={pieces ? summarize(pieces) : undefined}
-        onBack={() => router.back()}
-        right={
+      {/*
+        ITEM 5: the standard tab anatomy — hamburger and the top-right
+        cluster, the photo ground behind, the tab bar below. Flash became
+        a tab in session W and kept a pushed screen's back chevron; it is
+        a place in the app, not somewhere you went into.
+
+        The "new piece" control moves into the page head with the title,
+        since the top bar's right side belongs to the shared cluster now.
+      */}
+      <TopBar />
+
+      <View style={styles.pageHead}>
+        <View style={styles.pageHeadText}>
+          <Text style={styles.pageTitle}>Flash</Text>
+          {pieces ? <Text style={styles.pageSubtitle}>{summarize(pieces)}</Text> : null}
+        </View>
+        {
           <Pressable
             onPress={() => router.push('/flash-piece')}
             accessibilityRole="button"
@@ -114,7 +126,7 @@ export default function FlashGalleryScreen() {
             <Text style={styles.newLabel}>NEW</Text>
           </Pressable>
         }
-      />
+      </View>
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -224,6 +236,18 @@ export default function FlashGalleryScreen() {
 }
 
 const styles = StyleSheet.create({
+  pageHead: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.md,
+    paddingHorizontal: space.lg,
+    paddingTop: SCREEN_TOP_INSET,
+    paddingBottom: space.md,
+  },
+  pageHeadText: { flex: 1, gap: 2 },
+  pageTitle: { ...type.welcome, color: colors.fg },
+  pageSubtitle: { ...type.small, color: colors.fgMuted },
+
   content: { paddingBottom: space.xxxl },
 
   newButton: {

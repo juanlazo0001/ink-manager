@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { ScreenShell } from '@/components/ScreenShell';
+import { ScreenShell, SCREEN_TOP_INSET } from '@/components/ScreenShell';
 import { Appear } from '@/components/Appear';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { Pill, PillRow } from '@/components/Pill';
@@ -281,7 +281,13 @@ function ClientRow({
 
 const styles = StyleSheet.create({
   /* Web: an eyebrow, then `font-display` at clamp(28,3.4vw,38). */
-  pageHead: { paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.xs },
+  /* ITEM 2: the same air Home puts above its eyebrow. */
+  pageHead: {
+    paddingHorizontal: space.lg,
+    paddingTop: SCREEN_TOP_INSET,
+    paddingBottom: space.md,
+    gap: space.xs,
+  },
   /* ITEM 3: the same token Home's "Welcome, Juan" uses, not a lookalike. */
   pageTitle: { ...type.welcome, color: colors.fg },
 

@@ -13,7 +13,7 @@ import {
   RedRule,
   StatChip,
 } from '@/components/editorial';
-import { ScreenShell } from '@/components/ScreenShell';
+import { ScreenShell, SCREEN_TOP_INSET } from '@/components/ScreenShell';
 import { TopBar } from '@/components/TopBar';
 import { Pill, PillRow } from '@/components/Pill';
 import { SkeletonCards } from '@/components/Skeleton';
@@ -358,7 +358,7 @@ function Dot({ color, label }: { color: string; label: string }) {
 const styles = StyleSheet.create({
   content: { paddingBottom: space.xxl },
 
-  welcome: { paddingHorizontal: space.lg, paddingTop: space.xl, gap: space.xs },
+  welcome: { paddingHorizontal: space.lg, paddingTop: SCREEN_TOP_INSET, gap: space.xs },
   // Web's dashboard title is `mt-1` under its eyebrow — 4px, not 12.
   welcomeText: { ...type.welcome, color: colors.fg, marginTop: space.xs },
   welcomeName: { ...type.welcomeName, color: colors.accentHover },

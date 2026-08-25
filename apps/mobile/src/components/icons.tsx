@@ -187,6 +187,24 @@ export function DragHandleIcon({ size = 20, color }: IconProps) {
   );
 }
 
+/**
+ * Star — "make primary" on a contact row.
+ *
+ * DRAWN, not borrowed: web renders that action as a text link ("Make
+ * primary") and has no glyph for it. Same 20-box, same 1.5 stroke as the
+ * rest of the set.
+ */
+export function StarIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Path
+        d="M10 2.8l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5L2.8 8.1l5-.7L10 2.8Z"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
 /** Trash — web's `TrashIcon`, on the contact card's remove control. */
 export function TrashIcon({ size = 20, color }: IconProps) {
   return (

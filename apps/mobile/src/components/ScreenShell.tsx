@@ -97,3 +97,13 @@ const styles = StyleSheet.create({
  * Y's Tasks collision was a screen that had none.
  */
 export const SCREEN_CONTENT_INSET = { padding: 16, paddingBottom: 32 } as const;
+
+/**
+ * The air above a screen's first element — its eyebrow, usually.
+ *
+ * Home had `paddingTop: space.xl` on its own welcome block and nothing
+ * else did, so Clients and Team sat their eyebrows tight under the top
+ * bar while Home's breathed. One token now, stated in one place, so the
+ * three cannot drift apart again.
+ */
+export const SCREEN_TOP_INSET = 24;

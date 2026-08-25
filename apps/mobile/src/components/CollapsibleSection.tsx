@@ -1,10 +1,8 @@
 import Feather from '@expo/vector-icons/Feather';
-import { GestureDetector, type ComposedGesture, type GestureType } from 'react-native-gesture-handler';
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Card, SectionHeader } from '@/components/editorial';
-import { DragHandleIcon } from '@/components/icons';
 import { colors, space } from '@/theme';
 
 /**
@@ -34,8 +32,6 @@ export function CollapsibleSection({
   open,
   onToggle,
   headerActions,
-  dragGesture,
-  dragging,
   children,
 }: {
   title: string;
@@ -47,19 +43,6 @@ export function CollapsibleSection({
    * client-detail sections that is nothing at all.
    */
   headerActions?: ReactNode;
-  /**
-   * The drag handle's gesture, supplied by the list that owns the order.
-   * Present means this card is draggable; absent means it is not.
-   *
-   * THE HANDLE IS THE ONLY DRAG SURFACE. That is what makes this
-   * tractable inside a ScrollView: the pan gesture lives on a 44pt target
-   * in the header, and the card body keeps ordinary scroll and tap. There
-   * is no mode to enter and nothing to toggle — web shows its handle
-   * permanently and so does this.
-   */
-  dragGesture?: ComposedGesture | GestureType;
-  /** True while this card is the one being dragged. */
-  dragging?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -85,23 +68,6 @@ export function CollapsibleSection({
         </Pressable>
 
         {headerActions ?? null}
-
-        {/* Web's handle sits FIRST in its header row; on a phone the left
-            edge is where the chevron and title live, so it takes the
-            right end instead — still permanent, still the only grab
-            point. */}
-        {dragGesture ? (
-          <GestureDetector gesture={dragGesture}>
-            <View
-              style={styles.handle}
-              accessibilityRole="adjustable"
-              accessibilityLabel={`Reorder ${title}`}
-              accessibilityHint="Drag to move this card up or down."
-            >
-              <DragHandleIcon size={18} color={dragging ? colors.accent : colors.fgMuted} />
-            </View>
-          </GestureDetector>
-        ) : null}
       </View>
 
       {open ? <View style={styles.body}>{children}</View> : null}
@@ -110,9 +76,6 @@ export function CollapsibleSection({
 }
 
 const styles = StyleSheet.create({
-  /* A 44pt target around an 18px glyph — the grab point has to be big
-     enough to find without looking. */
-  handle: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 
   head: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   // `minWidth: 0` is what lets the title truncate instead of forcing the

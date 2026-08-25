@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ScreenShell } from '@/components/ScreenShell';
+import { ScreenShell, SCREEN_TOP_INSET } from '@/components/ScreenShell';
 import { Appear } from '@/components/Appear';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { TopBar } from '@/components/TopBar';
@@ -185,7 +185,8 @@ export default function TeamScreen() {
         </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          <Eyebrow>{tab === 'staff' ? 'Staff' : 'Artists'}</Eyebrow>
+          {/* ITEM 4: gone — the selected segment already names the list, and
+              repeating it underneath said the same thing twice. */}
           <View style={styles.roster}>
             {(tab === 'staff' ? staff : artists).map((u, i) => (
               <Appear key={u.id} index={i}>
@@ -241,7 +242,13 @@ function Badge({ label }: { label: string }) {
 
 const styles = StyleSheet.create({
   /* Same head as Clients: eyebrow, then Home's own "Welcome," token. */
-  pageHead: { paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.xs },
+  /* ITEM 2: the same air Home puts above its eyebrow. */
+  pageHead: {
+    paddingHorizontal: space.lg,
+    paddingTop: SCREEN_TOP_INSET,
+    paddingBottom: space.md,
+    gap: space.xs,
+  },
   pageTitle: { ...type.welcome, color: colors.fg },
   content: { padding: space.lg, gap: space.md, paddingBottom: space.xxl },
 
