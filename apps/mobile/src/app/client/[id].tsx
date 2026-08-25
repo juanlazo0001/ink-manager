@@ -4,8 +4,10 @@ import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Gesture } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
@@ -137,7 +139,22 @@ export default function ClientScreen() {
    * person and vice versa.
    */
   const [order, setOrder] = useState<string[]>(CLIENT_SECTION_ORDER);
-  const [reordering, setReordering] = useState(false);
+  /**
+   * ITEM 4 (session Z): DIRECT DRAG, no mode.
+   *
+   * The reorder toggle is gone. Every card wears web's six-dot handle
+   * permanently and the handle is the ONLY drag surface — which is the
+   * whole reason this works inside a ScrollView. The pan gesture lives on
+   * a 44pt target; the card body keeps ordinary scroll and tap, and the
+   * two never contend for the same touch.
+   *
+   * Heights are measured rather than assumed: these cards range from one
+   * collapsed line to a full inquiries table, so a fixed row step would
+   * be wrong for every one of them.
+   */
+  const [dragId, setDragId] = useState<string | null>(null);
+  const cardLayouts = useRef<Record<string, { y: number; height: number }>>({});
+  const scrollEnabled = dragId === null;
   /**
    * Whatever the server currently holds for collapse, carried through
    * untouched on every write. Mobile keeps its own collapse in local
@@ -214,11 +231,10 @@ export default function ClientScreen() {
    * lands on screen immediately and a failed PUT only means it does not
    * survive a relaunch. Never worth blocking a drag over.
    */
-  function move(id: string, delta: number) {
+  function moveTo(id: string, to: number) {
     setOrder((current) => {
       const from = current.indexOf(id);
-      const to = from + delta;
-      if (from < 0 || to < 0 || to >= current.length) return current;
+      if (from < 0 || to < 0 || to >= current.length || to === from) return current;
       const next = [...current];
       next.splice(to, 0, next.splice(from, 1)[0]);
       if (token) // `collapsedWidgetIds` is sent empty: mobile keeps collapse in
@@ -231,6 +247,76 @@ export default function ClientScreen() {
       return next;
     });
   }
+
+  /**
+   * One pan gesture per card, built from its id.
+   *
+   * `onStart` freezes the scroll; `onUpdate` walks the measured layouts to
+   * find which slot the finger is over; `onEnd` commits and thaws. The
+   * commit runs on the JS thread via `runOnJS` because it touches React
+   * state and the network.
+   */
+  const dragGestures = useMemo(
+    () =>
+      Object.fromEntries(
+        CLIENT_SECTION_ORDER.map((sectionId) => [sectionId, buildDrag(sectionId)]),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  function buildDrag(sectionId: string) {
+    return (
+      Gesture.Pan()
+        .activateAfterLongPress(0)
+        .onStart(() => {
+          runOnJS(setDragId)(sectionId);
+        })
+        .onUpdate((e) => {
+          runOnJS(previewDrag)(sectionId, e.translationY);
+        })
+        .onEnd(() => {
+          runOnJS(commitDrag)();
+        })
+        .onFinalize(() => {
+          runOnJS(setDragId)(null);
+        })
+    );
+  }
+
+  /** Where the dragged card would land, recomputed as the finger moves. */
+  const pendingIndex = useRef<number | null>(null);
+
+  function previewDrag(sectionId: string, translationY: number) {
+    const layouts = cardLayouts.current;
+    const self = layouts[sectionId];
+    if (!self) return;
+    const centre = self.y + self.height / 2 + translationY;
+    const ordered = orderRef.current;
+    let target = ordered.indexOf(sectionId);
+    for (let i = 0; i < ordered.length; i += 1) {
+      const other = layouts[ordered[i]];
+      if (!other) continue;
+      if (centre > other.y && centre < other.y + other.height) {
+        target = i;
+        break;
+      }
+    }
+    pendingIndex.current = target;
+  }
+
+  function commitDrag() {
+    const sectionId = dragIdRef.current;
+    const target = pendingIndex.current;
+    pendingIndex.current = null;
+    if (sectionId && target !== null) moveTo(sectionId, target);
+  }
+
+  /* Refs the worklet-side callbacks read — state would be stale there. */
+  const orderRef = useRef(order);
+  orderRef.current = order;
+  const dragIdRef = useRef(dragId);
+  dragIdRef.current = dragId;
 
   useEffect(() => {
     if (!token || !id) return;
@@ -279,7 +365,7 @@ export default function ClientScreen() {
   const name = client ? clientName(client) : 'Client';
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       {/*
         ITEM 2: no title. The header card directly below carries the name
         at full size, and repeating it in the nav row said the same thing
@@ -298,7 +384,7 @@ export default function ClientScreen() {
       ) : !client ? (
         <ScreenLoading />
       ) : (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView contentContainerStyle={styles.content} scrollEnabled={scrollEnabled}>
           {/*
             ITEM 5: a `Card`, not a bare bordered box. Every other section
             on this screen is one; this was the only surface rendering
@@ -365,19 +451,6 @@ export default function ClientScreen() {
               label="Edit"
               note="Editing a client is done in the portal."
             />
-            {/*
-              ITEM 3's entry point. Web reveals a drag handle on every card
-              permanently; a phone has no hover, and a permanent handle on
-              nine cards is nine controls nobody uses. A mode instead —
-              session B's pattern from the artist profile editor, and the
-              same `move` / `check` pair it uses.
-            */}
-            <QuickAction
-              icon={reordering ? 'check' : 'move'}
-              label={reordering ? 'Done' : 'Reorder'}
-              onPress={() => setReordering((v) => !v)}
-            />
-
             {/* Web's overflow (…) holds archive and delete — both
                 destructive, neither built. */}
             <QuickAction icon="more-horizontal" label="More" note="Archive and delete live in the portal." />
@@ -431,9 +504,8 @@ export default function ClientScreen() {
             const SECTIONS: Record<string, React.ReactNode> = {
     'contact-info': (
           <CollapsibleSection
-            reordering={reordering}
-            onMoveUp={() => move('contact-info', -1)}
-            onMoveDown={() => move('contact-info', 1)}
+            dragGesture={dragGestures['contact-info']}
+            dragging={dragId === 'contact-info'}
             title="Contact info"
             open={!!open.contact}
             onToggle={() => toggle('contact')}
@@ -502,9 +574,8 @@ export default function ClientScreen() {
     ),
     'inquiries': (
           <CollapsibleSection
-            reordering={reordering}
-            onMoveUp={() => move('inquiries', -1)}
-            onMoveDown={() => move('inquiries', 1)}
+            dragGesture={dragGestures['inquiries']}
+            dragging={dragId === 'inquiries'}
             title="Inquiries"
             open={!!open.inquiries}
             onToggle={() => toggle('inquiries')}
@@ -543,9 +614,8 @@ export default function ClientScreen() {
     ),
     'projects': (
           <CollapsibleSection
-            reordering={reordering}
-            onMoveUp={() => move('projects', -1)}
-            onMoveDown={() => move('projects', 1)}
+            dragGesture={dragGestures['projects']}
+            dragging={dragId === 'projects'}
             title="Projects"
             open={!!open.projects}
             onToggle={() => toggle('projects')}
@@ -566,9 +636,8 @@ export default function ClientScreen() {
     ),
     'gift-cards': (
           <CollapsibleSection
-            reordering={reordering}
-            onMoveUp={() => move('gift-cards', -1)}
-            onMoveDown={() => move('gift-cards', 1)}
+            dragGesture={dragGestures['gift-cards']}
+            dragging={dragId === 'gift-cards'}
             title="Gift cards"
             open={!!open.gift}
             onToggle={() => toggle('gift')}
@@ -613,9 +682,8 @@ export default function ClientScreen() {
     ),
     'deposit-forms': (
           <CollapsibleSection
-            reordering={reordering}
-            onMoveUp={() => move('deposit-forms', -1)}
-            onMoveDown={() => move('deposit-forms', 1)}
+            dragGesture={dragGestures['deposit-forms']}
+            dragging={dragId === 'deposit-forms'}
             title="Deposit forms"
             open={!!open.deposits}
             onToggle={() => toggle('deposits')}
@@ -666,7 +734,7 @@ export default function ClientScreen() {
           </CollapsibleSection>
     ),
     'appointments': (
-          <CollapsibleSection reordering={reordering} onMoveUp={() => move('appointments', -1)} onMoveDown={() => move('appointments', 1)} title="Appointments" open={!!open.appointments} onToggle={() => toggle('appointments')}>
+          <CollapsibleSection dragGesture={dragGestures['appointments']} dragging={dragId === 'appointments'} title="Appointments" open={!!open.appointments} onToggle={() => toggle('appointments')}>
             {appointments === null ? (
               <Empty text="Loading appointments…" />
             ) : appointments.length === 0 ? (
@@ -680,9 +748,8 @@ export default function ClientScreen() {
     ),
     'waivers': (
           <CollapsibleSection
-            reordering={reordering}
-            onMoveUp={() => move('waivers', -1)}
-            onMoveDown={() => move('waivers', 1)}
+            dragGesture={dragGestures['waivers']}
+            dragging={dragId === 'waivers'}
             title="Waivers"
             open={!!open.waivers}
             onToggle={() => toggle('waivers')}
@@ -724,7 +791,7 @@ export default function ClientScreen() {
           </CollapsibleSection>
     ),
     'notes': (
-          <CollapsibleSection reordering={reordering} onMoveUp={() => move('notes', -1)} onMoveDown={() => move('notes', 1)} title="Notes" open={!!open.notes} onToggle={() => toggle('notes')}>
+          <CollapsibleSection dragGesture={dragGestures['notes']} dragging={dragId === 'notes'} title="Notes" open={!!open.notes} onToggle={() => toggle('notes')}>
             {/* Web's explainer, verbatim. */}
             <Text style={styles.explainer}>
               Every note written on this client&apos;s inquiries, projects, and appointments —
@@ -735,7 +802,7 @@ export default function ClientScreen() {
           </CollapsibleSection>
     ),
     'activity-history': (
-          <CollapsibleSection reordering={reordering} onMoveUp={() => move('activity-history', -1)} onMoveDown={() => move('activity-history', 1)} title="Activity history" open={!!open.activity} onToggle={() => toggle('activity')}>
+          <CollapsibleSection dragGesture={dragGestures['activity-history']} dragging={dragId === 'activity-history'} title="Activity history" open={!!open.activity} onToggle={() => toggle('activity')}>
             {/* Web groups this by date with a description per change. The
                 client payload carries no audit trail, so the card keeps
                 web's place and says so rather than showing nothing. */}
@@ -744,7 +811,16 @@ export default function ClientScreen() {
     ),
   };
             return order.map((sectionId) => (
-              <View key={sectionId}>{SECTIONS[sectionId]}</View>
+              <View
+                key={sectionId}
+                onLayout={(e) => {
+                  const { y, height } = e.nativeEvent.layout;
+                  cardLayouts.current[sectionId] = { y, height };
+                }}
+                style={dragId === sectionId ? styles.dragging : undefined}
+              >
+                {SECTIONS[sectionId]}
+              </View>
             ));
           })()}
         </ScrollView>
@@ -762,7 +838,7 @@ export default function ClientScreen() {
           Alert.alert('Add email', 'Adding an address is done in the portal.');
         }}
       />
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
@@ -1117,12 +1193,13 @@ const APPOINTMENT_CHIP_TONES: Record<AppointmentTone, ChipTone> = {
 /** A real instant, as web writes it in these tables. */
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
   /*
    * ITEM 8. Web's widget list is `flex flex-col gap-6`
    * (`ReorderableWidgetList.tsx`) -- 24px between boxes. Mobile had 12.
    */
   content: { padding: space.lg, gap: space.xl, paddingBottom: space.xxl },
+  /* The lifted card, while its handle is held. */
+  dragging: { opacity: 0.85, transform: [{ scale: 0.99 }] },
 
   headerTop: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start', marginBottom: space.md },
   headerText: { flex: 1, gap: 2 },

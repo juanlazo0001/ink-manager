@@ -2,8 +2,8 @@ import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { ActivityHistory } from '@/components/ActivityHistory';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
@@ -75,7 +75,7 @@ export default function GiftCardScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <ScreenHeader onBack={() => router.back()} />
 
       {error ? (
@@ -193,7 +193,7 @@ export default function GiftCardScreen() {
           </CollapsibleSection>
         </ScrollView>
       )}
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
@@ -217,7 +217,6 @@ function paymentMethodLabel(method: string | null): string {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
   content: { padding: space.lg, gap: space.xl, paddingBottom: space.xxl },
 
   headTop: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },

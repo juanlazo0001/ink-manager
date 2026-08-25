@@ -2,8 +2,8 @@ import type { ArtistInquiryListItem, StaffInquiryListItem } from '@ink-manager/s
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { InquiryRow, type InquiryRowData } from '@/components/InquiryRow';
 import { TopBar } from '@/components/TopBar';
 import { SegmentedControl } from '@/components/SegmentedControl';
@@ -162,7 +162,7 @@ export default function InquiriesScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <TopBar />
 
       <SegmentedControl
@@ -239,12 +239,11 @@ export default function InquiriesScreen() {
           }
         />
       )}
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   listContent: { paddingTop: space.sm, paddingBottom: space.xxl },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
   separator: { height: hairline, backgroundColor: colors.borderSoft, marginLeft: space.lg },

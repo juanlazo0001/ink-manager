@@ -30,6 +30,27 @@ import { duration, easing } from '@/theme/motion';
  * text, so the four call sites that set `color` on it were no-ops; those
  * are gone too.
  *
+ * ─── WEB'S LITERAL VALUES ───────────────────────────────────────────
+ *
+ * Extracted from `apps/web/src/components/Eyebrow.tsx`, not measured off
+ * a screenshot:
+ *
+ *   container  inline-flex items-center gap-3      -> 12px between parts
+ *   text       font-jura text-[11px] font-semibold
+ *              tracking-[0.34em] text-fg-muted      -> Jura 600, 11px,
+ *                                                      3.74px, fgMuted
+ *   ticks      text-danger-strong text-[13px]
+ *              tracking-normal                      -> 13px, 0 tracking
+ *   meta       text-fg-muted/70 text-[11px]
+ *              font-normal normal-case tracking-normal
+ *
+ * `type.eyebrow` already held every one of those numbers. What diverged
+ * was a step session Y added — 9.5px at 0.5px tracking for any label over
+ * 24 characters — to stop the Clients eyebrow overflowing at 320pt. That
+ * is gone: it made two screens look like a different component, which is
+ * what the owner kept seeing. A label too long for its screen is fixed by
+ * shortening the LABEL.
+ *
  * Web's `components/Eyebrow.tsx`:
  *   container  font-jura text-[11px] font-semibold tracking-[0.34em]
  *              text-fg-muted uppercase, gap-3
@@ -58,31 +79,14 @@ export function Eyebrow({
   style?: StyleProp<ViewStyle>;
 }) {
   const label = String(children).toUpperCase();
-  /*
-   * THE TRACKING IS WHAT MAKES A LONG EYEBROW OVERFLOW, not the type size.
-   * 0.34em at 11px is 3.7px between every letter — on a 39-character line
-   * that is 145px of pure air, more than half a 320pt screen's usable
-   * width. So a long eyebrow steps both down together.
-   *
-   * Deterministic on a character count rather than measured, because it
-   * has to produce the same result on iOS and under react-native-web:
-   * `adjustsFontSizeToFit` is iOS-only and silently ellipsizes on web,
-   * which is exactly what this is here to prevent.
-   */
-  const isLong = label.length > 24;
   return (
     <View style={[styles.eyebrowRow, style]}>
       <Text style={styles.tick} accessibilityElementsHidden importantForAccessibility="no">
         +
       </Text>
       <Text
-        style={[styles.eyebrow, isLong && styles.eyebrowLong]}
+        style={styles.eyebrow}
         numberOfLines={1}
-        // A further safety net on iOS only — react-native-web ignores it
-        // and ellipsizes instead, which is why the step above is
-        // deterministic rather than relying on this.
-        adjustsFontSizeToFit
-        minimumFontScale={0.8}
       >
         {label}
       </Text>
@@ -315,12 +319,15 @@ const styles = StyleSheet.create({
   /*
    * NEVER WRAPS. `flexWrap: 'wrap'` was here, and on a long eyebrow the
    * row broke — dropping the closing `+` onto a line of its own, which is
-   * not an eyebrow, it is a stray glyph. The ticks flank the text; that is
-   * the whole anatomy.
+   * not an eyebrow, it is a stray glyph. The ticks flank the text; that
+   * is the whole anatomy.
    *
-   * When the text is too wide the TEXT gives way, not the row: it shrinks
-   * a step (`adjustsFontSizeToFit`) and, past that, ellipsizes. The ticks
-   * never shrink and never move.
+   * `gap: space.md` is 12px, which is web's `gap-3` exactly.
+   *
+   * When the text is too wide it ellipsizes. It no longer shrinks: the
+   * shrink step made a long eyebrow render as a visibly different
+   * component from a short one, and a label too long for its screen is a
+   * copy problem, not a type problem.
    */
   eyebrowRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   /*
@@ -332,7 +339,6 @@ const styles = StyleSheet.create({
    * trusting a render that merely looked dim.
    */
   eyebrow: { ...type.eyebrow, color: colors.fgMuted, flexShrink: 1 },
-  eyebrowLong: { fontSize: 9.5, letterSpacing: 0.5 },
   tick: { ...type.eyebrow, fontSize: 13, letterSpacing: 0, color: colors.dangerStrong, flexShrink: 0 },
   eyebrowMeta: { ...type.meta, color: colors.fgMuted, opacity: 0.7 },
 

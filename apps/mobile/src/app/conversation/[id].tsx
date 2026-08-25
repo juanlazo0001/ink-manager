@@ -18,8 +18,8 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { Composer, type ComposerSendState } from '@/components/Composer';
 import { MessageActions } from '@/components/MessageActions';
 import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
@@ -348,16 +348,16 @@ export default function ConversationScreen() {
 
   if (header === null && error === null) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Conversation" onBack={() => router.back()} right={<View style={styles.headerSpacer} />} />
         <ScreenLoading />
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
   if (header === null) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Conversation" onBack={() => router.back()} right={<View style={styles.headerSpacer} />} />
         <View style={styles.centre}>
           <StateMessage
@@ -367,12 +367,12 @@ export default function ConversationScreen() {
             action={{ label: 'Try again', onPress: () => loadNewest('refresh') }}
           />
         </View>
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <ScreenHeader
         title={title}
         subtitle={subtitle}
@@ -514,12 +514,11 @@ export default function ConversationScreen() {
         visible={!!lightbox}
         onClose={() => setLightbox(null)}
       />
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   flex: { flex: 1 },
   headerSpacer: { width: 36 },
   centre: { flex: 1, justifyContent: 'center' },

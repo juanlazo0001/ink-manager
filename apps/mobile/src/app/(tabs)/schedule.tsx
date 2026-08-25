@@ -2,8 +2,8 @@ import type { AppointmentListItem } from '@ink-manager/shared-types';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { AppointmentRow } from '@/components/AppointmentRow';
 import { DayStrip } from '@/components/DayStrip';
 import { TopBar } from '@/components/TopBar';
@@ -146,15 +146,15 @@ export default function ScheduleScreen() {
   // brief spinner.
   if (!timeZoneReady || !today || !activeKey) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <TopBar />
         <SkeletonList rows={5} avatar={false} />
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <TopBar />
 
       <View style={styles.controls}>
@@ -262,12 +262,11 @@ export default function ScheduleScreen() {
           }
         />
       )}
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
 
   controls: {
     flexDirection: 'row',

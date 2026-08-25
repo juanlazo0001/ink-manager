@@ -2,8 +2,8 @@ import type { PersonalTask, SystemTask, TasksResponse } from '@ink-manager/share
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { NewTaskBar } from '@/components/NewTaskBar';
 import { PillMenu } from '@/components/PillMenu';
 import { PillRow } from '@/components/Pill';
@@ -294,7 +294,7 @@ export default function TasksScreen() {
 
   if (error && !data) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Tasks" onBack={() => router.back()} right={<View style={styles.headSpacer} />} />
         <StateMessage
           eyebrow="Not loaded"
@@ -302,12 +302,12 @@ export default function TasksScreen() {
           body={error}
           action={{ label: 'Try again', onPress: () => void load('initial') }}
         />
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       {/*
         ITEM 1 (session X) — Notifications' anatomy: back chevron, serif
         title, and `right` overridden to an empty spacer so the top-right
@@ -480,12 +480,11 @@ export default function TasksScreen() {
           </>
         )}
       </ScrollView>
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
   /* Balances the back chevron so the title stays centred, as Notifications does. */
   headSpacer: { width: 44 },
 

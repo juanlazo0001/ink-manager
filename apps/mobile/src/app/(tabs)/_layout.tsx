@@ -110,6 +110,9 @@ export default function TabsLayout() {
         reached from the drawer.
       */}
       <Tabs.Screen name="clients" options={{ href: null }} />
+      {/* Same treatment as Clients: in the navigator for its chrome, no
+          tab button of its own. Reached from the drawer. */}
+      <Tabs.Screen name="team" options={{ href: null }} />
     </Tabs>
   );
 }

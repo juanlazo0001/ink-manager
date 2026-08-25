@@ -1,8 +1,8 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { Appear } from '@/components/Appear';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { Pill, PillRow } from '@/components/Pill';
@@ -117,7 +117,7 @@ export default function ClientsScreen() {
   const visible = useMemo(() => filterClients(rows ?? [], search), [rows, search]);
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       {/*
         ITEM 2: the same top bar every tab screen wears — hamburger left,
         the [tasks][bell][avatar] cluster right. This screen had a pushed
@@ -208,7 +208,7 @@ export default function ClientsScreen() {
           }
         />
       )}
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
@@ -280,7 +280,6 @@ function ClientRow({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
   /* Web: an eyebrow, then `font-display` at clamp(28,3.4vw,38). */
   pageHead: { paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.xs },
   /* ITEM 3: the same token Home's "Welcome, Juan" uses, not a lookalike. */

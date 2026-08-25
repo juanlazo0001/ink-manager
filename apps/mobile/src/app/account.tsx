@@ -1,10 +1,10 @@
 import { useRouter } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Feather from '@expo/vector-icons/Feather';
 import { Pressable } from 'react-native';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, Eyebrow, QuietButton } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -45,7 +45,7 @@ export default function AccountScreen() {
   const { profile, studio } = session;
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <ScreenHeader title="Account" onBack={() => router.back()} right={<View style={styles.headerSpacer} />} />
 
       <View style={styles.body}>
@@ -98,12 +98,11 @@ export default function AccountScreen() {
 
         <QuietButton label="Log out" onPress={logout} />
       </View>
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   headerSpacer: { width: 36 },
   body: { flex: 1, paddingHorizontal: space.lg, paddingTop: space.xl, paddingBottom: space.xl, gap: space.xl },
   identity: { gap: space.xs },

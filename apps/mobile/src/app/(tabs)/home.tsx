@@ -3,7 +3,6 @@ import Feather from '@expo/vector-icons/Feather';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   EditorialCard,
@@ -14,6 +13,7 @@ import {
   RedRule,
   StatChip,
 } from '@/components/editorial';
+import { ScreenShell } from '@/components/ScreenShell';
 import { TopBar } from '@/components/TopBar';
 import { Pill, PillRow } from '@/components/Pill';
 import { SkeletonCards } from '@/components/Skeleton';
@@ -97,15 +97,15 @@ export default function HomeScreen() {
 
   if (!ready || (!data && !error)) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <TopBar />
         <SkeletonCards count={4} />
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <TopBar />
 
       <ScrollView
@@ -333,7 +333,7 @@ export default function HomeScreen() {
           </>
         ) : null}
       </ScrollView>
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
@@ -356,11 +356,11 @@ function Dot({ color, label }: { color: string; label: string }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   content: { paddingBottom: space.xxl },
 
   welcome: { paddingHorizontal: space.lg, paddingTop: space.xl, gap: space.xs },
-  welcomeText: { ...type.welcome, color: colors.fg, marginTop: space.md },
+  // Web's dashboard title is `mt-1` under its eyebrow — 4px, not 12.
+  welcomeText: { ...type.welcome, color: colors.fg, marginTop: space.xs },
   welcomeName: { ...type.welcomeName, color: colors.accentHover },
 
   rangeRow: { paddingTop: space.lg },

@@ -3,8 +3,8 @@ import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { DetailField, DetailSection, FieldDivider } from '@/components/DetailSection';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
@@ -96,7 +96,7 @@ export default function AppointmentDetailScreen() {
 
   if (!appointment) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Appointment" onBack={() => router.back()} right={<View style={styles.headerSpacer} />} />
         {error ? (
           <View style={styles.centre}>
@@ -110,7 +110,7 @@ export default function AppointmentDetailScreen() {
         ) : (
           <ScreenLoading />
         )}
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
@@ -128,7 +128,7 @@ export default function AppointmentDetailScreen() {
     : null;
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <ScreenHeader
         title={clientLabel}
         subtitle={artistName}
@@ -343,12 +343,11 @@ export default function AppointmentDetailScreen() {
           </Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   headerSpacer: { width: 36 },
   centre: { flex: 1, justifyContent: 'center' },
   content: { paddingBottom: space.xxxl },

@@ -167,6 +167,26 @@ export function DownloadIcon({ size = 20, color }: IconProps) {
   );
 }
 
+/**
+ * The six-dot drag handle — web's `DragHandleIcon`, dot for dot.
+ *
+ * FILLED, not stroked: this is the one glyph in the set web draws with
+ * `fill="currentColor" stroke="none"`, and stroking six 1.4r circles
+ * would render six rings.
+ */
+export function DragHandleIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill={color} stroke="none">
+      <Circle cx="7" cy="5" r="1.4" />
+      <Circle cx="13" cy="5" r="1.4" />
+      <Circle cx="7" cy="10" r="1.4" />
+      <Circle cx="13" cy="10" r="1.4" />
+      <Circle cx="7" cy="15" r="1.4" />
+      <Circle cx="13" cy="15" r="1.4" />
+    </Svg>
+  );
+}
+
 /** Trash — web's `TrashIcon`, on the contact card's remove control. */
 export function TrashIcon({ size = 20, color }: IconProps) {
   return (

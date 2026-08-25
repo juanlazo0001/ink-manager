@@ -4,8 +4,8 @@ import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { PhotoViewer } from '@/components/PhotoViewer';
 import { Pill } from '@/components/Pill';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -89,15 +89,15 @@ export default function FlashGalleryScreen() {
 
   if (!pieces && !error) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Flash" onBack={() => router.back()} right={<View />} />
         <ScreenLoading />
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <ScreenHeader
         title="Flash"
         subtitle={pieces ? summarize(pieces) : undefined}
@@ -219,12 +219,11 @@ export default function FlashGalleryScreen() {
         visible={viewerIndex !== null}
         onClose={() => setViewerIndex(null)}
       />
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   content: { paddingBottom: space.xxxl },
 
   newButton: {

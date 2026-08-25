@@ -2,11 +2,11 @@ import Feather from '@expo/vector-icons/Feather';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { Appear } from '@/components/Appear';
 import { Avatar, initialsOf } from '@/components/Avatar';
-import { ScreenHeader } from '@/components/ScreenHeader';
+import { TopBar } from '@/components/TopBar';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { SkeletonList } from '@/components/Skeleton';
 import { Eyebrow, StateMessage } from '@/components/ui';
@@ -81,8 +81,20 @@ export default function TeamScreen() {
   const artists = (users ?? []).filter((u) => u.role === 'ARTIST');
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
-      <ScreenHeader title="Team" onBack={() => router.back()} />
+    <ScreenShell edges={['top']}>
+      {/*
+        ITEM 5: the Clients anatomy — tab chrome (hamburger + cluster, the
+        tab bar below, the shared photo behind), then web's own eyebrow
+        and a serif title. Web's Team page leads with "The Roster"
+        (`pages/Team.tsx`), so that is the copy rather than an invented
+        line.
+      */}
+      <TopBar />
+
+      <View style={styles.pageHead}>
+        <Eyebrow>The Roster</Eyebrow>
+        <Text style={styles.pageTitle}>Team</Text>
+      </View>
 
       <SegmentedControl
         segments={[
@@ -193,7 +205,7 @@ export default function TeamScreen() {
           </View>
         </ScrollView>
       )}
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
@@ -228,7 +240,9 @@ function Badge({ label }: { label: string }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+  /* Same head as Clients: eyebrow, then Home's own "Welcome," token. */
+  pageHead: { paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.xs },
+  pageTitle: { ...type.welcome, color: colors.fg },
   content: { padding: space.lg, gap: space.md, paddingBottom: space.xxl },
 
   ownerBanner: {

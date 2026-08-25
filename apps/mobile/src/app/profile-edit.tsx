@@ -2,7 +2,6 @@ import Feather from '@expo/vector-icons/Feather';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   CheckListField,
@@ -11,6 +10,7 @@ import {
   SwitchField,
   TextField,
 } from '@/components/form/Fields';
+import { ScreenShell } from '@/components/ScreenShell';
 import { FormScreen, useUnsavedChangesGuard } from '@/components/form/FormScreen';
 import { AvatarField, ImageGridField } from '@/components/form/ImageFields';
 import { ProfileSection } from '@/components/ProfileSection';
@@ -264,16 +264,16 @@ export default function ProfileEditScreen() {
 
   if (data.loading && !artist) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Edit profile" onBack={() => router.back()} right={<View />} />
         <ScreenLoading />
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
   if (!artist) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Edit profile" onBack={() => router.back()} right={<View />} />
         <StateMessage
           eyebrow={data.noArtistProfile ? 'No artist profile' : 'Not available'}
@@ -282,7 +282,7 @@ export default function ProfileEditScreen() {
           body={data.noArtistProfile ? 'There is nothing here to edit.' : (data.error ?? undefined)}
           action={data.noArtistProfile ? undefined : { label: 'Try again', onPress: data.reload }}
         />
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
@@ -545,7 +545,7 @@ export default function ProfileEditScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <ScreenHeader
         title="Edit profile"
         subtitle={dirty ? 'Unsaved changes' : undefined}
@@ -626,7 +626,7 @@ export default function ProfileEditScreen() {
           </ProfileSection>
         ))}
       </FormScreen>
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
@@ -830,7 +830,6 @@ function sideMessage(err: unknown, subject: string): string {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   accountBlock: { paddingTop: space.lg, paddingBottom: space.lg },
   accentTitle: { color: colors.accent },
   hint: { ...type.meta, color: colors.fgMuted, paddingVertical: space.xs },
