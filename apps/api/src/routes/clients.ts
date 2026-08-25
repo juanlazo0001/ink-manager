@@ -17,6 +17,14 @@ import { callerBelongsToStudio, activeStudioIdsForCaller, hasPermissionAt } from
 import { isSupportedLocale } from "../lib/locale";
 import { streamClientFullExport, SECTION_KEYS, type SectionKey } from "../lib/clientFullExport";
 import { EXPORT_FIELD_KEYS, EXPORT_FIELD_LABELS, buildClientContactValues, type ExportFieldKey } from "../lib/clientExportFields";
+import {
+  SMS_CONSENT_TOKEN_TTL_DAYS,
+  SMS_OPT_OUT_SOURCE_STAFF,
+  STAFF_CONSENT_METHODS,
+  checkConsentEligibility,
+  isStaffConsentMethod,
+  issueConsentToken,
+} from "../lib/smsConsent";
 
 const router = Router();
 
@@ -1510,6 +1518,165 @@ router.post("/:id/merge", async (req, res) => {
 
 // Archive: soft, reversible hide -- same exclude-from-list-views treatment
 // as a merge, but nothing is repointed/destroyed and it can be undone.
+// Post-add SMS consent (staff side). Deliberately its own routes rather
+// than fields on PATCH /:id: consent is a compliance record, not an
+// ordinary editable attribute, and it earns its own explicit audit action,
+// its own permission check and its own refusal rules. Folding it into
+// EDITABLE_CLIENT_FIELDS would let it ride along inside an unrelated edit
+// with a generic "update" audit entry -- exactly the wrong shape for the
+// one field a carrier might one day ask us to evidence.
+//
+// Shared loader for all three: existence + studio ownership + clients.edit
+// evaluated AT THE CLIENT'S OWN STUDIO (never the caller's home studio --
+// CLAUDE.md's standing artist-scoping rule), plus the phones needed to
+// resolve whether there's a reachable number at all.
+async function loadClientForConsent(user: Parameters<typeof callerBelongsToStudio>[0], id: string) {
+  const client = await prisma.client.findUnique({
+    where: { id },
+    include: { phones: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], take: 1 } },
+  });
+  if (!client || !(await callerBelongsToStudio(user, client.studioId))) {
+    return { ok: false as const, status: 404, body: { error: "Client not found" } };
+  }
+  if (!(await hasPermissionAt(user, client.studioId, "clients.edit"))) {
+    return { ok: false as const, status: 403, body: { error: "Forbidden" } };
+  }
+  if (client.mergedIntoId) {
+    return {
+      ok: false as const,
+      status: 400,
+      body: { error: "This client has been merged and can no longer be edited directly" },
+    };
+  }
+  return { ok: true as const, client };
+}
+
+// Staff-attested consent: the client told someone, in person or on the
+// phone, that they're happy to be texted. The METHOD is required -- see
+// STAFF_CONSENT_METHODS' own comment on why "staff ticked a box" is not a
+// sufficient record under A2P 10DLC.
+router.post("/:id/sms-consent", async (req, res) => {
+  const id = req.params.id as string;
+  const loaded = await loadClientForConsent(req.user!, id);
+  if (!loaded.ok) return res.status(loaded.status).json(loaded.body);
+  const { client } = loaded;
+
+  const { method } = req.body ?? {};
+  if (!isStaffConsentMethod(method)) {
+    return res.status(400).json({
+      error: `method must be one of: ${Object.keys(STAFF_CONSENT_METHODS).join(", ")}`,
+    });
+  }
+
+  const eligibility = checkConsentEligibility(client);
+  if (!eligibility.ok) {
+    // already_given is a 200 no-op, not an error: consent is only ever SET
+    // and never overwritten anywhere in this codebase, so a double-click
+    // or a second staff member doing the same thing should be harmless and
+    // preserve the ORIGINAL timestamp rather than restamping it.
+    if (eligibility.code === "already_given") return res.json(client);
+    return res.status(409).json({ error: eligibility.error, code: eligibility.code });
+  }
+
+  const source = STAFF_CONSENT_METHODS[method];
+  const updated = await prisma.client.update({
+    where: { id },
+    data: {
+      smsConsentGivenAt: new Date(),
+      smsConsentSource: source,
+      // Any outstanding self-serve link is now moot -- clear it so a
+      // forwarded link can't later be replayed against this client.
+      smsConsentToken: null,
+      smsConsentTokenExpiresAt: null,
+    },
+  });
+
+  await logAudit({
+    studioId: client.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Client",
+    entityId: id,
+    action: "sms_opted_in",
+    changes: { via: "staff_recorded", method, source, consentRecorded: true },
+  });
+
+  emitInvalidation({ type: "client.updated", studioId: client.studioId, clientId: id });
+
+  res.json(updated);
+});
+
+// Issue (or re-issue) the single-use self-serve consent link. Returns the
+// URL for staff to copy or email -- deliberately NOT sent by SMS from
+// here, because texting an opt-in invitation to someone who has not
+// consented is itself an unconsented message, which is the exact thing
+// carriers treat as a violation.
+router.post("/:id/sms-consent/link", async (req, res) => {
+  const id = req.params.id as string;
+  const loaded = await loadClientForConsent(req.user!, id);
+  if (!loaded.ok) return res.status(loaded.status).json(loaded.body);
+  const { client } = loaded;
+
+  const eligibility = checkConsentEligibility(client);
+  if (!eligibility.ok) {
+    return res.status(409).json({ error: eligibility.error, code: eligibility.code });
+  }
+
+  const { expiresAt, url } = await issueConsentToken(id);
+
+  // No token in the audit entry -- it is a live credential for as long as
+  // it stands, and the audit log is readable by more people than should be
+  // able to opt a client in. That an link was issued, by whom, is the part
+  // worth recording.
+  await logAudit({
+    studioId: client.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Client",
+    entityId: id,
+    action: "sms_consent_link_issued",
+    changes: { expiresAt, ttlDays: SMS_CONSENT_TOKEN_TTL_DAYS },
+  });
+
+  res.json({ url, expiresAt });
+});
+
+// Staff-recorded revocation -- the counterpart to an inbound STOP, for a
+// client who says "stop texting me" in person or over the phone. Unlike
+// granting consent this has NO eligibility gate beyond ownership: honoring
+// a withdrawal is never something to refuse, and making it harder to stop
+// texts than to start them would be precisely backwards.
+router.delete("/:id/sms-consent", async (req, res) => {
+  const id = req.params.id as string;
+  const loaded = await loadClientForConsent(req.user!, id);
+  if (!loaded.ok) return res.status(loaded.status).json(loaded.body);
+  const { client } = loaded;
+
+  if (client.smsOptedOutAt) return res.json(client);
+
+  const updated = await prisma.client.update({
+    where: { id },
+    data: {
+      smsOptedOutAt: new Date(),
+      // An outstanding invite must die with the opt-out, or the client
+      // could be walked back in through a link issued before it.
+      smsConsentToken: null,
+      smsConsentTokenExpiresAt: null,
+    },
+  });
+
+  await logAudit({
+    studioId: client.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Client",
+    entityId: id,
+    action: "sms_opted_out",
+    changes: { via: SMS_OPT_OUT_SOURCE_STAFF },
+  });
+
+  emitInvalidation({ type: "client.updated", studioId: client.studioId, clientId: id });
+
+  res.json(updated);
+});
+
 router.post("/:id/archive", async (req, res) => {
   const id = req.params.id as string;
   const client = await prisma.client.findUnique({ where: { id } });

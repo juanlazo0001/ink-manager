@@ -18,6 +18,7 @@ import { reuploadTwilioMedia } from "../lib/cloudinary";
 import { logAudit } from "../lib/audit";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { sendClientSms } from "../lib/clientSms";
+import { sendOptInConfirmation } from "../lib/smsConsent";
 import { renderTemplate, type ReminderTemplates } from "../lib/reminderTemplates";
 import { getStripe } from "../lib/stripe";
 import { issueGiftCardForPaidDeposit } from "../lib/deposits";
@@ -67,28 +68,13 @@ const STOP_KEYWORDS = new Set([
 const OPT_IN_KEYWORDS = new Set(["START", "UNSTOP", "YES"]);
 const HELP_KEYWORDS = new Set(["HELP", "INFO"]);
 
-// Both auto-replies render the studio's own saved template (the same
-// StudioSettings.reminderTemplates JSON field/editor as the reminder
-// cadence, just two more keys) and send it through the exact same
-// sendClientSms path every other outbound SMS in this app uses. If a
-// studio hasn't got the template saved yet (predates this feature, or
-// simply left it blank -- though the Settings validation requires a
-// non-empty string once the object is touched at all), this silently
-// no-ops rather than sending a broken/empty message -- same "skip if not
-// configured" spirit reminderTicker.ts's own `if (sendTimes && templates)`
-// gate already uses for the cadence.
-async function sendOptInConfirmation(studioId: string, clientId: string): Promise<void> {
-  const [studio, settings] = await Promise.all([
-    prisma.studio.findUnique({ where: { id: studioId }, select: { name: true } }),
-    prisma.studioSettings.findUnique({ where: { studioId }, select: { reminderTemplates: true } }),
-  ]);
-  const templates = settings?.reminderTemplates as unknown as ReminderTemplates | null;
-  if (!templates?.optInConfirmation) return;
-
-  const body = renderTemplate(templates.optInConfirmation, { studioName: studio?.name ?? "our studio" });
-  const { conversation } = await getOrCreateClientConversation(studioId, clientId, null);
-  await sendClientSms({ studioId, clientId, conversationId: conversation.id, body, actorUserId: null });
-}
+// sendOptInConfirmation now lives in lib/smsConsent.ts, because the
+// self-serve consent link is a second opt-in path that owes the client
+// exactly the same confirmation this one does. Its behaviour is unchanged
+// -- see that file for the full note on template gating.
+//
+// The HELP auto-reply below stays here: it is a property of the inbound
+// keyword handler specifically, with no second caller.
 
 // HELP fires regardless of current opt-in/opt-out status -- basic
 // customer service, not a marketing message, per CTIA convention (and

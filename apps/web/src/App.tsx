@@ -46,6 +46,7 @@ import GiftCardResponse from './pages/GiftCardResponse'
 import GiftCardDetail from './pages/GiftCardDetail'
 import ScanGiftCard from './pages/ScanGiftCard'
 import WaiverSign from './pages/WaiverSign'
+import SmsConsent from './pages/SmsConsent'
 import ShortLinkRedirect from './pages/ShortLinkRedirect'
 import Tasks from './pages/Tasks'
 import ConversationDeepLink from './pages/ConversationDeepLink'
@@ -190,6 +191,7 @@ function AppRoutes() {
         <Route path="/appointments/pay-complete" element={<AppointmentPaymentComplete />} />
         <Route path="/gift-card/:code" element={<GiftCardResponse />} />
         <Route path="/waiver/:token" element={<WaiverSign />} />
+        <Route path="/sms-consent/:token" element={<SmsConsent />} />
         <Route path="/s/:code" element={<ShortLinkRedirect />} />
         {/* UI-1: Appointments was renamed Calendar (sidebar consolidation) --
             redirect so old bookmarks/links survive. */}

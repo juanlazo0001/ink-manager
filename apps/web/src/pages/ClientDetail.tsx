@@ -10,6 +10,7 @@ import StaffInquiryForm from '../components/StaffInquiryForm'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { apiFetch, ApiError, downloadFile } from '../lib/api'
 import { describeAppointmentStatus, formatDateTime, formatCalendarDateOnly, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
+import SmsConsentControls from '../components/SmsConsentControls'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { AttachmentChip } from '../components/NotesSection'
@@ -1579,21 +1580,15 @@ export default function ClientDetail() {
 
               <ReorderableWidgetList pageKey="client-detail" defaultOrder={CLIENT_WIDGET_ORDER}>
               <Widget key="contact-info" id="contact-info" title="Contact Info">
-                <p className="mt-2 text-xs font-medium text-fg-secondary">
-                  SMS Consent:{' '}
-                  {client.smsConsentGivenAt ? (
-                    <span className="text-success">Given {formatDateTime(client.smsConsentGivenAt)}</span>
-                  ) : (
-                    <span className="text-fg-muted">Not yet given</span>
-                  )}
-                </p>
-
-                {client.smsOptedOutAt && (
-                  <p className="mt-2 text-xs font-medium text-warning">
-                    Opted out of SMS {formatDateTime(client.smsOptedOutAt)} — outbound texts to this client are
-                    refused until they text START.
-                  </p>
-                )}
+                <SmsConsentControls
+                  clientId={client.id}
+                  smsConsentGivenAt={client.smsConsentGivenAt}
+                  smsConsentSource={client.smsConsentSource}
+                  smsOptedOutAt={client.smsOptedOutAt}
+                  canEdit={canEditClient}
+                  disabled={isEnded}
+                  onUpdated={(patch) => setClient((prev) => (prev ? { ...prev, ...patch } : prev))}
+                />
 
                 <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2">
                   <div>

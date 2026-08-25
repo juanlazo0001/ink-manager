@@ -1083,6 +1083,24 @@ model Client {
   smsConsentGivenAt DateTime?
   smsConsentSource  String?
 
+  // Post-add consent: a client added by staff (walk-in, phone booking,
+  // import) has a phone but no consent, and until now the ONLY way they
+  // could ever be texted was to text the studio first -- the intake form
+  // is public-only and the keyword paths are all inbound. These two carry
+  // the self-serve half of the fix: a single-use link the client opens and
+  // opts in on themselves, which is the strongest evidence a carrier
+  // audit can be shown (the client's own action, not staff attesting on
+  // their behalf). Same random-token + expiry shape as every other public
+  // flow here (waiver, deposit, estimate), per CLAUDE.md's standing rule
+  // that a new public flow reuses the established pattern rather than
+  // inventing an auth mechanism.
+  //
+  // Single-use: both are cleared the moment consent is recorded, so a
+  // forwarded or screenshotted link cannot be replayed against the client
+  // later. Staff can always issue a fresh one.
+  smsConsentToken          String?   @unique
+  smsConsentTokenExpiresAt DateTime?
+
   // Transfer-to-artist epic: set once execution creates this client's
   // counterpart at the destination studio -- same exclude-from-list-views
   // pattern as archivedAt/mergedIntoId above, but (unlike a merge) the
