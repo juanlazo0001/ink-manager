@@ -25495,3 +25495,192 @@ Restart any `expo start` already running from the primary checkout first — the
 4. **The body** should have no add buttons and no merge pill left in it.
 5. **The title** — on your phone it should read in full. It only truncates at 320pt, which is item 4
    above and the one thing needing your decision.
+
+# Mobile session U — client page final pass, and the gift card page
+
+**Base: `mobile/session-t3` at `4b221c4`**, not `main` — T2 and T3 are both still unmerged (`main` is
+at `151c0d8`, carrying S and T). Worktree cut from T3; two commits, pushed.
+
+**No screenshots reached this session.** Everything below is extracted from web's source and from
+`q-web-client-reference.png`, the web render already committed to `parity-audit/` — which is the
+stronger ground truth anyway, since it carries the real class names rather than a picture of them.
+
+---
+
+## Part 1 — the extracted values
+
+| # | Item | Web | Mobile before | Now |
+| --- | --- | --- | --- | --- |
+| 8 | Gap between cards | `gap-6` = **24** (`ReorderableWidgetList`) | 12 | **24** |
+| 5 | Header widget surface | `card-surface … bg-surface` | **no fill at all** — a bare border | the same `Card` every section uses |
+| 1 | Client code chip | — | under the contact lines | **card's top right**, across from the avatar |
+| 2 | Name in the nav row | — | repeated there and in the card | nav row carries the back button only |
+| 6 | Project block | `py-3 first:pt-0 last:pb-0`, `divide-y` | `paddingVertical: 4`, no divider | **12**, divided |
+| 6 | Title → first session | `mt-2` = **8** | **0** | **8** |
+| 6 | Between sessions | `space-y-1.5` = **6** | 8 below each | **6** |
+| 3 | Inquiry row padding | `py-3` = **12** | **12 — already matched** | 16, *owner-directed* |
+| 4 | Meta line colour | `text-fg-secondary` — **brighter than mobile's** | `fgMuted` | new `fgFaint`, *owner-directed* |
+
+**Two of these disagreed with the brief, and I did not smooth it over.**
+
+*Item 3.* The brief said to extract web's row padding and match it. Web's `<td>` is `py-3` — 12px —
+which is exactly what mobile already had. There was nothing to import. The scrunch is real, but its
+cause is that a mobile row is **two lines** (description, then the meta line) where web's is one, so
+the same 12px has twice as much to separate. Raised to 16 because that is what was asked for, and
+labelled in the code as a deliberate step *away* from web's number rather than dressed up as parity.
+
+*Item 4.* Mobile was **already dimmer than web**: web renders that column in `fg-secondary`, one
+step *brighter* than the `fgMuted` mobile was using. `fg-muted` is the dimmest text token either
+palette defines, so "one step down" had nothing to extract. `fgFaint` is derived, and the token's
+own comment says exactly that.
+
+### The booking badge was never blocked
+
+Sessions P, Q and R each recorded the projects booking chip ("Scheduled" / "Not yet booked" /
+"Completed") as waiting on API surface that did not exist. **That was wrong.**
+`apps/api/src/routes/clients.ts` has always selected
+
+```
+plannedSessions: { select: { id, sessionNumber, estimatedHoursMin, estimatedHoursMax,
+                             estimatedPriceLow, estimatedPriceHigh, appointmentId,
+                             depositForm: { paidAt }, appointment: { checkedOutAt } } }
+```
+
+and mobile's own `ClientInquiry` type declared `plannedSessions: { id, sessionNumber? }[]`, throwing
+the rest away at the type boundary. Three reports called an API gap what was a mobile type bug.
+
+So the session line now carries **both** of web's badges and web's full label —
+`Session 1 — estimated 4-6 hrs ($800-$1200)` — from data that was in the payload the whole time.
+Web's two helpers are ported label for label, which also caught a wording drift: web says
+**"Deposit pending"**, mobile had been saying "Deposit sent".
+
+One substitution to note: web's Scheduled badge is `text-accent`, the brand gold, which is not one
+of the eight status tones. `highlight` is the closest warm tone in this palette and is what it uses;
+recorded rather than passed off as exact.
+
+## Part 2 — the gift card page
+
+### The QR, and how web makes one
+
+Web's `QrCode.tsx` calls `QRCode.toDataURL(value)` from the **`qrcode`** package and renders the
+result as an `<img>`. **It encodes `card.publicUrl`** — the API's own public link for the card, not
+the bare code — at `size 140, margin 1`, on `bg-white p-2`, and it is hidden entirely when
+`status === 'EXEMPT'`.
+
+Mobile uses **the same encoder**, not a lookalike: `qrcode/lib/core/qrcode`'s `create()`, painted
+through `react-native-svg`. Verified byte for byte — the matrix from `create()` is identical to the
+one the package's public API produces for the same string, so mobile and web draw the same code.
+
+Why that over `react-native-qrcode-svg`: it would have been a new dependency whose job is exactly
+this, wrapping a fork of an encoder already in this repo. The core entry is **pure JavaScript** — no
+canvas, no Node `Buffer`, no `fs` — so it bundles under Metro and runs in **Expo Go**, which is the
+binding constraint (a native QR module would need a custom dev client this project has no Apple
+account for). Declared in `apps/mobile/package.json` rather than leaned on as a hoisted root
+dependency. Bundle cost: **4.85 → 4.91 MB**.
+
+Two implementation notes worth keeping:
+
+- **One `<Path>`, not one `<Rect>` per module.** A 33×33 code is 1,089 nodes the naive way; as a
+  single path with one `M h v h z` subpath per dark module it is one.
+- **`create` is a NAMED export** on a CommonJS object with no `__esModule` flag. A default import
+  binds the module object, not the function, and fails only at runtime — my own first ambient
+  declaration said `export default` and would have hidden it from the compiler. Caught before
+  shipping by checking the real export shape; the `.d.ts` now records why it is declared named.
+
+### The action inventory — the brief said four, web has seven
+
+| Action | Icon | Web's gate | Built |
+| --- | --- | --- | --- |
+| Copy link | `CopyIcon` | `status !== 'EXEMPT'` | **yes — and it really copies** |
+| Edit expiration | `CalendarIcon` | `canEditExpiry && status !== 'VOID'` | yes, disabled |
+| Transfer to Client | `TransferIcon` | `canReassignHolder && status !== 'VOID'` | yes, disabled |
+| Void card | `BanIcon`, danger | `canVoid && status !== 'VOID'` | yes, disabled |
+| Redeem card | `ScanIcon` | `canVoid && status === 'ACTIVE'` | **no** |
+| Send Receipt | `SendChannelButton` | `canTextReceipt && status === 'ACTIVE'` | **no** |
+| Attach to Session | `AttachmentIcon` | `canAttachToSession && (ACTIVE ǀ EXEMPT)` | **no** |
+
+The brief's "calendar/attach" turns out to be **two separate buttons** on web — Edit expiration and
+Attach to Session. I built the four the brief named and left the other three out rather than
+widening the row unasked; their gates are recorded above so any of them is a few lines.
+
+**Redeem is worth a decision.** It is web's only *filled* action (`bg-accent text-bg`) — the page's
+primary — so the mobile page currently has no primary. It is also the action a scanned card most
+likely wants.
+
+The row wraps, as web's does (`flex flex-wrap … gap-3` under a `border-t`): four 44pt buttons is
+200pt against a 236pt card at 320.
+
+### Activity history is real
+
+`GET /audit?entityType=GiftCard&entityId=…`, web's own endpoint and query. **Sessions P and Q
+recorded "no audit trail on this endpoint" as an API gap** — that was a claim about
+`GET /clients/:id`, and the trail was never on it; it is its own endpoint and always has been. The
+same correction unblocks the **client page's** Activity History card, which is still showing an
+empty state — not built this round, but no longer blocked.
+
+Web's anatomy is ported: grouped by calendar day newest-first, day heading, bordered entry rows with
+actor + humanized action + timestamp, then `Field: from → to` detail lines. **Not ported:** the two
+multi-select filters web shows past five entries, and its merge-summary formatter — a gift card
+raises neither.
+
+One fix the render caught: a diff that changes a timestamp stores it raw, and the feed was printing
+`2026-05-01T15:05:00.000Z`. Formatted now, as web's own `formatValue` does.
+
+### Item f — the scan route
+
+Verified, already correct: `src/app/scan.tsx:53` pushes
+`{ pathname: '/gift-card/[id]', params: { id: result.giftCardId } }`. Scanning a card lands on this
+screen; nothing needed changing.
+
+## Flagged, not changed
+
+1. **The header card is tight at 320pt.** With the code chip now in the top row, the name wraps to
+   two lines and the email truncates harder than before. It is clean at 390. The chip placement was
+   the instruction, so it stands — but that is the cost.
+2. **The client page's Activity History** is now unblocked (see above) and still empty.
+3. `packages/shared-types` has no gift-card interface, so `GiftCard` is still hand-typed in two
+   places — unchanged from when session K logged it.
+
+## Verification
+
+`apps/mobile/parity-audit/`:
+
+- **`u-01-client-page.png`** — the page before (T3) and after, both at 320pt.
+- **`u-02-projects.png`** — the Projects card: web's spacing, both badges, the full session label.
+- **`u-03-gift-card.png`** — the gift card page at 320 and 390.
+- **`u-04-qr.png`** — the QR at scale, generated from the real `publicUrl`.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 17.84s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — **4.91 MB** (was 4.85; the QR encoder) |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | every new string present, plus the encoder itself (`ReedSolomonEncoder`, `errorCorrectionLevel`); harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **A client.** The header box should now match the section cards below it, the code chip should sit
+   top-right, and the nav row should no longer repeat the name. Cards should breathe more.
+2. **The Projects card** — each session should read `Session 1 — estimated 4-6 hrs ($800-$1200)` with
+   **two** chips: deposit and booking. The booking one is new and was wrongly reported as impossible
+   three times.
+3. **Scan a gift card**, or open one from a client. You should get the new page: amount as the title,
+   the fact grid, and **a QR that your phone camera can actually read** — point another phone at it
+   and it should resolve to the card's public link.
+4. **The action row** — tap the copy button, it genuinely copies. The other three say where they live.
+5. **Activity history** at the bottom — real events, grouped by day.
