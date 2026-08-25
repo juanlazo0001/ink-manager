@@ -45,7 +45,7 @@ export default function TasksScreen() {
    * cards on one scrolling page rather than three mutually exclusive
    * lists behind a control. Visibility is still permission-derived — see
    * `canSeeQueue` / `canAssign` below, the same two keys
-   * `taskSegmentsFor` used.
+   * the old scope filter used.
    */
   const [queueType, setQueueType] = useState<string>('all');
   const [teammates, setTeammates] = useState<{ id: string; name: string }[]>([]);
