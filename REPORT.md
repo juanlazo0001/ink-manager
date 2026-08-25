@@ -25832,3 +25832,147 @@ Restart any `expo start` already running from the primary checkout first — the
    amber, an EXEMPT one blue, an EXPIRED one amber rather than red.
 4. **Deposit forms** — each row ends with a state chip; no gift card code in the meta.
 5. **Appointments** — **this card has rows now.** Date, artist, status. It was never an API gap.
+
+# Mobile session W — structure + polish round 4
+
+**Base: `mobile/session-v` at `cf4ce3f`.** T2, T3, U, V are all unmerged (`main` is at `151c0d8`,
+carrying S and T). Worktree cut from V; two commits, pushed. **No writes wired — see item 6b.**
+
+---
+
+## 3 — Section reorder: the persistence findings
+
+**What persists it:** `GET`/`PUT /widget-layouts/:pageKey`, returning
+`{ widgetOrder, collapsedWidgetIds }`. **Per-user**, not per-studio — web's `useWidgetLayout` keys
+its cache on the user id. The client page's key is **`client-detail`**, and web's write is optimistic
+and best-effort: the cache updates immediately and a failed `PUT` only means the change does not
+survive a refresh.
+
+**Mobile already had both halves.** Session B built `fetchWidgetLayout` and `saveWidgetLayout` in
+`lib/artists.ts` for the artist profile editor, hitting this exact endpoint. Nothing new was needed
+on either side.
+
+**Because the pageKey matches web's, the order syncs between the two clients for the same person.**
+That was not a goal of the brief and is worth knowing.
+
+**One thing I had to be careful about:** the `PUT` takes both fields, and mobile keeps collapse in
+local state per screen. Sending `collapsedWidgetIds: []` would have silently cleared whatever the
+same user had collapsed **on web**. The saved value is read on load and carried through untouched.
+
+### The affordance — and why it is not drag
+
+The brief said "drag-to-reorder like web", and also "REUSE that pattern/library and its persistence
+approach" from session B, with an explicit escape if drag fought the ScrollView. **Session B's
+pattern is not drag** — it is a reorder **mode**, toggled from a header button (`move` ↔ `check`),
+with per-card up/down buttons that appear only while it is on.
+
+I reused it whole, which means:
+
+- **the gesture conflict never arises** — there is nothing to time-box or report as janky;
+- a phone has no hover, so web's permanently-visible drag handle would be **nine controls nobody
+  touches** rather than an affordance.
+
+Verified end to end: the toggle reveals **18 move controls** (nine cards × two), moving Contact info
+down reorders the list on screen, and `PUT /widget-layouts/client-detail` fires. If you would rather
+have true drag, say so and it is its own session — the persistence is already done.
+
+## 6b — the thread-creation finding, and a judgment call
+
+**`POST /conversations` with `{ clientId }` exists, and it is what web's Message button calls.** It
+404s for `ARTIST`; for OWNER/FRONT_DESK it resolves-or-creates. No permission gate beyond that.
+
+**I did not wire creation.** The brief calls this "a navigation, not a write", and by intent it is —
+but `POST /conversations` does create a row, and this brief's own preamble says writes remain
+M2-gated. Where a specific instruction and a standing rule disagreed I took the reading that cannot
+do damage: **opening an existing thread is wired and works**; a client with no thread gets the toast,
+which the brief names as an acceptable outcome.
+
+It is one line to switch on. Say the word and creation goes in.
+
+**How the rows know:** one `GET /conversations` for the whole screen builds a `clientId → threadId`
+map, rather than a request per row — that endpoint already returns every thread the user can see,
+each carrying its `clientId`.
+
+## 4 — the tab bar
+
+`Home · Inquiries · CHAT · Schedule · FLASH`.
+
+**Web has always kept Tasks in the top bar** — `TopBar.tsx` renders a `TasksIcon` link to `/tasks`
+immediately left of the mentions bell, with the same badge. Mobile had been carrying that count on a
+tab; the tab is gone and the count came to the top bar with the icon. **The glyph was already
+right**: mobile's `TasksIcon` was copied from web's path-for-path in an earlier session.
+
+Flash took the fifth slot and **left the drawer**, so nothing is reachable from two navigation
+surfaces at once. Files were **moved, not duplicated** — `(tabs)/tasks.tsx → tasks.tsx` and
+`flash.tsx → (tabs)/flash.tsx` — because two expo-router files cannot claim the same route name.
+
+The badge count is web's own definition, unchanged: every system task plus every incomplete personal
+one.
+
+## 5 — the persistent cluster
+
+One `TopBarActions`, rendered by **both** `TopBar` (tabs) and `ScreenHeader` (every stacked screen).
+Before this the tabs bar had bell + avatar, `ScreenHeader` had a lone avatar, and neither had tasks
+at all — the corner changed shape every time you pushed a detail screen. Verified on the client
+detail and the clients list (`w-01`, `w-02`).
+
+**A bug this move surfaced, and it mattered.** `taskBadgeCount` did `data.system.length +
+data.personal.filter(...)`. That sum now runs on **every screen**, so a `/tasks` response missing
+either array threw and took the **whole top bar** down behind an error boundary — app-wide, not one
+blank badge. Found by rendering against exactly that response. It is defensive now: a badge is
+chrome, and it fails to zero.
+
+## 1, 2, 6a, 6c
+
+| # | Result |
+| --- | --- |
+| 1 | Deposit rows are the title and the chip. The meta line is gone entirely. |
+| 2 | Appointment rows: artist **avatar** + date/time left, chip **right-aligned**. Web renders an avatar in this very column before the name. |
+| 6a | No avatar circles. The client record has **no image field at all**, so every circle was a pair of initials restating the name beside it. |
+| 6c | Web's anatomy: `<Eyebrow>Everyone who's booked with your studio.</Eyebrow>` over a display-serif "Clients". Session E's `Eyebrow` did the job with its `alert` tone for the red ticks. The nav row stops repeating the word, as the client detail's does (session U). |
+
+## Verification
+
+`apps/mobile/parity-audit/`: `w-01-cluster-detail.png` (the cluster on a detail screen),
+`w-02-clients.png` (all of item 6 — Yoanliz's message button live because she has a thread, the other
+two dimmed), `w-03-rows.png` (items 1 and 2).
+
+The tab bar itself is **not** in a render: the harness mounts screens directly, without the `Tabs`
+navigator, so there was no bar to photograph. It is verified from the route files and the bundle
+instead — `FLASH` present, **`TASKS` absent as a tab label**, `My tasks` present as the top-bar
+control.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 17.34s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.92 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | `My tasks`, `FLASH`, `Reorder`, `Move `, `client-detail`, the eyebrow copy and the no-thread note all present; `TASKS` absent; harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture. The one `PUT`
+exercised was `/widget-layouts/client-detail` against that fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **The tab bar** — fifth tab is Flash, not Tasks.
+2. **The top right, on every screen you visit** — a tasks icon with its count, the bell, your avatar.
+   Tap the tasks icon; it should open the tasks screen. Check it on a tab AND after opening a client.
+3. **The drawer** — Flash Gallery should be gone from it.
+4. **A client → "Reorder"** in the header row. Move buttons appear on every card; move one and press
+   Done. **Then force-quit and reopen** — the order should still be there, and it should match what
+   web shows you.
+5. **Clients** — no avatar circles, a message button per row (live only where a thread exists), and
+   the eyebrow over the serif title.
