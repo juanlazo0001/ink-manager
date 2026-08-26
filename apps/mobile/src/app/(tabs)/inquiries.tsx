@@ -49,18 +49,31 @@ function fromStaff(inquiry: StaffInquiryListItem): InquiryRowData {
     id: inquiry.id,
     description: inquiry.description,
     status: inquiry.status,
-    channel: inquiry.channel,
     updatedAt: inquiry.updatedAt,
-    priceEstimateLow: inquiry.priceEstimateLow,
-    priceEstimateHigh: inquiry.priceEstimateHigh,
     client: inquiry.client,
-    artistName: inquiry.assignedArtist
-      ? (inquiry.assignedArtist.user.name ?? inquiry.assignedArtist.user.email)
+    artist: inquiry.assignedArtist
+      ? {
+          name: inquiry.assignedArtist.user.name ?? inquiry.assignedArtist.user.email,
+          avatarUrl: inquiry.assignedArtist.user.avatarUrl,
+        }
       : null,
     fromGuestStudio: inquiry.fromGuestStudio,
-    // The staff list projection returns no images at all, so there is
-    // nothing to show here and the row falls back to its placeholder.
-    thumbnailUrl: null,
+    /*
+     * ITEM 1, and it was never a data problem.
+     *
+     * This line used to be a hard-coded `null` under a comment asserting
+     * that "the staff list projection returns no images at all". That was
+     * simply untrue: `INQUIRY_LIST_SELECT` has carried
+     * `referenceImages: true` all along, and `StaffInquiryListItem`
+     * declares `referenceImages: string[]`. The field arrived on every
+     * response and was thrown away here.
+     *
+     * The effect was total for the people most likely to notice: an
+     * OWNER or FRONT_DESK reads THIS projection, so every row they have
+     * ever seen showed the placeholder — including the 62 of 100
+     * inquiries on the dev database that do have real photos.
+     */
+    thumbnailUrl: inquiryThumbnail(inquiry),
   };
 }
 
@@ -69,17 +82,11 @@ function fromArtist(inquiry: ArtistInquiryListItem): InquiryRowData {
     id: inquiry.id,
     description: inquiry.description,
     status: inquiry.status,
-    channel: inquiry.channel,
     updatedAt: inquiry.updatedAt,
-    // May already have been stripped server-side by the studio's
-    // `pricingDetail` visibility toggle — null here means "not shown to
-    // you", which renders as absent rather than as zero.
-    priceEstimateLow: inquiry.priceEstimateLow,
-    priceEstimateHigh: inquiry.priceEstimateHigh,
     client: inquiry.client,
-    // Undefined, not null: every row here is theirs, so the artist line
+    // Undefined, not null: every row here is theirs, so the artist slot
     // is omitted entirely rather than claiming UNASSIGNED.
-    artistName: undefined,
+    artist: undefined,
     fromGuestStudio: inquiry.fromGuestStudio,
     thumbnailUrl: inquiryThumbnail(inquiry),
     nextSessionAt: findNextSession(inquiry.sessions)?.startTime ?? null,
