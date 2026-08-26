@@ -1,6 +1,12 @@
 import { CLIENT_CHANNELS, type ClientChannel, type MessageDirection } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
-import { useEffect, useState } from 'react';
+import * as Haptics from 'expo-haptics';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  ZoomIn,
+} from 'react-native-reanimated';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AttachmentTray } from '@/components/AttachmentTray';
@@ -14,7 +20,23 @@ import {
   type ShareableLinks,
 } from '@/lib/shareableLinks';
 import { captureImage, ensureCameraPermission, ensureLibraryPermission, pickImage } from '@/lib/upload';
-import { channelColor, colors, hairline, radius, space, type } from '@/theme';
+import { chat, channelColor, colors, hairline, radius, space, type } from '@/theme';
+import { motion, S3, useReducedMotion } from '@/theme/chatMotion';
+
+/** §3: the field's resting height and its five-line ceiling. */
+const COMPOSER_MIN_HEIGHT = 36;
+const COMPOSER_MAX_HEIGHT = 120;
+
+/*
+ * `TextInput` is not animatable on its own; this is the standard
+ * Reanimated wrapper, created once at module scope so it is not a new
+ * component type on every render — which would remount the field and
+ * drop the keyboard mid-sentence.
+ */
+const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
+
+/** §3: the send button scales in on the first character, on S3. */
+const sendEntering = ZoomIn.springify().stiffness(S3.stiffness!).damping(S3.damping!);
 
 export interface ComposerSendState {
   channel: ClientChannel;
@@ -100,14 +122,62 @@ export function Composer({
   const [links, setLinks] = useState<ShareableLinks | null>(null);
   const attachments = useAttachments(token);
 
+  /*
+   * §3 GROWTH. The field is min 36 and grows with its content to five
+   * lines (~120) before scrolling internally, and the growth ANIMATES
+   * with S3 rather than jumping a line at a time.
+   *
+   * Measured from `onContentSizeChange` — the only number RN offers that
+   * knows how tall the text actually is. Clamped both ends here rather
+   * than by `maxHeight` alone, because the animated height has to be a
+   * real number for the spring to land on.
+   */
+  const inputHeight = useSharedValue(COMPOSER_MIN_HEIGHT);
+  /** The text as of THIS event — see `onContentSize`. */
+  const bodyRef = useRef('');
+  const reduced = useReducedMotion();
+  const inputStyle = useAnimatedStyle(() => ({ height: inputHeight.value }));
+
+  /*
+   * THE EMPTY CASE IS AUTHORITATIVE, and that is a fix rather than a
+   * flourish.
+   *
+   * `onContentSizeChange` reports the content's height — but once the box
+   * is clamped at 120 the reported value converges on the BOX, not on the
+   * text. So after a send cleared the field, the collapse in `submit()`
+   * was immediately overridden by a stale report of ~118 and the composer
+   * stayed five lines tall around an empty input. Seen in the preview at
+   * 117.98px where 36 was expected.
+   *
+   * The body is the thing we actually know: no text means minimum height,
+   * whatever the box says about itself. Everything else still measures.
+   */
+  /*
+   * A REF, not the `body` state, and the difference is a real bug I
+   * shipped for one iteration: `onContentSizeChange` fires in the same
+   * native event as `onChangeText`, BEFORE React commits, so reading
+   * `body` here gets the PREVIOUS value. Checking it meant a field that
+   * had just received its first long paragraph was measured as "still
+   * empty" and pinned to 36 forever. The ref is written synchronously in
+   * `onChangeBody` below, so it is always the text the user just typed.
+   */
+  function onContentSize(height: number) {
+    const next = bodyRef.current.length === 0
+      ? COMPOSER_MIN_HEIGHT
+      : Math.min(Math.max(height, COMPOSER_MIN_HEIGHT), COMPOSER_MAX_HEIGHT);
+    if (Math.abs(next - inputHeight.value) < 0.5) return;
+    inputHeight.value = motion(next, S3, reduced);
+  }
+
   const editing = !!editingMessageId;
 
   // Entering edit mode loads the existing text so it can be amended
   // rather than retyped. Keyed on the id, so switching directly from one
   // message to another reloads rather than keeping the first one's text.
   useEffect(() => {
-    if (editingMessageId) setBody(editingInitialBody ?? '');
-    else setBody('');
+    const seeded = editingMessageId ? (editingInitialBody ?? '') : '';
+    bodyRef.current = seeded;
+    setBody(seeded);
   }, [editingMessageId, editingInitialBody]);
 
   // Either a caption or a finished image is enough to send, mirroring the
@@ -127,11 +197,22 @@ export function Composer({
     (sendState.channel === 'SMS' || sendState.channel === 'EMAIL') &&
     !unavailableChannels.has(sendState.channel);
 
+  function onChangeBody(next: string) {
+    bodyRef.current = next;
+    setBody(next);
+  }
+
   function submit() {
     if (!canSubmit) return;
+    // §10: impactLight on send. Fired before the state changes so the tick
+    // lands with the tap, not after the round trip.
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onSend(body.trim(), editing ? [] : attachments.uploadedUrls);
+    bodyRef.current = '';
     setBody('');
     attachments.clear();
+    // §3: the field collapses on the same spring it grew with.
+    inputHeight.value = motion(COMPOSER_MIN_HEIGHT, S3, reduced);
   }
 
   /*
@@ -232,40 +313,65 @@ export function Composer({
       )}
 
       <View style={styles.inputRow}>
+        {/*
+          §3: a PLUS, 28pt, cream — not the 20pt paperclip AE shipped.
+          Kept, not rebuilt: it already opens a real attachment sheet
+          (Photo library / Take photo) backed by expo-image-picker and the
+          upload hook, so this is a restyle. The "no inert affordances"
+          rule bites only where nothing is wired, and here something is.
+        */}
         {editing ? null : (
           <Pressable
             onPress={() => setSourceOpen(true)}
             disabled={disabled}
             accessibilityRole="button"
             accessibilityLabel="Attach an image"
+            hitSlop={8}
             style={({ pressed }) => [styles.attach, pressed && styles.pressed]}
           >
-            <Feather name="paperclip" size={20} color={disabled ? colors.fgMuted : colors.fgSecondary} />
+            <Feather name="plus" size={28} color={disabled ? chat.textMuted : chat.textPrimary} />
           </Pressable>
         )}
-        <TextInput
-          style={styles.input}
+
+        <AnimatedTextInput
+          style={[styles.input, inputStyle]}
           value={body}
-          onChangeText={setBody}
-          placeholder={disabled ? 'Read only' : 'Write a message'}
-          placeholderTextColor={colors.fgMuted}
+          onChangeText={onChangeBody}
+          onContentSizeChange={(e) => onContentSize(e.nativeEvent.contentSize.height)}
+          placeholder={disabled ? 'Read only' : 'Message'}
+          placeholderTextColor={chat.textMuted}
           multiline
           editable={!disabled}
+          // Past five lines the field stops growing and scrolls its own
+          // content, which is the half of §3 that keeps the keyboard and
+          // the thread from being squeezed off screen.
+          scrollEnabled
           accessibilityLabel="Message"
         />
-        <Pressable
-          onPress={submit}
-          disabled={!canSubmit}
-          accessibilityRole="button"
-          accessibilityLabel="Send"
-          style={({ pressed }) => [
-            styles.send,
-            !canSubmit && styles.sendDisabled,
-            pressed && canSubmit && styles.sendPressed,
-          ]}
-        >
-          <Feather name="arrow-up" size={20} color={canSubmit ? colors.accentFg : colors.fgMuted} />
-        </Pressable>
+
+        {/*
+          §3: the send button is ABSENT until there is something to send,
+          and is never rendered in a disabled treatment. It scales in with
+          S3 on the first character.
+
+          `disabled` still guards the press — a tap during an in-flight
+          upload must not fire — but that is behaviour, not appearance:
+          nothing greys out, because a greyed button invites a tap that
+          cannot work.
+        */}
+        {hasContent ? (
+          <Animated.View entering={sendEntering} style={styles.sendWrap}>
+            <Pressable
+              onPress={submit}
+              disabled={!canSubmit}
+              accessibilityRole="button"
+              accessibilityLabel="Send"
+              style={({ pressed }) => [styles.send, pressed && styles.sendPressed]}
+            >
+              <Feather name="arrow-up" size={18} color={chat.bubbleOwnText} />
+            </Pressable>
+          </Animated.View>
+        ) : null}
       </View>
 
       <Modal visible={sourceOpen} transparent animationType="slide" onRequestClose={() => setSourceOpen(false)}>
@@ -430,15 +536,20 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    maxHeight: 120,
-    minHeight: 40,
-    backgroundColor: colors.inputBg,
+    /*
+     * §3: fill `chat.surface`, which is DARKER than the raised bar around
+     * it — the field is a well cut into the bar, not a panel sitting on
+     * it. Height is animated (S3) rather than min/max-clamped, so the
+     * bounds live in the handler; `maxHeight` stays as a backstop for the
+     * first frame before any measurement has happened.
+     */
+    maxHeight: COMPOSER_MAX_HEIGHT,
+    backgroundColor: chat.surface,
     borderWidth: hairline,
     borderColor: colors.inputBorder,
-    /* Fully rounded, like the reference and like every messaging app —
-       `radius.input` is the rectangle a FORM field wants. A composer is a
-       capsule you type into, not a field on a page. */
-    borderRadius: radius.pill,
+    /* §3: radius 18 — the same curve as a bubble, which is what the
+       field is about to become. */
+    borderRadius: radius.bubble,
     color: colors.fg,
     ...type.body,
     fontSize: 16,
@@ -458,25 +569,27 @@ const styles = StyleSheet.create({
   bannerLabel: { ...type.meta, color: colors.fgMuted, flex: 1 },
 
   attach: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 2,
   },
+  /* Holds the button's slot steady while it scales in. */
+  sendWrap: { marginBottom: 3 },
   send: {
-    /* Matched to the field's own resting height so the two sit on one
-       line instead of the button hanging below it. */
-    width: 40,
-    height: 40,
+    /* §3: 30pt red circle, white arrow. Was a 40pt gold circle — the red
+       is the same brand fill the outgoing bubbles took under the owner's
+       ruling, which is what makes the button read as "this becomes a
+       message". */
+    width: 30,
+    height: 30,
     borderRadius: radius.pill,
-    backgroundColor: colors.accentButton,
+    backgroundColor: chat.bubbleOwnBg,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  /* Nothing to send reads as a quiet outline rather than a grey slab —
-     the button is present but obviously inert. */
-  sendDisabled: { backgroundColor: 'transparent', borderWidth: hairline, borderColor: colors.border },
-  sendPressed: { backgroundColor: colors.accentHover },
+  sendPressed: { opacity: 0.8 },
 
   backdrop: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'flex-end' },
   sheet: {

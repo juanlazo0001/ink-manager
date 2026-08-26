@@ -11,8 +11,6 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  KeyboardAvoidingView,
-  Platform,
   RefreshControl,
   StyleSheet,
   Text,
@@ -20,7 +18,9 @@ import {
 } from 'react-native';
 
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, withSpring } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import { useKeyboardHandler } from 'react-native-keyboard-controller';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { S2 } from '@/theme/chatMotion';
 
 import { ScreenShell } from '@/components/ScreenShell';
@@ -91,6 +91,7 @@ export default function ConversationScreen() {
   const [replyTo, setReplyTo] = useState<DisplayMessage | null>(null);
   const [editing, setEditing] = useState<DisplayMessage | null>(null);
   const listRef = useRef<FlatList<Row>>(null);
+  const insets = useSafeAreaInsets();
 
   /*
    * ITEM 2 — drag the thread left to read the clock.
@@ -108,6 +109,56 @@ export default function ConversationScreen() {
    * and a bubble that can be dragged away from its own edge feels broken.
    */
   const revealX = useSharedValue(0);
+
+  /*
+   * §4 — THE COMPOSER RIDES THE KEYBOARD, PER FRAME.
+   *
+   * `useKeyboardHandler` runs on the UI thread, so `keyboardHeight` is
+   * current for the frame being drawn rather than one React commit behind.
+   * That difference is the whole distinction between a bar glued to the
+   * keyboard and a bar chasing it — and it is why this is a shared value
+   * and not React state.
+   *
+   * `onMove` is what makes INTERACTIVE dismissal work: during a drag-down
+   * the OS reports the keyboard's live position frame by frame, so the
+   * same subscription that handles open/close also handles the finger.
+   * Nothing extra is wired for it.
+   */
+  const keyboardHeight = useSharedValue(0);
+  useKeyboardHandler(
+    {
+      onMove: (event) => {
+        'worklet';
+        keyboardHeight.value = event.height;
+      },
+      onEnd: (event) => {
+        'worklet';
+        keyboardHeight.value = event.height;
+      },
+    },
+    [],
+  );
+
+  /*
+   * Translate, not padding. A transform runs on the UI thread with no
+   * relayout; animating `paddingBottom` per frame would re-measure an
+   * inverted FlatList sixty times a second while the keyboard moves.
+   *
+   * The subtraction is the bottom safe area: with the keyboard CLOSED the
+   * composer needs `insets.bottom` to clear the home indicator, and with
+   * it OPEN the keyboard already covers that strip. So the static padding
+   * stays and the travel is only the part the keyboard adds on top of it.
+   * Clamped at 0 so a keyboard shorter than the inset never pushes the
+   * bar downward.
+   *
+   * §5 bottom-anchoring falls out of this for free: the list is inverted,
+   * so its newest message is pinned to the container's bottom edge and
+   * simply travels with it. No scroll offset is touched, so there is no
+   * jump and nothing to restore on close.
+   */
+  const ridesKeyboard = useAnimatedStyle(() => ({
+    transform: [{ translateY: -Math.max(0, keyboardHeight.value - insets.bottom) }],
+  }));
 
   /*
    * §9: the context-chip row collapses on scroll-down and returns on
@@ -482,11 +533,13 @@ export default function ConversationScreen() {
         }
       />
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
-      >
+      {/*
+        §4: no `KeyboardAvoidingView` anywhere in the chat stack. It
+        animates on its own schedule rather than the keyboard's, and it
+        cannot follow an interactive drag at all — which is the acceptance
+        requirement for this part.
+      */}
+      <Animated.View style={[styles.flex, { paddingBottom: insets.bottom }, ridesKeyboard]}>
         <GestureDetector gesture={revealPan}>
         <FlatList
           ref={listRef}
@@ -544,6 +597,17 @@ export default function ConversationScreen() {
             )
           }
           contentContainerStyle={[styles.listContent, rows.length === 0 && styles.listEmpty]}
+          /*
+            §4 INTERACTIVE DISMISSAL. This is a native ScrollView
+            behaviour, and it is deliberately the only thing wired for it:
+            dragging toward the keyboard drags the keyboard with the
+            finger, the OS reports each position through the handler above,
+            and the composer follows because it is already bound to that
+            height. Releasing mid-way completes or cancels — the OS
+            decides, exactly as it does in Messages.
+          */
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
           onScroll={onThreadScroll}
           scrollEventThrottle={16}
           onEndReached={loadOlder}
@@ -610,7 +674,7 @@ export default function ConversationScreen() {
           editingInitialBody={editing?.body ?? ''}
           onCancelEdit={() => setEditing(null)}
         />
-      </KeyboardAvoidingView>
+      </Animated.View>
 
       <MessageActions
         visible={!!actionFor}
