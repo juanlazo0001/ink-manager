@@ -48,6 +48,7 @@ import {
   type ReactionEmoji,
 } from '@/lib/conversations';
 import { saveImageToLibrary } from '@/lib/saveImage';
+import { isProviderFailure } from '@/lib/deliveryStatus';
 import { buildThreadRows, isOwnSide, type DisplayMessage, type Row } from '@/lib/threadRows';
 import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
 
@@ -671,6 +672,7 @@ export default function ConversationScreen() {
           setRetryFor(null);
         }}
         canCopy={!!retryFor?.body}
+        providerFailure={!!retryFor && isProviderFailure(retryFor)}
         onDiscard={() => {
           const target = retryFor;
           setRetryFor(null);

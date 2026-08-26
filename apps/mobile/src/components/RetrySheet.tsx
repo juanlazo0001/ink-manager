@@ -19,8 +19,11 @@ import { chat, colors, hairline, radius, space, type } from '@/theme';
  * so the bubble is replaced in place rather than a second one stacking
  * beneath it. **Copy text** is the escape hatch when the send is wrong but
  * the words were right. **Discard** removes it locally, which is the whole
- * truth: a failed message never reached the server, so there is nothing
- * there to delete.
+ * truth: a locally-failed message never reached the server, so there is
+ * nothing there to delete.
+ *
+ * A PROVIDER failure is a different animal and gets a different sheet —
+ * see the note at the actions.
  *
  * Destructive styling on Discard only — red is punctuation here, and this
  * is the one irreversible choice on the sheet.
@@ -28,6 +31,7 @@ import { chat, colors, hairline, radius, space, type } from '@/theme';
 export function RetrySheet({
   visible,
   canCopy,
+  providerFailure,
   onRetry,
   onCopy,
   onDiscard,
@@ -36,6 +40,12 @@ export function RetrySheet({
   visible: boolean;
   /** False for an image-only message — there is nothing to put on the clipboard. */
   canCopy: boolean;
+  /**
+   * The carrier rejected a message the server DID store, as opposed to a
+   * send that never left the phone. It changes what this sheet may
+   * honestly offer — see the note above the actions.
+   */
+  providerFailure: boolean;
   onRetry: () => void;
   onCopy: () => void;
   onDiscard: () => void;
@@ -47,17 +57,39 @@ export function RetrySheet({
         <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
           <Eyebrow style={styles.eyebrow}>Not delivered</Eyebrow>
           <Text style={styles.lead}>
-            This message never reached the server, so nothing was sent to the client.
+            {providerFailure
+              ? 'The carrier rejected this message. It is on the record as sent and cannot be sent again from here.'
+              : 'This message never reached the server, so nothing was sent to the client.'}
           </Text>
 
-          <Pressable
-            onPress={onRetry}
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.action, pressed && styles.pressed]}
-          >
-            <Feather name="refresh-cw" size={16} color={colors.fgSecondary} />
-            <Text style={styles.actionLabel}>Retry</Text>
-          </Pressable>
+          {/*
+            RETRY AND DISCARD ARE BOTH WITHDRAWN ON A PROVIDER FAILURE, and
+            for the same reason: there is no route that would make either
+            of them true.
+
+            The only send path is `POST /conversations/:id/messages`, which
+            CREATES a message — there is no resend-this-one endpoint. For a
+            local failure that is exactly right: the row only ever existed
+            on this phone, so re-posting replaces it in place. For a
+            carrier rejection the row is already persisted server-side, so
+            Retry would post a SECOND message and leave the rejected one
+            behind, and Discard would hide a row that reappears on the next
+            poll. Both would be lies with a thirty-second half-life.
+
+            §2.4's Retry is sanctioned to be omitted here; Discard follows
+            it out on the identical argument. Copy text is the one action
+            that is still honest, so it is the one that stays.
+          */}
+          {!providerFailure ? (
+            <Pressable
+              onPress={onRetry}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.action, pressed && styles.pressed]}
+            >
+              <Feather name="refresh-cw" size={16} color={colors.fgSecondary} />
+              <Text style={styles.actionLabel}>Retry</Text>
+            </Pressable>
+          ) : null}
 
           {canCopy ? (
             <Pressable
@@ -70,14 +102,16 @@ export function RetrySheet({
             </Pressable>
           ) : null}
 
-          <Pressable
-            onPress={onDiscard}
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.action, pressed && styles.pressed]}
-          >
-            <Feather name="trash-2" size={16} color={chat.alertText} />
-            <Text style={[styles.actionLabel, styles.discard]}>Discard</Text>
-          </Pressable>
+          {!providerFailure ? (
+            <Pressable
+              onPress={onDiscard}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.action, pressed && styles.pressed]}
+            >
+              <Feather name="trash-2" size={16} color={chat.alertText} />
+              <Text style={[styles.actionLabel, styles.discard]}>Discard</Text>
+            </Pressable>
+          ) : null}
 
           <Pressable onPress={onClose} style={styles.done}>
             <Text style={styles.doneLabel}>CANCEL</Text>

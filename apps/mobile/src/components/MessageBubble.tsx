@@ -7,6 +7,7 @@ import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reani
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { isMessageEdited } from '@/lib/conversations';
+import { deliveryLabel, deliveryState } from '@/lib/deliveryStatus';
 import { linkify, truncateMiddle } from '@/lib/linkify';
 import type { DisplayMessage } from '@/lib/threadRows';
 import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
@@ -200,8 +201,15 @@ export function MessageBubble({
   /** Tapping a quoted reply jumps to the message it quotes. */
   onScrollToMessage?: (messageId: string) => void;
 }) {
-  const failed = message.status === 'failed';
-  const pending = message.status === 'pending';
+  /*
+   * §2.4 rev D.1. The state is derived, not read off `status`: a message
+   * the API stored can still be reported DELIVERED or FAILED by the
+   * carrier afterwards, and `status` only ever knows about the local
+   * send. `deliveryState` owns the precedence.
+   */
+  const state = deliveryState(message);
+  const failed = state === 'FAILED';
+  const pending = state === 'QUEUED';
   const authorName = message.author?.name ?? message.author?.email ?? null;
 
   // One reaction per person per message, so this collapses to a count per
@@ -424,11 +432,13 @@ export function MessageBubble({
         message. Do not "just tint the failed bubble" — that is exactly
         what this shape exists to prevent.
 
-        Truth constraint: only QUEUED / SENT / FAILED render. The
-        investigation found no status column, so SENT means "the API
-        persisted it" and nothing here claims delivery. (See the report —
-        `metadata.deliveryStatus` now exists and could make DELIVERED
-        truthful, but rev D keeps it dormant and this session obeys that.)
+        Truth constraint (rev D.1): QUEUED / SENT / DELIVERED / FAILED.
+        There is still no status COLUMN — DELIVERED comes from the
+        provider's own DLR, which the backend persists into
+        `Message.metadata.deliveryStatus`. Absent or unrecognised metadata
+        falls back to SENT, so nothing here ever claims a delivery the
+        carrier did not report. READ stays dormant: no live channel
+        reports it.
       */}
       {failed ? (
         <Pressable
@@ -446,15 +456,16 @@ export function MessageBubble({
         </Pressable>
       ) : pending && showMeta ? (
         <View style={[styles.meta, own ? styles.metaOwn : styles.metaTheirs]}>
-          <Text style={styles.metaText}>SENDING…</Text>
+          <Text style={styles.metaText}>{deliveryLabel(state)}</Text>
         </View>
       ) : own && isLastOutgoing && showMeta ? (
         /*
-         * §2.2: under the last outgoing message only. "SENT" is the whole
-         * truth the API can support today.
+         * §2.2: under the last outgoing message only. The label is now
+         * SENT *or* DELIVERED — whichever the provider has actually
+         * reported. Same Jura treatment either way, per §2.4.
          */
         <View style={[styles.meta, styles.metaOwn]}>
-          <Text style={styles.metaText}>SENT</Text>
+          <Text style={styles.metaText}>{deliveryLabel(state)}</Text>
         </View>
       ) : null}
     </Animated.View>
