@@ -1,5 +1,6 @@
 import Feather from '@expo/vector-icons/Feather';
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
@@ -8,7 +9,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { isMessageEdited } from '@/lib/conversations';
 import { linkify, truncateMiddle } from '@/lib/linkify';
 import type { DisplayMessage } from '@/lib/threadRows';
-import { chat, colors, hairline, radius, space, type } from '@/theme';
+import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
 import { timeOfDay } from '@/lib/time';
 
 /**
@@ -35,16 +36,29 @@ export const REVEAL_WIDTH = 68;
  * person in the thread they were reading, which matters when the link is
  * something a client just sent and the reply is half-typed.
  */
-function Body({ body, own }: { body: string; own: boolean }) {
+function Body({
+  body,
+  own,
+  numberOfLines,
+}: {
+  body: string;
+  own: boolean;
+  /** Set by the email collapse (§2.6); undefined everywhere else. */
+  numberOfLines?: number;
+}) {
   const parts = linkify(body);
   const bodyStyle = [styles.body, own ? styles.bodyOwn : styles.bodyTheirs];
 
   if (parts.length === 1 && parts[0].kind === 'text') {
-    return <Text style={bodyStyle}>{body}</Text>;
+    return (
+      <Text style={bodyStyle} numberOfLines={numberOfLines}>
+        {body}
+      </Text>
+    );
   }
 
   return (
-    <Text style={bodyStyle}>
+    <Text style={bodyStyle} numberOfLines={numberOfLines}>
       {parts.map((part, i) =>
         part.kind === 'text' ? (
           <Text key={i}>{part.value}</Text>
@@ -65,6 +79,80 @@ function Body({ body, own }: { body: string; own: boolean }) {
         ),
       )}
     </Text>
+  );
+}
+
+/** Spec §2.6: an email longer than this collapses. */
+const EMAIL_COLLAPSE_LINES = 6;
+/** `styles.body`'s own line height — the two must not drift apart. */
+const EMAIL_LINE_HEIGHT = 21;
+
+/**
+ * An email body, collapsed to six lines with a fade and a READ MORE
+ * (spec §2.6).
+ *
+ * ─── HOW THE OVERFLOW IS KNOWN ──────────────────────────────────────
+ *
+ * A hidden, unclamped twin at the same width is measured once and its
+ * HEIGHT compared against six lines' worth; the visible copy then clamps
+ * with `numberOfLines`. Asking the visible copy is useless — once clamped
+ * it reports the clamped size, which is a yes-shaped non-answer.
+ *
+ * Height, not `onTextLayout`'s line array, and that is not a style
+ * preference: `onTextLayout` never fires under react-native-web, so the
+ * line-count version measured nothing in the preview and shipped an email
+ * that silently refused to collapse. `onLayout` fires on both. Found by
+ * rendering it.
+ *
+ * The mask is a gradient fading to the bubble's own fill rather than a
+ * flat scrim, so the last visible line dissolves instead of being cut.
+ */
+function EmailBody({ body, own }: { body: string; own: boolean }) {
+  const [fullHeight, setFullHeight] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  // A line of tolerance, so a body that lands exactly on six does not
+  // collapse to show one clipped word.
+  const collapsedHeight = EMAIL_COLLAPSE_LINES * EMAIL_LINE_HEIGHT;
+  const overflows = fullHeight !== null && fullHeight > collapsedHeight + EMAIL_LINE_HEIGHT * 0.5;
+  const collapsed = overflows && !expanded;
+
+  return (
+    <View>
+      {/* The measuring twin: laid out, never seen, never read aloud. */}
+      {fullHeight === null ? (
+        <Text
+          style={[styles.body, styles.measure]}
+          onLayout={(e) => setFullHeight(e.nativeEvent.layout.height)}
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
+        >
+          {body}
+        </Text>
+      ) : null}
+
+      <View>
+        <Body body={body} own={own} numberOfLines={collapsed ? EMAIL_COLLAPSE_LINES : undefined} />
+        {collapsed ? (
+          <LinearGradient
+            colors={[`${chat.bubbleInBg}00`, chat.bubbleInBg]}
+            style={styles.emailMask}
+            pointerEvents="none"
+          />
+        ) : null}
+      </View>
+
+      {overflows ? (
+        <Pressable
+          onPress={() => setExpanded((v) => !v)}
+          accessibilityRole="button"
+          hitSlop={6}
+          style={({ pressed }) => [styles.readMore, pressed && styles.pressed]}
+        >
+          <Text style={styles.readMoreLabel}>{expanded ? 'SHOW LESS' : 'READ MORE'}</Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -146,6 +234,13 @@ export function MessageBubble({
    */
   const bare = images.length > 0 && !message.body && !message.replyTo && others.length === 0;
 
+  /*
+   * §2.6: email is the one channel with its own body treatment. The
+   * subject rides in `metadata`, which the API already returns.
+   */
+  const isEmail = message.channel === 'EMAIL';
+  const subject = isEmail ? (message.metadata?.subject as string | undefined) : undefined;
+
   const slide = useAnimatedStyle(() => ({ transform: [{ translateX: revealX.value }] }));
 
   return (
@@ -166,9 +261,18 @@ export function MessageBubble({
       */}
       {attribution ? <Text style={styles.attribution}>{attribution}</Text> : null}
 
-      {/* The badge is a SIBLING of the bubble, on the surface — see the
-          delivery-states note below for why it is not inside it. */}
-      {failed ? <View style={styles.failBadge}><Feather name="alert-circle" size={18} color={chat.alert} /></View> : null}
+      <View style={[styles.bubbleLine, own ? styles.bubbleLineOwn : styles.bubbleLineTheirs]}>
+      {/*
+        The badge is a SIBLING of the bubble, on the surface, and sits in
+        the same row so it hugs the bubble's OUTER-LEFT edge rather than
+        the screen's. Anchored absolutely to the full-width wrapper first,
+        it landed ~250pt away from a right-aligned bubble.
+      */}
+      {failed ? (
+        <View style={styles.failBadge}>
+          <Feather name="alert-circle" size={18} color={chat.alert} />
+        </View>
+      ) : null}
 
       <Pressable
           onLongPress={onLongPress}
@@ -205,7 +309,26 @@ export function MessageBubble({
             </Pressable>
           ) : null}
 
-          {message.body ? <Body body={message.body} own={own} /> : null}
+          {/*
+            §2.6 EMAIL. The subject sits above the body in Outfit 14/600,
+            read from `metadata.subject` — the same field apps/web reads
+            for its own email composer, so nothing new is fetched or
+            invented. Only EMAIL messages take this path; every other
+            channel renders the plain body it always did.
+          */}
+          {subject ? (
+            <Text style={[styles.subject, own ? styles.bodyOwn : styles.bodyTheirs]} numberOfLines={2}>
+              {subject}
+            </Text>
+          ) : null}
+
+          {message.body ? (
+            isEmail ? (
+              <EmailBody body={message.body} own={own} />
+            ) : (
+              <Body body={message.body} own={own} />
+            )
+          ) : null}
 
           {images.length > 0 ? (
             <View
@@ -271,6 +394,7 @@ export function MessageBubble({
             </View>
           ) : null}
         </Pressable>
+      </View>
 
       {/*
         ITEM 2. The timestamp sits in a gutter hung off the RIGHT EDGE OF
@@ -403,6 +527,15 @@ const styles = StyleSheet.create({
   bodyOwn: { color: chat.bubbleOwnText },
   bodyTheirs: { color: chat.textPrimary },
 
+  /* §2.6: subject in Outfit 14/600 above the body. */
+  subject: { ...type.small, fontFamily: fonts.bodyMedium, fontSize: 14, marginBottom: 3 },
+  /* Laid out for measurement, never painted and never announced. */
+  measure: { position: 'absolute', opacity: 0, zIndex: -1 },
+  /* The last two lines dissolve into the bubble's own fill. */
+  emailMask: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 34 },
+  readMore: { marginTop: 4, alignSelf: 'flex-start' },
+  readMoreLabel: { ...type.label, fontSize: 10, color: chat.accent },
+
   link: { textDecorationLine: 'underline' },
   /* On the gold bubble the body colour already contrasts; underline alone
      carries it. On a dark bubble the accent reads as a link. */
@@ -483,7 +616,18 @@ const styles = StyleSheet.create({
    * it hangs off the bubble's outer edge without widening the row, and it
    * sits on the espresso surface where alert-red is legible.
    */
-  failBadge: { position: 'absolute', left: space.xs, top: 6, zIndex: 1 },
+  /* In-row, so it tracks the bubble's own edge at any bubble width. */
+  /*
+     `alignSelf: stretch`, not a shrink-to-fit row: the bubble's own
+     `maxWidth: 78%` (2.1) resolves against ITS PARENT, so a row that
+     hugged its content made 78% mean 78%-of-the-text and every bubble
+     wrapped a word early. Stretching the row puts the percentage back on
+     the screen where the spec measures it. Caught by comparing renders.
+  */
+  bubbleLine: { flexDirection: 'row', alignItems: 'center', gap: space.xs, alignSelf: 'stretch' },
+  bubbleLineOwn: { justifyContent: 'flex-end' },
+  bubbleLineTheirs: { justifyContent: 'flex-start' },
+  failBadge: { flexShrink: 0 },
   failedRow: { marginTop: 3, paddingHorizontal: space.xs },
   failedRowOwn: { alignSelf: 'flex-end' },
   failedRowTheirs: { alignSelf: 'flex-start' },

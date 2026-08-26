@@ -21,6 +21,7 @@ import {
 
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, withSpring } from 'react-native-reanimated';
+import { S2 } from '@/theme/chatMotion';
 
 import { ScreenShell } from '@/components/ScreenShell';
 import { Composer, type ComposerSendState } from '@/components/Composer';
@@ -30,6 +31,7 @@ import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
 import { channelLabel } from '@/components/ConversationRow';
 import { MessageBubble, REVEAL_WIDTH, messageImages } from '@/components/MessageBubble';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { ThreadHeader } from '@/components/ThreadHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { ApiError } from '@/lib/api';
@@ -105,6 +107,29 @@ export default function ConversationScreen() {
    * and a bubble that can be dragged away from its own edge feels broken.
    */
   const revealX = useSharedValue(0);
+
+  /*
+   * §9: the context-chip row collapses on scroll-down and returns on
+   * scroll-up. Driven by DIRECTION, not absolute offset — an absolute
+   * threshold would leave the chips hidden forever once you were deep in
+   * history, and the whole point is that they come back when you reach for
+   * them. The list is inverted, so "scrolling down through history" is a
+   * RISING contentOffset.
+   */
+  const chipCollapse = useSharedValue(0);
+  const lastScrollY = useSharedValue(0);
+  const onThreadScroll = useCallback(
+    (event: { nativeEvent: { contentOffset: { y: number } } }) => {
+      const y = event.nativeEvent.contentOffset.y;
+      const dy = y - lastScrollY.value;
+      // A dead-band, so a thumb resting on the list does not flicker it.
+      if (Math.abs(dy) > 6) {
+        chipCollapse.value = withSpring(dy > 0 ? 1 : 0, S2);
+        lastScrollY.value = y;
+      }
+    },
+    [chipCollapse, lastScrollY],
+  );
   const revealPan = useMemo(
     () =>
       Gesture.Pan()
@@ -396,6 +421,14 @@ export default function ConversationScreen() {
   );
 
   const title = header?.counterpart?.name ?? 'Conversation';
+  /*
+   * The channel the header names. A CLIENT thread's identity is whatever
+   * it last spoke on; a STAFF/GROUP thread is always IN_APP by
+   * construction (the API forces it).
+   */
+  const threadChannel = isClientThread
+    ? (messages[messages.length - 1]?.channel ?? sendState.channel)
+    : 'IN_APP';
   const subtitle = header
     ? [
         header.type === 'CLIENT' ? 'Client' : header.type === 'GROUP' ? 'Group' : 'Team',
@@ -433,11 +466,19 @@ export default function ConversationScreen() {
 
   return (
     <ScreenShell edges={['top']}>
-      <ScreenHeader
-        title={title}
-        subtitle={subtitle}
+      {/*
+        §9. Replaces the generic ScreenHeader on this screen only: chat
+        needs a translucent unit carrying identity, channel and the context
+        chips, and the shared header has no concept of any of that.
+      */}
+      <ThreadHeader
+        header={header}
+        channel={threadChannel}
+        collapse={chipCollapse}
         onBack={() => router.back()}
-        right={<View style={styles.headerSpacer} />}
+        onPressInquiry={(inquiryId) =>
+          router.push({ pathname: '/staff-inquiry/[id]', params: { id: inquiryId } })
+        }
       />
 
       <KeyboardAvoidingView
@@ -502,6 +543,8 @@ export default function ConversationScreen() {
             )
           }
           contentContainerStyle={[styles.listContent, rows.length === 0 && styles.listEmpty]}
+          onScroll={onThreadScroll}
+          scrollEventThrottle={16}
           onEndReached={loadOlder}
           onEndReachedThreshold={0.4}
           ListFooterComponent={
