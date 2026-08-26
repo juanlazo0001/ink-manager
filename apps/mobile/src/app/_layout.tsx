@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ScreenBackground } from '@/components/ScreenBackground';
@@ -103,6 +104,22 @@ export default function RootLayout() {
     // was already a dependency (SDK 54 ships it for expo-router) but had
     // never been mounted, because nothing gestured until now.
     <GestureHandlerRootView style={styles.root}>
+    {/*
+      TASK B (chat-ux/00-investigation). `KeyboardProvider` is the root
+      half of `react-native-keyboard-controller`'s setup — it installs the
+      per-frame keyboard-height listener that spec §4's composer
+      choreography reads, and does nothing on its own.
+      
+      Mounted here and nowhere else: it renders its children unchanged and
+      starts no animation, so no existing screen's behaviour moves. The
+      only consumer today is the dev-only smoke screen; the real chat
+      surface is untouched by this session.
+      
+      Above SafeAreaProvider on purpose — the library's own setup docs put
+      it at the very top of the tree, and the insets context does not
+      depend on it.
+    */}
+    <KeyboardProvider>
     <SafeAreaProvider>
       <AuthProvider>
         <StatusBar style="light" />
@@ -114,6 +131,7 @@ export default function RootLayout() {
         </ThemeProvider>
       </AuthProvider>
     </SafeAreaProvider>
+    </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }
