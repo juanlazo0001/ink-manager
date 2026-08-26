@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
+import { ScreenTitle } from '@/components/ScreenTitle';
 import { AppointmentRow } from '@/components/AppointmentRow';
 import { DayStrip } from '@/components/DayStrip';
 import { TopBar } from '@/components/TopBar';
@@ -135,11 +136,42 @@ export default function ScheduleScreen() {
   }, [appointments, activeKey, today, mode, timeZone]);
 
   const showZone = timeZoneReady && timeZone !== deviceTimeZone();
-  const subtitle = usingFallback
+  /*
+   * The zone note. It was computed and then never rendered — dead since
+   * whichever refactor removed the header that used to carry it. The
+   * title's sub-header is where it belongs, and it is worth keeping:
+   * "today" on this screen means the STUDIO's today, and a viewer in a
+   * different zone has no other way to know that.
+   */
+  const zoneNote = usingFallback
     ? `Studio timezone unavailable — showing ${shortZoneLabel(timeZone)}`
     : showZone
       ? `Times in ${shortZoneLabel(timeZone)}`
-      : undefined;
+      : null;
+
+  /**
+   * ITEM 5 — the live line, derived from what the screen already has
+   * rather than a second request. `sections` is the exact set of rows
+   * about to be rendered, so this can never disagree with the list under
+   * it.
+   *
+   * Day mode counts the selected day and says "today" only when that day
+   * IS the studio's today; Upcoming counts everything ahead. No action
+   * slot: creating an appointment is a backend-gated flow, and a button
+   * that only apologises is worse than no button.
+   */
+  const shown = sections.reduce((total, section) => total + section.data.length, 0);
+  const counts =
+    appointments === null
+      ? null
+      : [
+          mode === 'day'
+            ? `${shown} ${shown === 1 ? 'session' : 'sessions'}${activeKey === today ? ' today' : ''}`
+            : `${shown} ${shown === 1 ? 'session' : 'sessions'} upcoming`,
+          zoneNote,
+        ]
+          .filter(Boolean)
+          .join(' · ');
 
   // Nothing renders until the studio's timezone is known: showing dates on
   // the device's clock and then silently correcting them is worse than a
@@ -156,6 +188,8 @@ export default function ScheduleScreen() {
   return (
     <ScreenShell edges={['top']}>
       <TopBar />
+
+      <ScreenTitle title="Schedule" counts={counts} />
 
       <View style={styles.controls}>
         <View style={styles.modes}>

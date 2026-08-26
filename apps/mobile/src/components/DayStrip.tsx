@@ -53,6 +53,16 @@ export function DayStrip({
       ref={scrollRef}
       horizontal
       showsHorizontalScrollIndicator={false}
+      /*
+       * `flexGrow: 0` is load-bearing, and this is the third place in
+       * this app to need it — `Pill`'s row and `SegmentedControl` both
+       * carry the same note. A horizontal ScrollView inside a flex column
+       * takes ALL the height on offer, and its children stretch to fill:
+       * on a day with nothing booked, the selected date rendered as a
+       * ~300px tall gold column instead of a cell. Found while adding the
+       * screen's title; the defect predates it and shows on any empty day.
+       */
+      style={styles.scroll}
       contentContainerStyle={styles.strip}
     >
       {keys.map((key) => {
@@ -82,6 +92,7 @@ export function DayStrip({
 }
 
 const styles = StyleSheet.create({
+  scroll: { flexGrow: 0 },
   strip: { paddingHorizontal: space.lg, paddingVertical: space.md, gap: ITEM_GAP },
   day: {
     width: ITEM_WIDTH,

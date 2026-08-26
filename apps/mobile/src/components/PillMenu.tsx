@@ -109,6 +109,126 @@ export function PillMenu<T extends string>({
 }
 
 
+
+/**
+ * A filter that takes more than one value at once.
+ *
+ * ─── MULTI, BECAUSE WEB'S ARE MULTI — CHECKED, NOT ASSUMED ──────────
+ *
+ * `PillMenu` above is single-select and its comment says why: neither of
+ * web's task filters is multi. Flash is the opposite case, and the same
+ * method gives the opposite answer. `FlashGallery.tsx` renders two
+ * `MultiSelectFilter`s, and that component's own filter is
+ * `selected.includes(...)` over a `string[]` — several statuses, several
+ * artists, at once.
+ *
+ * ─── THE TRIGGER LABEL IS WEB'S RULE, VERBATIM ──────────────────────
+ *
+ *     none selected  -> the placeholder ("All statuses")
+ *     exactly one    -> that option's own label
+ *     more than one  -> "N selected"
+ *
+ * Which is why this takes a `placeholder` rather than a `label`: the
+ * trigger IS the placeholder until something is chosen, so a separate
+ * static caption would be a second name for the same control.
+ *
+ * The options open as this app's sheet rather than web's anchored
+ * popover, for the reason `PillMenu` already gives — a 200px dropdown
+ * pinned under a pill is a desktop shape.
+ */
+export function MultiPillMenu<T extends string>({
+  placeholder,
+  options,
+  selected,
+  onChange,
+}: {
+  placeholder: string;
+  options: ReadonlyArray<{ value: T; label: string }>;
+  selected: readonly T[];
+  onChange: (next: T[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const active = selected.length > 0;
+
+  const triggerLabel =
+    selected.length === 0
+      ? placeholder
+      : selected.length === 1
+        ? (options.find((o) => o.value === selected[0])?.label ?? placeholder)
+        : `${selected.length} selected`;
+
+  function toggle(value: T) {
+    onChange(selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value]);
+  }
+
+  return (
+    <>
+      <Pressable
+        onPress={() => setOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel={`${placeholder}: ${triggerLabel}`}
+        accessibilityState={{ expanded: open }}
+        style={({ pressed }) => [styles.trigger, active && styles.triggerActive, pressed && styles.pressed]}
+      >
+        <Feather name="filter" size={13} color={active ? colors.accent : colors.fgSecondary} />
+        <Text
+          style={[styles.triggerLabel, active && styles.triggerLabelActive]}
+          numberOfLines={1}
+          maxFontSizeMultiplier={1.3}
+        >
+          {triggerLabel.toUpperCase()}
+        </Text>
+        <Feather name="chevron-down" size={13} color={colors.fgMuted} />
+      </Pressable>
+
+      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <Eyebrow>{placeholder}</Eyebrow>
+            <ScrollView style={styles.optionScroll}>
+              {/* Web puts "Clear all" at the top of the panel, and only
+                  when something is selected. */}
+              {active ? (
+                <Pressable
+                  onPress={() => onChange([])}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [styles.option, pressed && styles.pressed]}
+                >
+                  <Text style={styles.clearAll}>Clear all</Text>
+                </Pressable>
+              ) : null}
+              {options.map((option) => {
+                const isOn = selected.includes(option.value);
+                return (
+                  <Pressable
+                    key={option.value}
+                    // Picking several is the whole point, so a tap never
+                    // closes the sheet — web's own reasoning for not
+                    // dismissing its panel on a checkbox.
+                    onPress={() => toggle(option.value)}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: isOn }}
+                    style={({ pressed }) => [styles.option, pressed && styles.pressed]}
+                  >
+                    <Text style={[styles.optionLabel, isOn && styles.optionLabelSelected]}>
+                      {option.label}
+                    </Text>
+                    {isOn ? <Feather name="check" size={16} color={colors.accent} /> : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <Pressable onPress={() => setOpen(false)} style={styles.done}>
+              <Text style={styles.doneLabel}>DONE</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
+
 /** One group inside a grouped menu. */
 export interface MenuGroup<T extends string> {
   title: string;
@@ -252,6 +372,7 @@ const styles = StyleSheet.create({
     paddingBottom: space.xxl,
   },
   optionScroll: { maxHeight: 340 },
+  clearAll: { ...type.small, color: colors.fgSecondary },
   option: {
     flexDirection: 'row',
     alignItems: 'center',

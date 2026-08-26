@@ -2,17 +2,18 @@ import Feather from '@expo/vector-icons/Feather';
 import { FlashPieceStatus, type FlashPiece } from '@ink-manager/shared-types';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
 import { ScreenTitle, TitleAction } from '@/components/ScreenTitle';
 import { PlusIcon } from '@/components/icons';
 import { PhotoViewer } from '@/components/PhotoViewer';
-import { Pill } from '@/components/Pill';
+import { MultiPillMenu } from '@/components/PillMenu';
 import { TopBar } from '@/components/TopBar';
 import { Chip, ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
+import { artistLabel, fetchArtists, type ArtistOption } from '@/lib/artists';
 import { fetchFlashPieces } from '@/lib/flash';
 import {
   filterPieces,
@@ -33,11 +34,19 @@ import { colors, hairline, radius, space, tones, type } from '@/theme';
  * the size of a stamp for work whose whole point is how it looks. Tapping
  * a card opens the piece; tapping the image alone opens it full screen.
  *
- * The list is not filtered client-side by artist: `GET /flash-pieces`
- * already narrows an ARTIST caller to their own pieces, across their home
- * studio and any studio they currently guest at. Web's artist filter
- * exists for staff, who see everyone's; it would always have exactly one
- * option here.
+ * ─── THE TWO FILTERS ARE WEB'S, INCLUDING WHEN THEY APPEAR ──────────
+ *
+ * Web renders two `MultiSelectFilter`s — "All statuses" and "All artists"
+ * — and both are genuinely multi-select (its own filter is
+ * `selected.includes(...)` over a `string[]`). Mobile had a row of
+ * toggle pills for status and no artist filter at all.
+ *
+ * The artist one is conditional on web and stays conditional here:
+ * `canManageOthers && !isSoloStudio`. An ARTIST caller only ever sees
+ * their own pieces — `GET /flash-pieces` narrows server-side, across
+ * their home studio and any they guest at — so the control would have
+ * exactly one option. Web's own comment adds the solo-studio case:
+ * filtering never narrows anything when there is one person.
  */
 export default function FlashGalleryScreen() {
   const router = useRouter();
@@ -49,6 +58,20 @@ export default function FlashGalleryScreen() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [statuses, setStatuses] = useState<FlashPieceStatus[]>([]);
+  const [artistIds, setArtistIds] = useState<string[]>([]);
+  const [artists, setArtists] = useState<ArtistOption[]>([]);
+
+  /*
+   * Web's own gate, field for field: `flashGallery.manage` AND not an
+   * ARTIST. Keying off the role here rather than `profile.artist` is
+   * deliberate and matches web — a solo OWNER who also tattoos still sees
+   * the whole studio's pieces, so the question is "whose pieces does this
+   * list contain", not "does this person tattoo".
+   */
+  const canManageOthers =
+    (session?.profile.permissions.includes('flashGallery.manage') ?? false) &&
+    session?.profile.role !== 'ARTIST';
+  const showArtistFilter = canManageOthers && !session?.profile.isSoloStudio;
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
   const load = useCallback(
@@ -77,7 +100,26 @@ export default function FlashGalleryScreen() {
     }, [load]),
   );
 
-  const visible = useMemo(() => filterPieces(pieces ?? [], statuses), [pieces, statuses]);
+  useEffect(() => {
+    if (!token || !showArtistFilter) return;
+    let cancelled = false;
+    fetchArtists(token)
+      .then((rows) => {
+        if (!cancelled) setArtists(rows);
+      })
+      .catch(() => {
+        // The filter simply has nothing to offer — never a reason to
+        // break a gallery that loaded fine. Web swallows it the same way.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, showArtistFilter]);
+
+  const visible = useMemo(
+    () => filterPieces(pieces ?? [], statuses, artistIds),
+    [pieces, statuses, artistIds],
+  );
 
   // Two columns at every phone width. The gutter is subtracted first so
   // the tiles are square and the grid has no orphan pixel column.
@@ -123,7 +165,7 @@ export default function FlashGalleryScreen() {
         action={
           <TitleAction
             Icon={PlusIcon}
-            label="New flash piece"
+            label="New flash"
             onPress={() => router.push('/flash-piece')}
           />
         }
@@ -141,15 +183,20 @@ export default function FlashGalleryScreen() {
           contentContainerStyle={styles.filters}
           style={styles.filterStrip}
         >
-          {STATUS_FILTERS.map((status) => (
-            <Pill
-              key={status}
-              label={STATUS_LABELS[status]}
-              selected={statuses.includes(status)}
-              onPress={() => toggleStatus(status)}
-              leading={<View style={[styles.filterDot, { backgroundColor: tones[STATUS_TONES[status]] }]} />}
+          <MultiPillMenu
+            placeholder="All statuses"
+            options={STATUS_FILTERS.map((status) => ({ value: status, label: STATUS_LABELS[status] }))}
+            selected={statuses}
+            onChange={setStatuses}
+          />
+          {showArtistFilter ? (
+            <MultiPillMenu
+              placeholder="All artists"
+              options={artists.map((artist) => ({ value: artist.id, label: artistLabel(artist) }))}
+              selected={artistIds}
+              onChange={setArtistIds}
             />
-          ))}
+          ) : null}
         </ScrollView>
 
         {error ? (
@@ -243,7 +290,6 @@ const styles = StyleSheet.create({
 
   filterStrip: { flexGrow: 0 },
   filters: { flexDirection: 'row', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.lg },
-  filterDot: { width: 6, height: 6, borderRadius: radius.pill },
 
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, paddingHorizontal: space.lg },
   card: {

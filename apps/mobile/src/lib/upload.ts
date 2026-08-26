@@ -39,6 +39,13 @@ export const SIGNATURE_ENDPOINTS = {
   // `/uploads/signature` (the inquiry folder) -- so mobile reuses the
   // endpoint web already uses for exactly this, rather than adding one.
   chat: '/uploads/signature',
+  // Staff logging an inquiry: reference images and placement photos. The
+  // SAME endpoint as `chat` above — `/uploads/signature` is the inquiry
+  // folder, and it is what apps/web's own `ImageUploadSection` uses on
+  // `StaffInquiryForm`. Named separately because "uploading a placement
+  // photo with the chat purpose" reads as a mistake at the call site even
+  // when it is correct.
+  inquiry: '/uploads/signature',
 } as const;
 
 export type UploadPurpose = keyof typeof SIGNATURE_ENDPOINTS;

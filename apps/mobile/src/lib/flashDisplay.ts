@@ -82,10 +82,28 @@ export function hoursToMinutes(value: string): number | null {
   return Math.round(n * 60);
 }
 
-/** Applies the status filter. An empty selection means "everything". */
-export function filterPieces(pieces: FlashPiece[], statuses: FlashPieceStatus[]): FlashPiece[] {
-  if (statuses.length === 0) return pieces;
-  return pieces.filter((piece) => statuses.includes(piece.status));
+/**
+ * Applies both filters. An empty selection means "everything" — web's own
+ * rule, and the reason its trigger reads "All statuses" until you pick
+ * something:
+ *
+ *     (statusFilter.length === 0 || statusFilter.includes(piece.status)) &&
+ *     (artistFilter.length === 0 || artistFilter.includes(piece.artist.id))
+ *
+ * The two are ANDed, so picking two statuses and one artist means "either
+ * of those statuses, by that artist".
+ */
+export function filterPieces(
+  pieces: FlashPiece[],
+  statuses: FlashPieceStatus[],
+  artistIds: string[] = [],
+): FlashPiece[] {
+  if (statuses.length === 0 && artistIds.length === 0) return pieces;
+  return pieces.filter(
+    (piece) =>
+      (statuses.length === 0 || statuses.includes(piece.status)) &&
+      (artistIds.length === 0 || artistIds.includes(piece.artist.id)),
+  );
 }
 
 /** `2 available · 1 booked` — the line under the gallery title. */

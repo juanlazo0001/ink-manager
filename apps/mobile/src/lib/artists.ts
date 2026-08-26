@@ -27,6 +27,32 @@ import { apiFetch } from './api';
  * caller may not hold on a save that should have succeeded without them.
  */
 
+/**
+ * `GET /artists`. Needs `artists.view`.
+ *
+ * The studio's roster — HOME artists plus anyone currently guesting, and
+ * never a deleted account. Web's Flash gallery calls this to populate its
+ * artist filter, and only for staff, because an ARTIST caller already
+ * sees exactly one person's pieces.
+ *
+ * Only the three fields a picker needs are typed here. The route returns
+ * a much larger artist object; naming the subset keeps a caller from
+ * quietly depending on a field this app never asked for.
+ */
+export interface ArtistOption {
+  id: string;
+  user: { name: string | null; email: string; avatarUrl: string | null };
+}
+
+export function fetchArtists(token: string, signal?: AbortSignal): Promise<ArtistOption[]> {
+  return apiFetch<ArtistOption[]>('/artists', { token, signal });
+}
+
+/** Web's own `artistLabel` — the name, falling back to the email. */
+export function artistLabel(artist: ArtistOption): string {
+  return artist.user.name ?? artist.user.email;
+}
+
 /** `GET /artists/:id`. Needs `artists.view`, which ARTIST holds by default. */
 export function fetchArtistProfile(token: string, artistId: string, signal?: AbortSignal): Promise<ArtistProfile> {
   return apiFetch<ArtistProfile>(`/artists/${encodeURIComponent(artistId)}`, { token, signal });

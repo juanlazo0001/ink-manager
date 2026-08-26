@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
-import { countLine, ScreenTitle } from '@/components/ScreenTitle';
+import { countLine, ScreenTitle, TitleAction } from '@/components/ScreenTitle';
+import { PlusIcon } from '@/components/icons';
 import { InquiryRow, type InquiryRowData } from '@/components/InquiryRow';
 import { TopBar } from '@/components/TopBar';
 import { SegmentedControl } from '@/components/SegmentedControl';
@@ -154,6 +155,14 @@ export default function InquiriesScreen() {
     });
   }, [items, view]);
 
+  /**
+   * `POST /inquiries` checks this inline — there is no requirePermission
+   * middleware on a dual-purpose route — and answers 403 without it. The
+   * control is absent rather than present-and-refusing, same rule as
+   * Clients' own Add button.
+   */
+  const canCreate = session?.profile.permissions.includes('inquiries.create') ?? false;
+
   const counts = useMemo(
     () => ({
       inquiries: items?.filter((i) => tabForStatus(i.status) === 'inquiries').length ?? 0,
@@ -167,17 +176,15 @@ export default function InquiriesScreen() {
       <TopBar />
 
       {/*
-        ITEM 3b. The house title pattern, with the live line the segmented
-        control's own counts already compute — so the two can never
-        disagree about how many inquiries there are.
+        The house title pattern. Its count line is now the ONLY place these
+        two numbers appear — see the note on the toggle below for why they
+        left the segments.
 
-        NO ACTION BUTTON, deliberately. The `+` would have to open
-        web's `StaffInquiryForm`, and that is not a form this can honestly
-        shrink: it requires two image uploads (reference and placement)
-        before it will submit, on top of client selection, artist
-        assignment, size, placement and budget. A `+` that opened a
-        half-form would create inquiries the portal treats as incomplete.
-        It is a session of its own.
+        AB deferred the action here, on the grounds that web's
+        `StaffInquiryForm` is 524 lines with two required image uploads.
+        AC builds it: same fields, same rules, on the form layer this app
+        already has. It is gated on `inquiries.create`, which is what the
+        route itself checks inline.
       */}
       <ScreenTitle
         title="Inquiries"
@@ -186,10 +193,46 @@ export default function InquiriesScreen() {
             ? null
             : countLine([counts.inquiries, 'inquiry', 'inquiries'], [counts.projects, 'project'])
         }
+        action={
+          canCreate ? (
+            <TitleAction Icon={PlusIcon} label="New inquiry" onPress={() => router.push('/inquiry-new')} />
+          ) : null
+        }
       />
 
+      {/*
+        ITEM 3 — THE BADGES ARE GONE, and this is the fifth report on this
+        control rather than the fifth patch to it.
+        ─────────────────────────────────────────────────────────────────
+        The premise that Tasks uses a different anatomy is not true: Tasks
+        renders this same `SegmentedControl`, which renders this same
+        `Pill`. The one difference is that Tasks passes no counts. The
+        badge was the entire delta, and the badge is what has been running
+        off the edge.
+
+        Measured, both variants, 320/375/390/430pt, two-digit counts, with
+        Jura actually loaded — and crucially at 1.3x text, the largest
+        scale `Pill`'s own `maxFontSizeMultiplier` still permits on a
+        device:
+
+                        1.0x            1.3x
+          with badges   ends 288px      ends 327px   <- past a 320pt screen
+          labels only   ends 231px      ends 265px
+
+        That 327 is the bug. Every previous fix measured clean because
+        react-native-web does not implement iOS Dynamic Type at all, so a
+        browser check silently tests the one condition where the cause is
+        absent. `flexShrink: 0` (added by two earlier fixes) means it does
+        not ellipsis — it overflows into the scroll, which on a phone
+        reads exactly as "PROJECTS is cut off".
+
+        The counts did not need to be here at all: the line directly above
+        already says "24 inquiries · 18 projects". The badges were a second
+        copy of the same two numbers, 40px away, and they were the copy
+        that could not fit.
+      */}
       <SegmentedControl
-        segments={INQUIRY_TABS.map((v) => ({ key: v.key, label: v.label.toUpperCase(), count: counts[v.key] }))}
+        segments={INQUIRY_TABS.map((v) => ({ key: v.key, label: v.label.toUpperCase() }))}
         value={view}
         onChange={setView}
       />
