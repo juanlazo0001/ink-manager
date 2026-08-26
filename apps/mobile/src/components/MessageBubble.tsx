@@ -1,14 +1,16 @@
 import Feather from '@expo/vector-icons/Feather';
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState } from 'react';
 import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { isMessageEdited } from '@/lib/conversations';
+import { deliveryLabel, deliveryState } from '@/lib/deliveryStatus';
 import { linkify, truncateMiddle } from '@/lib/linkify';
 import type { DisplayMessage } from '@/lib/threadRows';
-import { colors, hairline, radius, space, type } from '@/theme';
+import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
 import { timeOfDay } from '@/lib/time';
 
 /**
@@ -35,16 +37,29 @@ export const REVEAL_WIDTH = 68;
  * person in the thread they were reading, which matters when the link is
  * something a client just sent and the reply is half-typed.
  */
-function Body({ body, own }: { body: string; own: boolean }) {
+function Body({
+  body,
+  own,
+  numberOfLines,
+}: {
+  body: string;
+  own: boolean;
+  /** Set by the email collapse (§2.6); undefined everywhere else. */
+  numberOfLines?: number;
+}) {
   const parts = linkify(body);
   const bodyStyle = [styles.body, own ? styles.bodyOwn : styles.bodyTheirs];
 
   if (parts.length === 1 && parts[0].kind === 'text') {
-    return <Text style={bodyStyle}>{body}</Text>;
+    return (
+      <Text style={bodyStyle} numberOfLines={numberOfLines}>
+        {body}
+      </Text>
+    );
   }
 
   return (
-    <Text style={bodyStyle}>
+    <Text style={bodyStyle} numberOfLines={numberOfLines}>
       {parts.map((part, i) =>
         part.kind === 'text' ? (
           <Text key={i}>{part.value}</Text>
@@ -68,12 +83,89 @@ function Body({ body, own }: { body: string; own: boolean }) {
   );
 }
 
+/** Spec §2.6: an email longer than this collapses. */
+const EMAIL_COLLAPSE_LINES = 6;
+/** `styles.body`'s own line height — the two must not drift apart. */
+const EMAIL_LINE_HEIGHT = 21;
+
+/**
+ * An email body, collapsed to six lines with a fade and a READ MORE
+ * (spec §2.6).
+ *
+ * ─── HOW THE OVERFLOW IS KNOWN ──────────────────────────────────────
+ *
+ * A hidden, unclamped twin at the same width is measured once and its
+ * HEIGHT compared against six lines' worth; the visible copy then clamps
+ * with `numberOfLines`. Asking the visible copy is useless — once clamped
+ * it reports the clamped size, which is a yes-shaped non-answer.
+ *
+ * Height, not `onTextLayout`'s line array, and that is not a style
+ * preference: `onTextLayout` never fires under react-native-web, so the
+ * line-count version measured nothing in the preview and shipped an email
+ * that silently refused to collapse. `onLayout` fires on both. Found by
+ * rendering it.
+ *
+ * The mask is a gradient fading to the bubble's own fill rather than a
+ * flat scrim, so the last visible line dissolves instead of being cut.
+ */
+function EmailBody({ body, own }: { body: string; own: boolean }) {
+  const [fullHeight, setFullHeight] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  // A line of tolerance, so a body that lands exactly on six does not
+  // collapse to show one clipped word.
+  const collapsedHeight = EMAIL_COLLAPSE_LINES * EMAIL_LINE_HEIGHT;
+  const overflows = fullHeight !== null && fullHeight > collapsedHeight + EMAIL_LINE_HEIGHT * 0.5;
+  const collapsed = overflows && !expanded;
+
+  return (
+    <View>
+      {/* The measuring twin: laid out, never seen, never read aloud. */}
+      {fullHeight === null ? (
+        <Text
+          style={[styles.body, styles.measure]}
+          onLayout={(e) => setFullHeight(e.nativeEvent.layout.height)}
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
+        >
+          {body}
+        </Text>
+      ) : null}
+
+      <View>
+        <Body body={body} own={own} numberOfLines={collapsed ? EMAIL_COLLAPSE_LINES : undefined} />
+        {collapsed ? (
+          <LinearGradient
+            colors={[`${chat.bubbleInBg}00`, chat.bubbleInBg]}
+            style={styles.emailMask}
+            pointerEvents="none"
+          />
+        ) : null}
+      </View>
+
+      {overflows ? (
+        <Pressable
+          onPress={() => setExpanded((v) => !v)}
+          accessibilityRole="button"
+          hitSlop={6}
+          style={({ pressed }) => [styles.readMore, pressed && styles.pressed]}
+        >
+          <Text style={styles.readMoreLabel}>{expanded ? 'SHOW LESS' : 'READ MORE'}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 export function MessageBubble({
   message,
   own,
   showMeta,
   showAuthor,
   grouped,
+  lastInGroup,
+  attribution,
+  isLastOutgoing,
   revealX,
   onRetry,
   onOpenImage,
@@ -87,8 +179,17 @@ export function MessageBubble({
   showMeta: boolean;
   /** GROUP threads only: whose message this is, when it isn't the viewer's. */
   showAuthor: boolean;
-  /** Continues a run from the same side — tighter gap above. */
+  /** Continues a run from the same side — tighter gap above (§2.1). */
   grouped: boolean;
+  /** Last bubble of its group: the only one that gets a tail (§2.1). */
+  lastInGroup: boolean;
+  /** `SENT BY {NAME}` / `{NAME}` above a group's first bubble (§2.1). */
+  attribution: string | null;
+  /**
+   * Spec §2.2: the delivery status line renders under the LAST outgoing
+   * message only, not under every one of them.
+   */
+  isLastOutgoing: boolean;
   /** Thread-wide drag offset. Negative slides everything left. */
   revealX: SharedValue<number>;
   onRetry?: () => void;
@@ -100,8 +201,15 @@ export function MessageBubble({
   /** Tapping a quoted reply jumps to the message it quotes. */
   onScrollToMessage?: (messageId: string) => void;
 }) {
-  const failed = message.status === 'failed';
-  const pending = message.status === 'pending';
+  /*
+   * §2.4 rev D.1. The state is derived, not read off `status`: a message
+   * the API stored can still be reported DELIVERED or FAILED by the
+   * carrier afterwards, and `status` only ever knows about the local
+   * send. `deliveryState` owns the precedence.
+   */
+  const state = deliveryState(message);
+  const failed = state === 'FAILED';
+  const pending = state === 'QUEUED';
   const authorName = message.author?.name ?? message.author?.email ?? null;
 
   // One reaction per person per message, so this collapses to a count per
@@ -134,6 +242,13 @@ export function MessageBubble({
    */
   const bare = images.length > 0 && !message.body && !message.replyTo && others.length === 0;
 
+  /*
+   * §2.6: email is the one channel with its own body treatment. The
+   * subject rides in `metadata`, which the API already returns.
+   */
+  const isEmail = message.channel === 'EMAIL';
+  const subject = isEmail ? (message.metadata?.subject as string | undefined) : undefined;
+
   const slide = useAnimatedStyle(() => ({ transform: [{ translateX: revealX.value }] }));
 
   return (
@@ -146,7 +261,26 @@ export function MessageBubble({
         slide,
       ]}
     >
-      {showAuthor && !own && authorName ? <Text style={styles.author}>{authorName}</Text> : null}
+      {/*
+        §2.1 sender attribution. Replaces AE's `showAuthor` line, which
+        only ever named an incoming sender in a group thread; the spec
+        also wants OUTGOING groups attributed when a colleague sent them,
+        because a shared inbox otherwise reads as one anonymous voice.
+      */}
+      {attribution ? <Text style={styles.attribution}>{attribution}</Text> : null}
+
+      <View style={[styles.bubbleLine, own ? styles.bubbleLineOwn : styles.bubbleLineTheirs]}>
+      {/*
+        The badge is a SIBLING of the bubble, on the surface, and sits in
+        the same row so it hugs the bubble's OUTER-LEFT edge rather than
+        the screen's. Anchored absolutely to the full-width wrapper first,
+        it landed ~250pt away from a right-aligned bubble.
+      */}
+      {failed ? (
+        <View style={styles.failBadge}>
+          <Feather name="alert-circle" size={18} color={chat.alert} />
+        </View>
+      ) : null}
 
       <Pressable
           onLongPress={onLongPress}
@@ -156,6 +290,11 @@ export function MessageBubble({
           style={[
             bare ? styles.bare : styles.bubble,
             !bare && (own ? styles.bubbleOwn : styles.bubbleTheirs),
+            // §2.1: the tail is one squared corner on the group's last
+            // bubble — own bottom-right, incoming bottom-left. Drawn by
+            // collapsing the radius rather than by an SVG notch: it reads
+            // identically at this radius and costs no extra view.
+            !bare && lastInGroup && (own ? styles.tailOwn : styles.tailTheirs),
             pending && styles.bubblePending,
             // A failed send gets a red edge — the one place red belongs on
             // this screen, because something genuinely did not happen.
@@ -178,7 +317,26 @@ export function MessageBubble({
             </Pressable>
           ) : null}
 
-          {message.body ? <Body body={message.body} own={own} /> : null}
+          {/*
+            §2.6 EMAIL. The subject sits above the body in Outfit 14/600,
+            read from `metadata.subject` — the same field apps/web reads
+            for its own email composer, so nothing new is fetched or
+            invented. Only EMAIL messages take this path; every other
+            channel renders the plain body it always did.
+          */}
+          {subject ? (
+            <Text style={[styles.subject, own ? styles.bodyOwn : styles.bodyTheirs]} numberOfLines={2}>
+              {subject}
+            </Text>
+          ) : null}
+
+          {message.body ? (
+            isEmail ? (
+              <EmailBody body={message.body} own={own} />
+            ) : (
+              <Body body={message.body} own={own} />
+            )
+          ) : null}
 
           {images.length > 0 ? (
             <View
@@ -244,6 +402,7 @@ export function MessageBubble({
             </View>
           ) : null}
         </Pressable>
+      </View>
 
       {/*
         ITEM 2. The timestamp sits in a gutter hung off the RIGHT EDGE OF
@@ -262,24 +421,51 @@ export function MessageBubble({
         </Text>
       </View>
 
+      {/*
+        §2.4 DELIVERY STATES — SURFACE-ANCHORED, which is the compensating
+        rule the owner's red-bubble ruling depends on.
+        ────────────────────────────────────────────────────────────────
+        The bubble is now brand-red. Alert-red on brand-red is invisible,
+        so failure NEVER recolours the fill: the badge sits on the espresso
+        surface at the bubble's outer-left, and the status line sits below
+        on the same surface. Both read against the page, not against the
+        message. Do not "just tint the failed bubble" — that is exactly
+        what this shape exists to prevent.
+
+        Truth constraint (rev D.1): QUEUED / SENT / DELIVERED / FAILED.
+        There is still no status COLUMN — DELIVERED comes from the
+        provider's own DLR, which the backend persists into
+        `Message.metadata.deliveryStatus`. Absent or unrecognised metadata
+        falls back to SENT, so nothing here ever claims a delivery the
+        carrier did not report. READ stays dormant: no live channel
+        reports it.
+      */}
       {failed ? (
         <Pressable
           onPress={onRetry}
           accessibilityRole="button"
-          style={({ pressed }) => [styles.failedRow, pressed && styles.pressed]}
+          accessibilityLabel="Not delivered. Tap to retry."
+          hitSlop={8}
+          style={({ pressed }) => [
+            styles.failedRow,
+            own ? styles.failedRowOwn : styles.failedRowTheirs,
+            pressed && styles.pressed,
+          ]}
         >
-          <Feather name="alert-circle" size={12} color={colors.danger} />
-          <Text style={styles.failedLabel}>Not sent — tap to retry</Text>
+          <Text style={styles.failedLabel}>NOT DELIVERED · TAP TO RETRY</Text>
         </Pressable>
       ) : pending && showMeta ? (
-        /*
-         * The only status line left in the default render. Channel, time
-         * and "Edited" moved to the long-press detail (item 2); "Sending…"
-         * stays because it is about THIS moment, not about the record —
-         * a bubble in flight has to say so without being asked.
-         */
         <View style={[styles.meta, own ? styles.metaOwn : styles.metaTheirs]}>
-          <Text style={styles.metaText}>Sending…</Text>
+          <Text style={styles.metaText}>{deliveryLabel(state)}</Text>
+        </View>
+      ) : own && isLastOutgoing && showMeta ? (
+        /*
+         * §2.2: under the last outgoing message only. The label is now
+         * SENT *or* DELIVERED — whichever the provider has actually
+         * reported. Same Jura treatment either way, per §2.4.
+         */
+        <View style={[styles.meta, styles.metaOwn]}>
+          <Text style={styles.metaText}>{deliveryLabel(state)}</Text>
         </View>
       ) : null}
     </Animated.View>
@@ -302,22 +488,41 @@ const styles = StyleSheet.create({
    * touching and opens a real gap when the speaker changes; the contrast
    * between the two IS the grouping cue, so both numbers matter.
    */
+  /* §2.1 gaps: intra-group 2, inter-group 10. AE shipped 2 / 12. */
   wrapGrouped: { marginTop: 2 },
-  wrapNewRun: { marginTop: space.md },
+  wrapNewRun: { marginTop: 10 },
 
-  author: { ...type.label, color: colors.fgMuted, marginBottom: space.xs, marginLeft: space.sm },
+  /* §2.1 attribution: Jura 10 caps, muted, above the group's first bubble. */
+  attribution: {
+    ...type.label,
+    fontSize: 10,
+    color: chat.textMuted,
+    marginBottom: 3,
+    marginHorizontal: space.sm,
+  },
 
   bubble: {
-    maxWidth: '84%',
-    /* Tighter than before (was 12 / 10) — Messages' bubbles hug their
-       text, and the old padding read as a card. */
-    paddingHorizontal: space.md,
-    paddingVertical: 7,
+    /* §2.1: max width 78%, padding 10x14, radius 18 (radius.bubble). */
+    maxWidth: '78%',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderRadius: radius.bubble,
     borderWidth: hairline,
   },
-  bubbleOwn: { backgroundColor: colors.accent, borderColor: colors.accent },
-  bubbleTheirs: { backgroundColor: colors.surface, borderColor: colors.border },
+  /*
+   * THE OWNER RULING (Juan, 2026-08-26). Outgoing bubbles are red —
+   * `chat.bubbleOwnBg` = `colors.dangerStrong` — the second sanctioned
+   * red fill in this app after the CHAT tab. Was `colors.accent` (gold).
+   * Its compensating rule is the surface-anchored failure treatment
+   * above; the two ship together or not at all.
+   */
+  bubbleOwn: { backgroundColor: chat.bubbleOwnBg, borderColor: chat.bubbleOwnBg },
+  bubbleTheirs: { backgroundColor: chat.bubbleInBg, borderColor: colors.border },
+
+  /* §2.1 tail: the group's last bubble squares off its inner-bottom
+     corner toward its own side. */
+  tailOwn: { borderBottomRightRadius: 5 },
+  tailTheirs: { borderBottomLeftRadius: 5 },
   bubblePending: { opacity: 0.55 },
   bubbleFailed: { borderColor: colors.dangerStrong },
 
@@ -329,8 +534,18 @@ const styles = StyleSheet.create({
      its text tighter than a reading column, because a chat line is a
      sentence rather than a paragraph. */
   body: { ...type.message, lineHeight: 21 },
-  bodyOwn: { color: colors.accentFg },
-  bodyTheirs: { color: colors.fg },
+  /* §1: white on the red fill, not cream — 5.16:1 vs 4.39:1 (CLAUDE.md). */
+  bodyOwn: { color: chat.bubbleOwnText },
+  bodyTheirs: { color: chat.textPrimary },
+
+  /* §2.6: subject in Outfit 14/600 above the body. */
+  subject: { ...type.small, fontFamily: fonts.bodyMedium, fontSize: 14, marginBottom: 3 },
+  /* Laid out for measurement, never painted and never announced. */
+  measure: { position: 'absolute', opacity: 0, zIndex: -1 },
+  /* The last two lines dissolve into the bubble's own fill. */
+  emailMask: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 34 },
+  readMore: { marginTop: 4, alignSelf: 'flex-start' },
+  readMoreLabel: { ...type.label, fontSize: 10, color: chat.accent },
 
   link: { textDecorationLine: 'underline' },
   /* On the gold bubble the body colour already contrasts; underline alone
@@ -399,14 +614,36 @@ const styles = StyleSheet.create({
     paddingLeft: space.sm,
     justifyContent: 'center',
   },
-  revealTime: { ...type.meta, color: colors.fgMuted },
+  revealTime: { ...type.label, fontSize: 10, color: chat.textMuted },
 
-  meta: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: 2, paddingHorizontal: space.xs },
+  meta: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: 3, paddingHorizontal: space.xs },
   metaOwn: { justifyContent: 'flex-end' },
   metaTheirs: { justifyContent: 'flex-start' },
-  metaText: { ...type.meta, color: colors.fgMuted },
+  /* §1.2: delivery status is metadata — Jura 10 caps, muted. */
+  metaText: { ...type.label, fontSize: 10, color: chat.textMuted },
 
-  failedRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: 2 },
-  failedLabel: { ...type.meta, color: colors.danger },
+  /*
+   * §2.4 surface-anchored failure. The badge is absolutely positioned so
+   * it hangs off the bubble's outer edge without widening the row, and it
+   * sits on the espresso surface where alert-red is legible.
+   */
+  /* In-row, so it tracks the bubble's own edge at any bubble width. */
+  /*
+     `alignSelf: stretch`, not a shrink-to-fit row: the bubble's own
+     `maxWidth: 78%` (2.1) resolves against ITS PARENT, so a row that
+     hugged its content made 78% mean 78%-of-the-text and every bubble
+     wrapped a word early. Stretching the row puts the percentage back on
+     the screen where the spec measures it. Caught by comparing renders.
+  */
+  bubbleLine: { flexDirection: 'row', alignItems: 'center', gap: space.xs, alignSelf: 'stretch' },
+  bubbleLineOwn: { justifyContent: 'flex-end' },
+  bubbleLineTheirs: { justifyContent: 'flex-start' },
+  failBadge: { flexShrink: 0 },
+  failedRow: { marginTop: 3, paddingHorizontal: space.xs },
+  failedRowOwn: { alignSelf: 'flex-end' },
+  failedRowTheirs: { alignSelf: 'flex-start' },
+  /* `alertText` (#e08272), not `alert` (#c2402f): the strong red only
+     clears the 3:1 non-text floor, and this is text. */
+  failedLabel: { ...type.label, fontSize: 10, color: chat.alertText },
   pressed: { opacity: 0.6 },
 });

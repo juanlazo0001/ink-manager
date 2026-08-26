@@ -100,6 +100,94 @@ export const colors = {
 } as const;
 
 /**
+ * Chat-surface role tokens (spec §1, Edition 02 rev D).
+ *
+ * ─── A ROLE LAYER, NOT A SECOND PALETTE ─────────────────────────────
+ *
+ * Every entry points at a value that already exists above. The spec ships
+ * ★-marked samples eyedropped from a screenshot, and §1 settles the tie
+ * itself: "If the app's theme file disagrees with a sample, the theme
+ * file wins." Every sample is a shade or two lighter than the real
+ * Editorial Gold value, so this maps roles onto the palette rather than
+ * introducing the samples as new colours — otherwise the chat tab would
+ * quietly become its own theme and drift the moment either side moved.
+ *
+ * The one literal here is `#C2402F`, and it is not new either: it is
+ * `dangerStrong`, referenced through its role name so the ruling below is
+ * legible at the call site.
+ *
+ * ─── THE RED RULING ─────────────────────────────────────────────────
+ *
+ * `bubbleOwnBg` is red by OWNER RULING (Juan, 2026-08-26), recorded in
+ * CLAUDE.md's red-exception entry. Outgoing bubbles are the second
+ * sanctioned red fill in this app, alongside the chat entry point.
+ *
+ * Its compensating rule is load-bearing and lives in `alert` below: chat
+ * failure affordances are SURFACE-ANCHORED, never a recolour of the
+ * bubble. Alert-red on brand-red is invisible; alert-red on espresso is
+ * not. Any future "just tint the failed bubble" is the thing this rule
+ * exists to prevent.
+ */
+export const chat = {
+  /** §1 `chat.surface` — ★#1A1410 → the app's real page ground. */
+  surface: colors.bg,
+  /** §1 `chat.surface.raised` — ★#251E17 → surface-on-surface. */
+  surfaceRaised: colors.surfaceRaised,
+
+  /** §1 `chat.bubble.own.bg` — exact, and the owner ruling above. */
+  bubbleOwnBg: colors.dangerStrong,
+  /**
+   * §1 `chat.bubble.own.text` — white, not cream, and measured rather
+   * than chosen: CLAUDE.md already records cream on this red at 4.39:1
+   * (under the 4.5:1 AA floor) and white at 5.16:1 (over it).
+   */
+  bubbleOwnText: '#ffffff',
+  /**
+   * §1 `chat.bubble.in.bg` — ★#2B231B, "elevated espresso". No token
+   * existed; `surfaceRaised` is the palette's own name for exactly that
+   * idea, so the role points there instead of adding a fourth espresso.
+   */
+  bubbleInBg: colors.surfaceRaised,
+
+  /** §1 `chat.text.primary` / `.muted`. */
+  textPrimary: colors.fg,
+  textMuted: colors.fgMuted,
+
+  /** §1 `chat.accent.gold` — context chips, READ MORE, pins. */
+  accent: colors.accent,
+
+  /**
+   * §1 `chat.alert.red`. Same value as `bubbleOwnBg` on purpose — which
+   * is precisely why failure treatment is surface-anchored (§2.4) rather
+   * than a fill change. Read the ruling note above before using this.
+   */
+  alert: colors.dangerStrong,
+  /** The readable-as-text red, for the NOT DELIVERED line itself. */
+  alertText: colors.danger,
+
+  /** §1 presence. Dormant until a client-consumable signal exists (§9). */
+  presenceOn: colors.success,
+  presenceOff: colors.fgFaint,
+
+  /**
+   * §1 `chat.hairline` — ★rgba(231,220,196,.09), a CREAM-tinted rule.
+   * The app's default `border` is gold-tinted; `borderSoft` is the
+   * neutral one and is the honest match for a divider that should not
+   * read as gold.
+   */
+  hairline: colors.borderSoft,
+
+  /**
+   * §1 `chat.note.bg` — internal notes. PARKED: §2.6 rev D confirms no
+   * internal-note message type exists in the data model, so nothing
+   * renders this yet. Kept so the role is mapped when the type lands,
+   * and deliberately pointed at the existing 10%-gold value rather than
+   * the ★ sample.
+   */
+  noteBg: colors.cardBorder,
+} as const;
+
+/**
  * Status tones, from the web's own `--color-*` set. These carry MEANING,
  * not decoration -- `warning` is "someone must act", `danger` is
  * genuinely lost, `hold` is paused. Red only ever arrives here by asking
