@@ -133,6 +133,13 @@ export const chat = {
   surface: colors.bg,
   /** §1 `chat.surface.raised` — ★#251E17 → surface-on-surface. */
   surfaceRaised: colors.surfaceRaised,
+  /**
+   * A recessed ground, under things that are still arriving — §2.5's
+   * image skeleton is the only user so far. Deliberately DARKER than the
+   * page: a loading image should read as a hole in the surface, not as a
+   * card that has not filled in yet.
+   */
+  surfaceInset: colors.surfaceInset,
 
   /** §1 `chat.bubble.own.bg` — exact, and the owner ruling above. */
   bubbleOwnBg: colors.dangerStrong,

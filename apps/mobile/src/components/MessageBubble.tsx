@@ -10,6 +10,7 @@ import { isMessageEdited } from '@/lib/conversations';
 import { deliveryLabel, deliveryState } from '@/lib/deliveryStatus';
 import { linkify, truncateMiddle } from '@/lib/linkify';
 import type { DisplayMessage } from '@/lib/threadRows';
+import { ImageBubble } from '@/components/ImageBubble';
 import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
 import { timeOfDay } from '@/lib/time';
 
@@ -40,6 +41,13 @@ function isImageUrl(url: string): boolean {
  * a deliberate pull rather than something a thumb does by accident on
  * the way to scrolling.
  */
+/**
+ * §2.5: a solo image's measure. Wider than a tile and narrower than the
+ * bubble's own 78%, so a landscape photo still reads as a message rather
+ * than as the screen.
+ */
+const SOLO_IMAGE_WIDTH = 240;
+
 export const REVEAL_WIDTH = 84;
 
 /** §7: more than 8pt of travel is a scroll, not a long press. */
@@ -405,14 +413,30 @@ export function MessageBubble({
                   accessibilityRole="button"
                   accessibilityLabel={`Attached image ${index + 1} of ${images.length}. Opens full screen.`}
                   style={({ pressed }) => [
-                    styles.imageWrap,
-                    // One image gets the full width; several tile 2-up.
-                    images.length === 1 ? styles.imageSolo : styles.imageTiled,
-                    bare && styles.imageBare,
+                    // A tile keeps its own frame; a solo image brings its
+                    // own, because it has to size itself to the photo.
+                    images.length > 1 && styles.imageTiled,
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Image source={{ uri: url }} style={styles.image} contentFit="cover" transition={140} />
+                  {images.length === 1 ? (
+                    /*
+                      §2.5. One image keeps the photo's own proportions
+                      under a 280 ceiling -- see ImageBubble on why a
+                      square crop is the wrong default for this app.
+                    */
+                    <ImageBubble url={url} bare={bare} maxWidth={SOLO_IMAGE_WIDTH} />
+                  ) : (
+                    /*
+                      Several images are a COLLAGE, and a collage wants
+                      equal tiles -- Messages does the same. Cropping is
+                      correct here: the grid is an index, and any one of
+                      them opens full-screen.
+                    */
+                    <View style={styles.tileFrame}>
+                      <Image source={{ uri: url }} style={styles.image} contentFit="cover" transition={140} />
+                    </View>
+                  )}
                 </Pressable>
               ))}
             </View>
@@ -641,11 +665,14 @@ const styles = StyleSheet.create({
   /* 2 tiles + the gap between them. Messages' own collage is 2-up. */
   imagesGrid: { width: 104 * 2 + 2 },
   imagesAfterText: { marginTop: space.xs },
-  imageWrap: { borderRadius: radius.input, overflow: 'hidden', backgroundColor: colors.surfaceInset },
-  imageSolo: { width: 220, height: 220 },
   imageTiled: { width: 104, height: 104 },
-  /* A bare image carries the bubble's own radius, since it IS the bubble. */
-  imageBare: { borderRadius: radius.bubble },
+  tileFrame: {
+    width: '100%',
+    height: '100%',
+    borderRadius: radius.input,
+    overflow: 'hidden',
+    backgroundColor: chat.surfaceInset,
+  },
   image: { width: '100%', height: '100%' },
 
   attachmentNote: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.xs },
