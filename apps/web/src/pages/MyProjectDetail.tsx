@@ -265,10 +265,24 @@ export default function MyProjectDetail() {
           <p className="text-sm text-danger">
             {error instanceof ApiError && error.status === 404
               ? "This project isn't assigned to you."
-              : error instanceof Error
-                ? error.message
-                : 'Failed to load project'}
+              : error instanceof ApiError && error.status === 403
+                ? // Reachable for real: this route's permission is
+                  // evaluated at the PROJECT's own studio, so a guest
+                  // artist whose host studio denies ARTIST inquiries.view
+                  // lands here holding a genuine assignment. Previously
+                  // this fell through to error.message and rendered the
+                  // raw API string, "Forbidden" -- which says nothing
+                  // about which studio decided, or that the project is
+                  // still theirs.
+                  "This project's studio hasn't given you permission to view projects there. It's still assigned to you — ask that studio's owner if you need access."
+                : error instanceof Error
+                  ? error.message
+                  : 'Failed to load project'}
           </p>
+          <Link to={backTo} className="mt-3 inline-flex items-center gap-2 text-sm text-accent hover:underline">
+            <ArrowLeftIcon className="h-4 w-4" />
+            {backLabel}
+          </Link>
         </div>
       )}
 
