@@ -19,6 +19,8 @@ import {
 
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
+  FadeIn,
+  ZoomIn,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -27,7 +29,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useKeyboardHandler } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { motion, S2, S4, useReducedMotion } from '@/theme/chatMotion';
+import { motion, REDUCED_MS, S1, S2, S4, useReducedMotion } from '@/theme/chatMotion';
 import { useChatDevToggles } from '@/lib/chatDevToggles';
 
 import { ScreenShell } from '@/components/ScreenShell';
@@ -35,6 +37,7 @@ import { Composer, type ComposerSendState } from '@/components/Composer';
 import { MessageActions } from '@/components/MessageActions';
 import { RetrySheet } from '@/components/RetrySheet';
 import { FlyTarget } from '@/components/FlyTarget';
+import { ScrollToBottomPill } from '@/components/ScrollToBottomPill';
 import { SendFly, type Rect } from '@/components/SendFly';
 import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
 import { channelLabel } from '@/components/ConversationRow';
@@ -272,6 +275,30 @@ export default function ConversationScreen() {
    */
   const chipCollapse = useSharedValue(0);
   const lastScrollY = useSharedValue(0);
+
+  /*
+   * §5 SCROLL-TO-BOTTOM PILL.
+   *
+   * The list is inverted, so contentOffset 0 IS the bottom and the 200pt
+   * rule reads directly off the offset -- no content-height arithmetic,
+   * nothing to keep in sync as the thread grows. That is the whole reason
+   * rev E pinned the inverted list as implementation truth.
+   *
+   * `pillShown` is a shared value because this is decided on every frame
+   * of a drag; through React state it would re-render the entire thread
+   * sixty times a second while someone scrolls.
+   *
+   * `awayFromBottom` mirrors it as a ref for the JS side to read when a
+   * message arrives -- a ref rather than state for the same reason.
+   */
+  const pillShown = useSharedValue(0);
+  const awayFromBottom = useRef(false);
+  const [unseenCount, setUnseenCount] = useState(0);
+  /** Every message id this screen has ever been handed. */
+  const seenIds = useRef(new Set<string>());
+  /** Those that turned up AFTER the first load -- the ones that may pop. */
+  const arrivedIds = useRef(new Set<string>());
+
   const onThreadScroll = useCallback(
     (event: { nativeEvent: { contentOffset: { y: number } } }) => {
       const y = event.nativeEvent.contentOffset.y;
@@ -281,9 +308,26 @@ export default function ConversationScreen() {
         chipCollapse.value = withSpring(dy > 0 ? 1 : 0, S2);
         lastScrollY.value = y;
       }
+
+      const away = y > PILL_THRESHOLD;
+      if (away !== awayFromBottom.current) {
+        awayFromBottom.current = away;
+        pillShown.value = withSpring(away ? 1 : 0, S2);
+        // Back at the bottom is the definition of having seen them.
+        if (!away) setUnseenCount(0);
+      }
     },
-    [chipCollapse, lastScrollY],
+    [chipCollapse, lastScrollY, pillShown],
   );
+
+  /** The pill's tap, and what every "go to newest" path should call. */
+  const jumpToNewest = useCallback(() => {
+    // Offset 0 on an inverted list is the newest message.
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    awayFromBottom.current = false;
+    pillShown.value = withSpring(0, S2);
+    setUnseenCount(0);
+  }, [pillShown]);
   const revealPan = useMemo(
     () =>
       Gesture.Pan()
@@ -318,6 +362,30 @@ export default function ConversationScreen() {
 
   const mergeServerMessages = useCallback((serverMessages: Message[], mode: 'replace' | 'prepend') => {
     const asDisplay: DisplayMessage[] = serverMessages.map((m) => ({ ...m, status: 'sent' }));
+
+    /*
+     * §5/§10: what is NEW here, and did it arrive while the reader was up
+     * in history?
+     *
+     * `seenIds` is the memory that makes both questions answerable. On the
+     * first load every message is "new" and none of it should pop or count
+     * -- opening a thread is not twelve messages arriving -- so the first
+     * pass only records. A prepend is history by definition and never
+     * counts either.
+     */
+    if (mode === 'replace') {
+      const first = seenIds.current.size === 0;
+      const fresh = asDisplay.filter((m) => !seenIds.current.has(m.id));
+      for (const m of asDisplay) seenIds.current.add(m.id);
+      if (!first && fresh.length > 0) {
+        for (const m of fresh) arrivedIds.current.add(m.id);
+        const incoming = fresh.filter((m) => m.direction === 'INBOUND').length;
+        if (incoming > 0 && awayFromBottom.current) setUnseenCount((n) => n + incoming);
+      }
+    } else {
+      for (const m of asDisplay) seenIds.current.add(m.id);
+    }
+
     setMessages((current) => {
       if (mode === 'prepend') return [...asDisplay, ...current];
       // A replace keeps any still-pending or failed local rows pinned to
@@ -684,6 +752,21 @@ export default function ConversationScreen() {
                 </Text>
               </View>
             ) : (
+              <Animated.View
+                /*
+                  §10 S1 pop, and only for a message that ARRIVED -- never
+                  for the twelve already on screen when the thread opened,
+                  and never again when a poll re-delivers the same row.
+                  Reduced motion drops it to a plain fade.
+                */
+                entering={
+                  arrivedIds.current.has(item.message.id)
+                    ? flyReduced
+                      ? FadeIn.duration(REDUCED_MS)
+                      : ZoomIn.springify().stiffness(S1.stiffness!).damping(S1.damping!)
+                    : undefined
+                }
+              >
               <FlyTarget
                 messageId={item.message.id}
                 active={pendingFly?.id === item.message.id}
@@ -719,6 +802,7 @@ export default function ConversationScreen() {
                 }
               />
               </FlyTarget>
+              </Animated.View>
             )
           }
           contentContainerStyle={[styles.listContent, rows.length === 0 && styles.listEmpty]}
@@ -766,6 +850,16 @@ export default function ConversationScreen() {
           }
         />
         </GestureDetector>
+        {/*
+          Inside the LIST's box, not the outer container: `bottom` here
+          means "just above the composer". Anchored to the container it
+          sat behind the composer instead -- measured at y=752 with the
+          composer occupying 725-800.
+
+          That box is inside the keyboard-translated container, so the pill
+          still rides up with everything else when the keyboard opens.
+        */}
+        <ScrollToBottomPill shown={pillShown} count={unseenCount} onPress={jumpToNewest} />
         </View>
 
         {saveNote ? (
@@ -895,6 +989,9 @@ export default function ConversationScreen() {
     </ScreenShell>
   );
 }
+
+/** §5: past this many points from the bottom, an arrival must not move the view. */
+const PILL_THRESHOLD = 200;
 
 /** Mirrors styles.listContent's paddingVertical -- see onFlyTargetMeasured. */
 const LIST_CONTENT_PAD = space.md;
