@@ -6,15 +6,23 @@ import { ScreenShell } from '@/components/ScreenShell';
 import { countLine, ScreenTitle, TitleAction } from '@/components/ScreenTitle';
 import { Appear } from '@/components/Appear';
 import { Avatar, initialsOf } from '@/components/Avatar';
-import { Pill, PillRow } from '@/components/Pill';
+import { PillMenu } from '@/components/PillMenu';
 import { TopBar } from '@/components/TopBar';
 import { CardIconButton } from '@/components/CardIconButton';
-import { MessageIcon, PlusIcon } from '@/components/icons';
+import { MoreIcon, PlusIcon } from '@/components/icons';
 import { SkeletonList } from '@/components/Skeleton';
 import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
-import { clientName, fetchClients, filterClients, type ClientListItem } from '@/lib/clients';
+import {
+  clientName,
+  CLIENT_FILTERS,
+  fetchClients,
+  filterClients,
+  type ClientFilter,
+  type ClientListItem,
+} from '@/lib/clients';
 import { screenErrorMessage } from '@/lib/screenError';
+import { ApiError, isTransientApiFailure } from '@/lib/api';
 import { colors, hairline, radius, space, type } from '@/theme';
 import { formatPhone } from '@/lib/format';
 import { fetchConversations } from '@/lib/conversations';
@@ -26,6 +34,8 @@ import {
   upcomingWindow,
 } from '@/lib/clientListSignals';
 import { StatusChip } from '@/components/StatusChip';
+import { ClientRowActionsSheet } from '@/components/ClientRowActionsSheet';
+import { archiveClient, unarchiveClient } from '@/lib/clientWrites';
 import type { AppointmentListItem } from '@ink-manager/shared-types';
 
 /**
@@ -39,6 +49,33 @@ import type { AppointmentListItem } from '@ink-manager/shared-types';
  * apps/web filters its loaded rows the same way. The archived toggle IS a
  * server parameter (`includeArchived`), so it refetches.
  */
+/**
+ * What a REFUSED WRITE says. Deliberately not `screenErrorMessage`.
+ *
+ * That helper takes a SUBJECT NOUN and builds load-failure sentences
+ * around it ("Your role does not have access to {subject}."), so handing
+ * it a finished sentence produced the doubled-up
+ * "Your role does not have access to Could not archive Ana Ruiz.." that
+ * the failure-path test put on screen. Same four cases, phrased for a
+ * write:
+ *
+ *   transient  the request never landed — say so, and say nothing about
+ *              permissions, per `screenErrorMessage`'s own rule 1.
+ *   401        a dead session, same wording as everywhere else.
+ *   from API   the server already wrote a human sentence for this
+ *              ("You do not have permission to archive clients.") and it
+ *              is better than anything invented here.
+ *   otherwise  name the action that failed, so the toast is actionable.
+ */
+function writeFailureMessage(err: unknown, verb: 'archive' | 'unarchive', name: string): string {
+  if (isTransientApiFailure(err)) return `Couldn't reach the studio. ${name} was not ${verb}d.`;
+  if (err instanceof ApiError && err.status === 401) {
+    return 'Your session has expired. Log out from the account screen, then sign in again.';
+  }
+  if (err instanceof ApiError && err.fromApi) return err.message;
+  return `Could not ${verb} ${name}.`;
+}
+
 export default function ClientsScreen() {
   const router = useRouter();
   const { session } = useAuth();
@@ -61,8 +98,123 @@ export default function ClientsScreen() {
    * and the other two signals are not.
    */
   const [upcoming, setUpcoming] = useState<Record<string, AppointmentListItem>>({});
-  const [showArchived, setShowArchived] = useState(false);
+  /*
+   * SESSION AH. Was `const [showArchived, setShowArchived] = useState(false)`
+   * behind a toggle pill; now one single-select filter, because the
+   * control moved into `PillMenu`, which is single-select by design.
+   *
+   * `includeArchived` is derived rather than stored so there is still
+   * exactly ONE source of truth for what the request asks for — the
+   * filter — and no way for a boolean and a filter value to disagree.
+   */
+  const [filter, setFilter] = useState<ClientFilter>('all');
+  const showArchived = filter === 'archived';
   const [refreshing, setRefreshing] = useState(false);
+
+  /** The row whose `⋯` sheet is open, if any. */
+  const [actionsFor, setActionsFor] = useState<ClientListItem | null>(null);
+  /*
+   * The row the sheet is DRAWING, which outlives the row it is OPEN for.
+   *
+   * Found by frame-sampling the dismissal rather than by reading the code:
+   * rendering the sheet as `{actionsFor ? <Sheet/> : null}` unmounts it the
+   * instant the selection clears, which destroys the exit animation at
+   * frame zero — the exact failure `Sheet` documents and guards against
+   * internally. Its `mounted`-outlives-`visible` logic cannot help if the
+   * PARENT removes it first.
+   *
+   * So the sheet stays mounted and `visible` does the talking, and this
+   * holds the last non-null row so the panel still has a name to draw
+   * while it slides away.
+   */
+  const [actionsShown, setActionsShown] = useState<ClientListItem | null>(null);
+  useEffect(() => {
+    if (actionsFor) setActionsShown(actionsFor);
+  }, [actionsFor]);
+  const [archiving, setArchiving] = useState(false);
+  /*
+   * A FAILED ROW ACTION IS NOT A FAILED LIST.
+   *
+   * The first version of this called `setError`, and the failure-path test
+   * showed what that does: `error` is the state the screen renders a
+   * full-page `StateMessage` for, so a refused archive replaced the entire
+   * client list with "The client list didn't load" — destroying the very
+   * rows the revert had just put back. `error` means the LIST failed to
+   * load; a rejected write is a different thing and needs a different
+   * surface.
+   *
+   * So: the passive toast this app already uses for exactly this
+   * (`conversation/[id].tsx`'s save note) — `pointerEvents="none"`, sits
+   * over the list, says what happened, leaves the list alone.
+   */
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!note) return;
+    const t = setTimeout(() => setNote(null), 3200);
+    return () => clearTimeout(t);
+  }, [note]);
+
+  /**
+   * Archive / unarchive from the list, OPTIMISTICALLY.
+   *
+   * `POST /clients/:id/archive` and `/unarchive` are the same pair the
+   * client DETAIL header already calls (`lib/clientWrites.ts`), so this
+   * adds no new write surface — it puts an existing one where the list
+   * can reach it.
+   *
+   * OPTIMISTIC, WITH REVERT ON FAILURE, and no undo toast: the brief
+   * allowed a toast "if the pattern exists", and it does not. The only
+   * toast in this app is `conversation/[id].tsx`'s save note, which is
+   * `pointerEvents="none"` — a passive message with nothing to tap. An
+   * undo toast is an interactive, timed, queued surface, and inventing
+   * one here would be a new pattern rather than a reused one. So the
+   * safety net is the honest cheap one: the row leaves immediately, and
+   * comes back exactly where it was if the server refuses.
+   *
+   * The row is removed rather than restyled because the default list
+   * EXCLUDES archived clients — an archived row staying put would
+   * disagree with what a refresh would show. Under the Archived filter
+   * the opposite is true (that list includes both), so there the row
+   * stays and only its state flips.
+   */
+  const toggleArchive = useCallback(
+    async (client: ClientListItem) => {
+      if (!token) return;
+      const wasArchived = client.archivedAt !== null;
+      const optimisticAt = wasArchived ? null : new Date().toISOString();
+      const snapshot = rows;
+
+      setArchiving(true);
+      setRows((current) =>
+        current === null
+          ? current
+          : showArchived
+            ? current.map((c) => (c.id === client.id ? { ...c, archivedAt: optimisticAt } : c))
+            : current.filter((c) => c.id !== client.id),
+      );
+      setActionsFor(null);
+
+      try {
+        const updated = wasArchived
+          ? await unarchiveClient(token, client.id)
+          : await archiveClient(token, client.id);
+        // The server's own timestamp replaces the guess, so a later
+        // render is not working from a value this screen invented.
+        setRows((current) =>
+          current === null
+            ? current
+            : current.map((c) => (c.id === client.id ? { ...c, archivedAt: updated.archivedAt } : c)),
+        );
+      } catch (err) {
+        // Straight back to exactly the list that was on screen.
+        setRows(snapshot);
+        setNote(writeFailureMessage(err, wasArchived ? 'unarchive' : 'archive', clientName(client)));
+      } finally {
+        setArchiving(false);
+      }
+    },
+    [token, rows, showArchived],
+  );
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh' = 'initial') => {
@@ -165,6 +317,13 @@ export default function ClientsScreen() {
         }
       />
 
+      {/*
+        SESSION AH: the filter sits ON the search row, not on a pill row
+        below it. The search field takes what is left (`flex: 1`) and the
+        button is the app's one 44pt icon-button size, so the row has a
+        single height and the screen gives back the ~40pt the pill row
+        was spending on one control.
+      */}
       <View style={styles.controls}>
         <TextInput
           style={styles.search}
@@ -176,15 +335,16 @@ export default function ClientsScreen() {
           autoCorrect={false}
           accessibilityLabel="Search clients"
         />
-      </View>
-      <PillRow>
-        <Pill
-          label="Archived"
-          selected={showArchived}
-          onPress={() => setShowArchived((v) => !v)}
-          accessibilityLabel={showArchived ? 'Hide archived clients' : 'Show archived clients'}
+        <PillMenu
+          iconOnly
+          label="Filter"
+          icon="filter"
+          value={filter}
+          active={filter !== 'all'}
+          onChange={setFilter}
+          options={CLIENT_FILTERS}
         />
-      </PillRow>
+      </View>
 
       {rows === null && error === null ? (
         <SkeletonList rows={8} />
@@ -204,11 +364,8 @@ export default function ClientsScreen() {
               <ClientRow
                 client={item}
                 onPress={() => router.push({ pathname: '/client/[id]', params: { id: item.id } })}
-                threadId={threadsByClient[item.id]}
                 upcoming={upcoming[item.id]}
-                onMessage={(threadId) =>
-                  router.push({ pathname: '/conversation/[id]', params: { id: threadId } })
-                }
+                onOpenActions={() => setActionsFor(item)}
               />
             </Appear>
           )}
@@ -234,6 +391,29 @@ export default function ClientsScreen() {
           }
         />
       )}
+
+      {note ? (
+        <View style={styles.toast} pointerEvents="none">
+          <Text style={styles.toastLabel}>{note}</Text>
+        </View>
+      ) : null}
+
+      {actionsShown ? (
+        <ClientRowActionsSheet
+          visible={actionsFor !== null}
+          name={clientName(actionsShown)}
+          archived={actionsShown.archivedAt !== null}
+          hasThread={!!threadsByClient[actionsShown.id]}
+          busy={archiving}
+          onClose={() => setActionsFor(null)}
+          onMessage={() => {
+            const threadId = threadsByClient[actionsShown.id];
+            setActionsFor(null);
+            if (threadId) router.push({ pathname: '/conversation/[id]', params: { id: threadId } });
+          }}
+          onToggleArchive={() => void toggleArchive(actionsShown)}
+        />
+      ) : null}
     </ScreenShell>
   );
 }
@@ -241,15 +421,13 @@ export default function ClientsScreen() {
 function ClientRow({
   client,
   onPress,
-  threadId,
-  onMessage,
+  onOpenActions,
   upcoming,
 }: {
   client: ClientListItem;
   onPress: () => void;
-  /** This client's existing thread, if they have one. */
-  threadId?: string;
-  onMessage: (threadId: string) => void;
+  /** Opens this row's `⋯` sheet. */
+  onOpenActions: () => void;
   /** Their soonest confirmed appointment, if they have one. */
   upcoming?: AppointmentListItem;
 }) {
@@ -265,9 +443,31 @@ function ClientRow({
       accessibilityLabel={name}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
-      {/* ITEM 6a: no avatar. These are never photographs — the client
-          record has no image field at all, so every circle on this screen
-          was a pair of initials restating the name beside it. */}
+      {/*
+        SESSION AG, owner-directed: the avatar column is BACK, reversing
+        session W's removal (`97d59d0`, "ITEM 6a: no avatar"). W's argument
+        was that a client circle can only ever be initials restating the
+        name beside it, and that argument is still factually true — see
+        `url={null}` below. The ruling is that the column earns its place
+        anyway, as ANATOMY: it is the leading inset that gives the row its
+        iOS Contacts rhythm and gives the divider something to start after.
+
+        `url={null}` is not a stub. `Client` has NO image column of any
+        kind in `schema.prisma` (checked this session: only
+        `instagramHandle`/`facebookProfileUrl`, both explicitly documented
+        there as manual links with "no automatic profile/photo import"),
+        and `GET /clients` is a bare `findMany` with no select, so there is
+        no photo in the payload to pass. `Avatar` already renders a photo
+        the moment one is handed to it, so the day a `Client.avatarUrl`
+        exists this becomes a one-word change.
+      */}
+      <Avatar
+        url={null}
+        initials={initialsOf(name)}
+        size={AVATAR_SIZE}
+        labelStyle={styles.avatarLabel}
+      />
+
       <View style={styles.rowText}>
         {/*
           ITEM 4: the chip sits with the NAME, on its baseline — it says
@@ -292,26 +492,49 @@ function ClientRow({
           {secondary}
         </Text>
       </View>
-      {/* ITEM 6b: opens this client's thread. Navigation when one exists;
-          see the screen's own note for why it stops there when one does
-          not. */}
+      {/*
+        SESSION AI: the row's single-purpose Message button becomes the
+        overflow `⋯`. Message did not go away — it is the first item
+        inside, still navigating to an existing thread and still saying so
+        when there isn't one. What changed is that the row now has somewhere
+        to put a SECOND action (Archive), which a dedicated message icon
+        had no room for.
+      */}
       <CardIconButton
-        Icon={MessageIcon}
-        label={`Message ${name}`}
-        onPress={threadId ? () => onMessage(threadId) : undefined}
-        unavailableNote={`${name} has no chat thread yet. Starting one is done in the portal.`}
+        Icon={MoreIcon}
+        label={`Actions for ${name}`}
+        onPress={onOpenActions}
       />
     </Pressable>
   );
 }
+
+/**
+ * The leading inset zone, in one place.
+ *
+ * 40pt is the iOS Contacts list size, and it is also the number the
+ * divider was already computing against (`space.lg + 40 + space.md`)
+ * before session W removed the avatar it referred to. Declared once so
+ * the avatar and the divider can never drift apart again — which is
+ * exactly what happened last time one of them moved without the other.
+ */
+const AVATAR_SIZE = 40;
 
 const styles = StyleSheet.create({
   /* Web: an eyebrow, then `font-display` at clamp(28,3.4vw,38). */
   /* ITEM 2: the same air Home puts above its eyebrow. */
   /* ITEM 3: the same token Home's "Welcome, Juan" uses, not a lookalike. */
 
-  controls: { paddingHorizontal: space.lg, paddingBottom: space.sm },
+  controls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingBottom: space.sm,
+  },
   search: {
+    /* Session AH: the field yields to the filter button beside it. */
+    flex: 1,
     minHeight: 44,
     backgroundColor: colors.inputBg,
     borderWidth: hairline,
@@ -323,9 +546,43 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
   },
 
+  /* The same toast `conversation/[id].tsx` uses, same metrics. */
+  toast: {
+    position: 'absolute',
+    left: space.lg,
+    right: space.lg,
+    bottom: space.lg,
+    alignItems: 'center',
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: hairline,
+    borderColor: colors.border,
+  },
+  toastLabel: { ...type.small, color: colors.fg },
+
   listContent: { paddingVertical: space.sm },
   emptyBox: { flexGrow: 1, justifyContent: 'center' },
-  separator: { height: hairline, backgroundColor: colors.borderSoft, marginLeft: space.lg + 40 + space.md },
+  /*
+    iOS's own rule, and the reason the avatar had to come back before this
+    line could be called correct: THE DIVIDER'S INSET IS THE TEXT'S INSET,
+    and the zone it skips is occupied by the avatar. 16 (row padding) + 40
+    (avatar) + 12 (gap) = 68, which is exactly where the name starts.
+
+    This value was ALREADY 68 before this session — written as
+    `space.lg + 40 + space.md` when the row still had an avatar, and left
+    behind untouched when session W removed it. So for the whole time the
+    avatar was gone, the divider was indenting past nothing. Restoring the
+    avatar is what makes the existing indent true rather than arbitrary,
+    which is why this line is unchanged in VALUE and only rewritten to
+    stop hard-coding the 40 the avatar is drawn at.
+  */
+  separator: {
+    height: hairline,
+    backgroundColor: colors.borderSoft,
+    marginLeft: space.lg + AVATAR_SIZE + space.md,
+  },
 
   row: {
     flexDirection: 'row',
@@ -337,8 +594,11 @@ const styles = StyleSheet.create({
   // Name and its chip share a baseline; only the name can shrink.
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   rowText: { flex: 1 },
+  /* Live again as of AG. Orphaned but never deleted while W's removal stood. */
   avatarLabel: { ...type.label, fontSize: 13, color: colors.fgMuted },
-  name: { ...type.heading, color: colors.fg, flexShrink: 1 },
+  /* Session AF: the body face, not the display face. See `type.rowName`
+     for the web citation and the measurement that picked 18. */
+  name: { ...type.rowName, color: colors.fg, flexShrink: 1 },
   secondary: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
   archived: {

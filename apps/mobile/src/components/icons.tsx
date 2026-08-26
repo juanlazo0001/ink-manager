@@ -397,6 +397,29 @@ export function PhoneIcon({ size = 20, color }: IconProps) {
 }
 
 /** Menu — three rules, web's `MenuIcon` path for path. */
+/**
+ * The overflow "⋯".
+ *
+ * Three filled dots on the same `0 0 20 20` grid every other icon here
+ * uses, so it sits at the same optical weight in a row of them. `fill`
+ * rather than `stroke`, because a 1.5-stroke ring at r=1.5 reads as three
+ * tiny circles rather than three dots.
+ *
+ * The client DETAIL header already draws its own ⋯ with Feather's
+ * `more-horizontal`; this is the same glyph in this module's convention,
+ * added because the client ROW's button takes an `IconProps` component
+ * and every other icon in that row comes from here.
+ */
+export function MoreIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill={color} stroke="none">
+      <Circle cx="4" cy="10" r="1.5" />
+      <Circle cx="10" cy="10" r="1.5" />
+      <Circle cx="16" cy="10" r="1.5" />
+    </Svg>
+  );
+}
+
 export function MenuIcon({ size = 20, color }: IconProps) {
   return (
     <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>

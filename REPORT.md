@@ -28384,3 +28384,907 @@ All on the dev database, none on production, all reversible:
 - 1 reaction on a fixture message
 
 Left deliberately, per the architect's ruling, so the gate walk has something to walk.
+# Mobile session AF — the client row's name, and an inventory of every other one
+
+Base: `main` at `bb157da` (`Merge branch 'chat-ux/02-composer-keyboard'`).
+Session AE is **already merged into main** — `git branch --merged main`
+lists AA through AE, and `main..mobile/session-ae` is empty — so there was
+no stack to merge first and the handoff rule's merge step did not apply.
+Branch `mobile/session-af`, cut from `origin/main` in its own worktree via
+`scripts/new-session.ps1`.
+
+## 1. The change
+
+One line, in `apps/mobile/src/app/(tabs)/clients.tsx:343`. The client name
+that leads each row moves off the display face:
+
+    -  name: { ...type.heading,  color: colors.fg, flexShrink: 1 },   // Fraunces 500, 19/24
+    +  name: { ...type.rowName,  color: colors.fg, flexShrink: 1 },   // Outfit  500, 18/23
+
+`type.rowName` is a **new token** in `apps/mobile/src/theme/typography.ts`,
+deliberately not a change to `type.heading` — `heading` is also a SECTION
+heading (`ui.tsx`'s `stateTitle`, `AccountMenu`'s studio line, sheet
+titles), and the row-name question is one the owner is deciding context by
+context off §2's inventory. Each context that gets ruled on moves from
+`type.heading` to `type.rowName`; nothing moves by accident.
+
+### Web says this is parity, not divergence
+
+The brief asked whether web's client list already uses the body face for
+row names. It does, and so does every other list row it has:
+
+> **Every list-row entity name in `apps/web/src` inherits `font-sans`.
+> Not one carries `font-display`.**
+
+Clients specifically is `apps/web/src/pages/Clients.tsx:566`, whose name
+cell is `className="py-3 text-fg"` — no font utility at all, so the body
+face by inheritance (`--font-sans` → Outfit under `data-theme="editorial-gold"`,
+`index.css:190`). So this is **cited as confirmation**, not recorded as an
+owner-directed divergence.
+
+Two smaller notes, since they are divergences even though the face is not:
+
+- **Weight.** Web's client name carries no weight utility — it is regular.
+  Mobile sets Medium (500). That is the owner's "names still lead the row"
+  instruction and is a real mobile-only divergence: web's name sits in a
+  table with column headers doing the work of saying what the column is,
+  and a phone row has no such scaffolding.
+- Medium is the **heaviest Outfit face this app loads** (300/400/500). No
+  new face was added to reach "semibold" — at 18/500 against a 12/300
+  subtitle the name leads on size and weight both, verified in the shots
+  below.
+
+### Why 18 and not 19 — measured, not guessed
+
+Rendered in a browser at the real loaded faces, then measured:
+
+| face | x-height | cap height | `"Marcus Delacroix"` |
+| --- | --- | --- | --- |
+| Fraunces 500 @19 (before) | 9 | 14 | **159pt** |
+| Outfit 500 @19 | **10** | 14 | 147pt |
+| Outfit 500 @18 (shipped) | 9 | 13 | **139pt** |
+| Outfit 500 @17 | 9 | 12 | 131pt |
+
+x-height is what the eye reads as size, and Outfit @18 matches the
+Fraunces @19 it replaces exactly. Outfit @19 would read a step LARGER
+than what it replaced, not the same.
+
+The width is the payoff, and it lands on a real threshold. **The name box
+on a 320pt phone is 143pt** once a status chip shares the line. `"Marcus
+Delacroix"` is 16 characters — the **median client name length in the dev
+database** (187 rows: p50 16, p90 25, p99 38, max 48). At Fraunces @19 it
+measured 159pt and truncated. So did Outfit @19, at 147pt. **Outfit @18
+fits it at 139pt.** Half the client list stopped truncating.
+
+## 2. Inventory — every other row context, unchanged
+
+No changes were made outside Clients. Mobile's current face per context,
+against web's equivalent spot.
+
+**Still on the display face (Fraunces) — the sweep candidates:**
+
+| # | context | mobile today | web's equivalent |
+| --- | --- | --- | --- |
+| 1 | **Chat thread list**, counterpart name — `ConversationRow.tsx:158` | `type.heading` — Fraunces 500, 19/24 | **`font-sans`**, `truncate text-base font-medium` / `font-bold` when unread (`ConversationsPanel.tsx:1532`) |
+| 2 | **Inquiry rows**, client name — `InquiryRow.tsx:205` | `type.heading` — Fraunces 500, 19/24 | **`font-sans`** (`Inquiries.tsx:591`, td `py-3 text-fg`); kanban card `truncate text-sm font-semibold` (`InquiryKanbanCard.tsx:95`) |
+| 3 | **Appointment rows**, client name — `AppointmentRow.tsx:116` | `type.heading` — Fraunces 500, 19/24 | **`font-sans`** — calendar event title inherits (`Calendar.tsx:613`), preview popover `text-fg` (`Calendar.tsx:1102`) |
+| 4 | **Account menu**, studio name — `AccountMenu.tsx:134` | `type.heading` @16 — Fraunces 500 | n/a (web's studio name is not a row) |
+| 5 | **Nav drawer**, studio name — `NavDrawer.tsx:259` | `type.heading` — Fraunces 500, 19/24 | n/a — chrome, not a row |
+
+**Already on the body face — nothing to sweep:**
+
+| # | context | mobile today | web's equivalent |
+| --- | --- | --- | --- |
+| 6 | **Team rows**, member name — `team.tsx:304` | `type.body` — Outfit 400, 15/21 | `font-sans`, td `py-3 text-fg` (`Team.tsx:1011`/`1027`); artist card `text-sm font-semibold` (`Team.tsx:1232`) |
+| 7 | **Frequent-contacts strip**, contact name — `FrequentStrip.tsx:140` | `type.meta` — Outfit **300 Light**, 12/16 | **does not exist on web** — no frequent/recent-contacts strip anywhere in `apps/web/src` |
+| 8 | **Open chat thread header**, counterpart name — `ThreadHeader.tsx:213` | Outfit 17/600 — chat spec §1.2/§9, *"names are never Fraunces"* | **`font-display`** (`ConversationsPanel.tsx:2719`) — see the inversion below |
+| 9 | **Task rows**, title / counterpart — `TaskRow.tsx:222`/`228` | `type.body` 15 / `type.meta` 12 | `font-sans`, `text-fg` (`Tasks.tsx:508`) |
+| 10 | **Flash grid**, piece title — `flash.tsx:318` | `type.body` @14 — Outfit 400 | `truncate text-sm font-medium` (`FlashGallery.tsx:369`) |
+| 11 | **Client detail sub-rows** (gift cards, waivers, inquiries, appointments) — `client/[id].tsx:1443` | `type.body` — Outfit 400, 15/21 | `font-sans` (`ClientDetail.tsx:2301`); gift card CODE is `font-mono` on both |
+
+**Detail-screen names, listed for completeness — not rows, no claim made:**
+`client/[id].tsx:1356` (client detail header), `profile.tsx:436`,
+`account.tsx:109` — all `type.heading`/`type.display`, all Fraunces. Web's
+own appointment detail header is `text-xl font-bold` `font-sans`
+(`AppointmentDetail.tsx:908`).
+
+### Two things the inventory turned up that the owner should see
+
+**a. Row 8 is an inversion, and both sides are deliberate.** Mobile's OPEN
+THREAD header is the one name mobile already sets in Outfit — the chat-UX
+spec says so in as many words. Web's open thread header is the ONLY name
+anywhere in `apps/web/src` set in `font-display`. They are exactly
+backwards from each other. Neither is drift: both were chosen on purpose,
+by different specs. Flagging it because a "make mobile match web" sweep
+read literally would move mobile's chat header TO Fraunces, which is the
+opposite of what the chat spec ruled.
+
+**b. Row 8 also carries a latent Android bug, not introduced here.**
+`ThreadHeader.tsx:213` is `{ ...type.body, fontSize: 17, fontWeight: '600' }`
+— family plus `fontWeight`, which is precisely what `typography.ts`'s own
+header warns against: React Native resolves no family+weight pair, so this
+renders **Outfit Regular on Android**, not semibold. It is only correct on
+iOS. Not touched this session (chat surface, outside the brief) and worth
+its own line in whatever the owner decides for the sweep — the fix is a
+real face, and Outfit 500 is the heaviest one loaded.
+
+## 3. Verification
+
+Preview harness: the **real** `ClientsScreen` (not a copy) mounted at a
+temporary `src/app/preview.tsx` inside a hand-built `AuthContext`, against
+a scratchpad fixture API on `:4444`, in Chromium at a **320pt viewport**.
+The preview route was deleted before committing; the fixture server lived
+in the scratchpad and never in the repo.
+
+Fixture names were built against the dev database's real distribution,
+measured this session over its 187 client rows (p50 16 / p90 25 / p99 38 /
+max 48 characters) rather than invented.
+
+**Truncation at 320pt, measured off the running screen** — name box 143pt
+once a chip shares the line:
+
+| name | chars | before (Fraunces 19) | after (Outfit 18) |
+| --- | --- | --- | --- |
+| Jo Ng | 5 | 50pt, fits | 46pt, fits |
+| Ana Ruiz | 8 | 81pt, fits | 69pt, fits |
+| **Marcus Delacroix** | **16 (p50)** | **159pt — TRUNCATED** | **139pt — FITS** |
+| Priyanka Venkataraman | 21 | 221pt, truncates | 194pt, truncates |
+| Sebastian Oyelaran-Whitmore | 27 (p90) | 276pt, truncates | 246pt, truncates |
+| Wilhelmina Fitzgerald-Thompson | 30 | 307pt, truncates | 266pt, truncates |
+| Christopher-Alexander Montgomery | 32 | 332pt, truncates | 293pt, truncates |
+| Christopher-Alexander Montgomery-Worthington III | 48 (max) | 484pt, truncates | 420pt, truncates |
+
+Everything past p50 still truncates — it always did, and a name that long
+cannot fit a 143pt box in any face. What changed is that the median name
+crossed from one side of the line to the other.
+
+**Composition at 320pt (item 3), measured on every row:**
+
+- Row height **68pt before and after** — confirmed by re-measuring the
+  before state (stash, reload, measure, restore), not argued from the
+  type. The row is sized by the 44pt message button plus 2×12 padding, and
+  the text column is 41pt after / 42pt before — under the button in both,
+  so the type never drove the height.
+- Status chip renders on **one line on every row**, height 12pt (BOOKED) /
+  16pt (ARCHIVED). Nothing wrapped.
+- Clear gap from chip to the 44×44 message button: **20–24pt** on the
+  tight rows, never negative, never overlapping.
+- **Worst case tested explicitly**: the 48-character name carrying the
+  wider ARCHIVED pill instead of BOOKED — still one line, still 68pt,
+  21pt clear of the icon.
+
+Standard bar, all from the worktree:
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         built in 15.34s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean, matches schema.prisma
+    apps/api      test suite                   233/233 pass
+
+### What this could NOT verify
+
+Per the standing limits of the web preview harness: this is
+`react-native-web` in Chromium, not a device. Font RASTERISATION differs,
+and the one thing that genuinely cannot be checked this way is **whether
+Outfit 500 resolves correctly on Android** — the family-name mechanism
+`typography.ts` documents is exactly what web-preview bypasses. `rowName`
+uses `fonts.bodyMedium` (`Outfit_500Medium`), a real loaded face name, so
+it is built the correct way; but "correct on Android" is a device-gate
+observation, not something this session proved.
+
+## 4. Database
+
+**No database changes, no migration, no backfill.** Nothing in this
+session touches the schema or any row, in dev or in production. The only
+database contact was a READ — counting client name lengths to size the
+fixture — against the **dev** database.
+
+# Mobile session AG — the client row's avatar column, and the divider rule behind it
+
+Base: **`mobile/session-af` at `b976709`**, not `main`. AF is still at the
+owner's device gate and unmerged (`origin/main` is `bb157da`; `b976709` is
+not in it), and the handoff rule puts merging after the gate passes, so
+this session branched off the stack head rather than off `main`. Item 2
+also depends on AF directly — it asks the name to stay Outfit "per AF" —
+so a branch cut from `main` could not have shown the row it describes.
+Branch `mobile/session-ag`, own worktree via `scripts/new-session.ps1`
+(then reset onto AF).
+
+**Merge order: AF must land before AG. AG contains AF.**
+
+## 1. The avatar column is back
+
+`apps/mobile/src/app/(tabs)/clients.tsx`. Owner-directed, and it reverses
+session W's removal (`97d59d0`, whose comment read *"ITEM 6a: no avatar.
+These are never photographs"*). The reversal is recorded in the code at
+the point of the change, W's reasoning quoted, so the next reader finds
+the ruling rather than an unexplained flip-flop.
+
+    |<-16->|<--- 40 --->|<-12->|Name .............  [CHIP]      ( ✉ )
+    |      |   avatar   |      |(305) 555-0142
+    |                          |
+    |<--------- 68 ----------->|------- divider starts HERE -------->
+
+### W's argument was factually right, and the column came back anyway
+
+Checked rather than assumed, because W's claim was a factual one:
+**`Client` has no image column of any kind.** `schema.prisma`'s Client
+model carries `instagramHandle` and `facebookProfileUrl` and the schema's
+own comment beside them says "no automatic profile/photo import from
+Instagram or Facebook this pass". `GET /clients` is a bare `findMany` with
+no `select`, so there is no photo in the payload to pass either.
+
+So the avatar renders `url={null}` and every circle on this screen is a
+pair of initials — exactly what W said. The owner's ruling is that the
+column earns its place as **anatomy** rather than as a photo: it is the
+leading inset that gives the row its Contacts rhythm and gives the divider
+something to start after. `Avatar` already renders a photo the moment one
+is handed to it, so a future `Client.avatarUrl` is a one-word change here.
+
+### The divider was already indented past nothing
+
+The find of the session, and it is in the diff rather than in prose. The
+separator was already written as:
+
+    marginLeft: space.lg + 40 + space.md      // = 68
+
+That `40` was the avatar's size. It was written when the row still had an
+avatar and **left untouched when W deleted it** — so for the entire time
+W's removal stood, the client list drew a divider that indented 52pt past
+nothing at all. Measured on the running screen before this change:
+
+| | before AG | after AG |
+| --- | --- | --- |
+| avatar | none | 40pt at x=16 |
+| **text inset** | **16** | **68** |
+| **divider inset** | **68** | **68** |
+| aligned? | **no — off by 52** | **yes, exactly** |
+
+The divider's VALUE did not change this session. Restoring the avatar is
+what made the existing indent true. The expression is now
+`space.lg + AVATAR_SIZE + space.md` against a single `AVATAR_SIZE = 40`
+that the avatar is also drawn from, so the two cannot drift apart again —
+which is precisely what happened last time one of them moved alone.
+
+## 2. Composition at 320pt — and the cost, stated plainly
+
+Everything the brief asked to hold, holds. Measured on every row at a
+true 320pt content width:
+
+- avatar at **x=16**, **40×40**, on every row
+- **text inset 68** on every row
+- **divider inset 68** — exact match, running to the trailing edge
+- row height **68pt, unchanged** (driven by the 44pt message button)
+- status chip **one line on every row** — BOOKED label 12pt tall, ARCHIVED
+  16pt, neither wrapping
+- chip to message icon: **12pt clear** at the tightest, never negative
+- name → Outfit 500 @18 per AF, chip after the name, subtitle below,
+  message icon right — composition otherwise untouched, as specified
+
+### The cost: the avatar re-truncates the median name
+
+This needs saying outright because it undoes AF's headline result.
+
+The avatar and its gap take **52pt** out of the name's line. The name box
+goes **158pt → 106pt**, and `"Marcus Delacroix"` — 16 characters, the dev
+database's MEDIAN client name, which needs 139pt — **fits before and
+truncates after**:
+
+| name | chars | needs | before AG | after AG |
+| --- | --- | --- | --- | --- |
+| Jo Ng | 5 | 46pt | fits | fits |
+| Ana Ruiz | 8 | 69pt | fits | fits |
+| **Marcus Delacroix** | **16 (p50)** | **139pt** | **fits (158pt box)** | **TRUNCATES (106pt box)** |
+| Priyanka Venkataraman | 21 | 194pt | truncates | truncates |
+| Sebastian Oyelaran-Whitmore | 27 (p90) | 246pt | truncates | truncates |
+| Wilhelmina Fitzgerald-Thompson | 30 | 266pt | truncates | truncates |
+| Christopher-Alexander Montgomery | 32 | 293pt | truncates | truncates |
+| …-Worthington III | 48 (max) | 420pt | truncates | truncates |
+
+Implemented as directed and NOT quietly "fixed", because the brief says
+the rest of the composition stays and this is a real trade the owner
+should make rather than inherit. The options, with the arithmetic:
+
+| option | name box | fits p50? | cost |
+| --- | --- | --- | --- |
+| as shipped | 106pt | no | — |
+| **chip moves to the SUBTITLE line** | **180pt** | **yes, comfortably** | the chip stops sharing the name's baseline; this is what iOS itself does — secondary info on line two. **Recommended.** |
+| chip becomes a bare coloured dot | ~152pt | yes | loses the word "BOOKED"; `StatusChip` already refuses to render a dot with no label, so this is a new variant |
+| avatar 40 → 32 | 114pt | no | breaks the Contacts rhythm for 8pt |
+| drop the message icon | 162pt | yes | removes a capability from the row |
+
+### A correction to AF's numbers
+
+AF measured the name box at **143pt**; the true figure at 320pt is
+**158pt**. AF's browser was rendering into a 305pt content area because
+Chromium reserved 15pt for a classic scrollbar, and that was not accounted
+for. This session measures at viewport 335 so the content area is a true
+320.
+
+AF's *conclusion* survives — but by 1pt, not comfortably: Fraunces @19
+needs 159pt for the median name against a 158pt box, so it did still
+truncate, and Outfit @18 at 139pt did still fit. Every other number in
+AF's truncation table was likewise 15pt conservative.
+
+## 3. Consistency sweep — the divider rule across every list
+
+The rule, adopted going forward:
+
+> **Divider inset = text inset, and the inset zone is occupied by the
+> avatar when the list has one.**
+
+| # | list | leading element | text inset | divider inset | verdict |
+| --- | --- | --- | --- | --- | --- |
+| 1 | **Clients** — `(tabs)/clients.tsx` | none → **40pt avatar** | 16 → **68** | 68 (unchanged) | **FIXED** by item 1 — divider was indenting past nothing |
+| 2 | **Chat threads** — `(tabs)/index.tsx` | 42pt avatar | 70 | 16 → **70** | **FIXED** — clear mismatch, see below |
+| 3 | **Inquiries** — `(tabs)/inquiries.tsx` | 56pt thumbnail | *no single inset* | 16 | **TABLED** — see below |
+| 4 | **Schedule** — `(tabs)/schedule.tsx` | 52pt time column + 3pt spine | 95 | 80 | **TABLED** — divider lands on the spine, not the text |
+| 5 | **Team** — `(tabs)/team.tsx` | 38pt avatar | 66 | card-bounded rule at 16 | **TABLED** — it is a card's internal rule, not a list separator |
+| 6 | Detail sections — `DetailSection.tsx`, `form/Fields.tsx` | none | — | full-bleed | **CORRECT AS-IS** — no leading media, nothing to inset past |
+
+### #2, fixed — the one clear mismatch
+
+`(tabs)/index.tsx` had `marginLeft: space.lg` — 16pt, the row's own
+padding — on a list where **every** row leads with a 42pt avatar. The rule
+therefore began under the avatars and cut the column of faces in half,
+which is the one thing an iOS list divider never does. Measured before:
+text inset 70, divider 16, **54pt of mismatch**. Now 70 and 70.
+
+The value is `CONVERSATION_TEXT_INSET`, newly exported from
+`ConversationRow.tsx` alongside `CONVERSATION_AVATAR_SIZE`, because the
+list owns the separator and the row owns the avatar — two files, no link
+between them, which is exactly the shape of the Clients bug. Also swapped
+the literal `height: 1` for the `hairline` token every other list uses.
+
+### #3, tabled — Inquiries has no single text inset
+
+Worth the detail, because it looks like an obvious mismatch and is not.
+`InquiryRow`'s `footerLine` (UNASSIGNED, the guest-studio pin, the artist
+avatar) is a **sibling of** the thumbnail+text block, not a child of it —
+so lines 1–2 start at 84pt and the footer starts at **16pt**, the row's own
+padding. There is no single inset to align to. An 84pt divider would cut
+above content that begins at 16. The current 16pt divider matches the
+footer, which is the row's true leftmost content. **Owner's call.**
+
+### #4, tabled — Schedule's divider sits on the spine
+
+`AppointmentRow` is `[52pt time][3pt artist-colour spine][text]` with 12pt
+gaps: the spine starts at 80 and the text at 95. The divider is at 80, so
+it aligns to the spine rather than the text. Strict reading says 95;
+the counter-argument is that the spine is a rail belonging to the content
+block, and a divider that starts after it would leave the spine floating.
+**Owner's call.**
+
+### #5, tabled — Team's rule is a card's, not a list's
+
+`MemberRow`'s hairline is `borderBottomWidth` on the row inside a bordered
+`roster` card, so it spans the card's inner width. iOS's inset rule
+governs plain-list separators; a card's internal rule conventionally spans
+the card. **Owner's call.**
+
+## 4. Verification
+
+Preview harness: the **real** `ClientsScreen` and the **real** chat tab
+screen, mounted at two temporary routes inside a hand-built `AuthContext`,
+against the scratchpad fixture API. Both routes deleted before committing.
+Fixture names are the dev database's real length distribution (187 rows,
+p50 16 / p90 25 / p99 38 / max 48).
+
+Measured at **viewport 335 → a true 320pt content width**, after finding
+that AF's numbers had been taken through a 15pt scrollbar (see §2).
+
+Screenshots are committed to `design-refs/session-ag/` — before and after
+for both lists, plus a README carrying the anatomy diagram and the numbers.
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         built in 15.27s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean, matches schema.prisma
+    apps/api      test suite                   233/233 pass
+
+### The iOS Contacts screenshot — not supplied, and why
+
+The brief asks for the preview to be compared against an iOS Contacts
+screenshot dropped in `design-refs/session-ag/`. **That file is not
+there.** This session had no iOS device to take one with, and drawing a
+mock of Apple's UI and filing it under that name would have made a
+fabricated reference indistinguishable from a measured one in the very
+folder meant to hold the ground truth.
+
+`design-refs/session-ag/README.md` names the missing slot
+(`ios-contacts-reference.png`) so the owner can drop the real screenshot
+straight in.
+
+What this means for the work: the row was built to the **rule** the brief
+stated — divider inset = text inset, inset zone occupied by the avatar —
+which is iOS's own list anatomy and is not in question. The 40pt avatar
+size is the value the codebase was already computing its divider against,
+not a number read off an Apple screenshot. **If the owner's screenshot
+shows Apple at a different avatar size, the one constant to change is
+`AVATAR_SIZE` in `clients.tsx` — the divider follows it automatically.**
+That is the whole point of the constant.
+
+### What this could NOT verify
+
+`react-native-web` in Chromium, not a device: font rasterisation differs,
+and image decoding is not exercised at all here — `Avatar`'s photo path
+(the RN-Image-for-`data:`-URIs branch) never runs on this screen, because
+there is no client photo to render. The initials path is what was verified.
+
+## 5. Database
+
+**No database changes, no migration, no backfill.** The only database
+contact was a READ against **dev**, reusing AF's client-name length
+sampling.
+
+# Mobile session AH — the Clients filter control, and the recency field that isn't there
+
+Base: **`mobile/session-ag` at `bd1cfd8`**, the stack head. Both AF and AG
+are still at the owner's device gate and unmerged (`origin/main` is
+`bb157da`). Branch `mobile/session-ah`, own worktree via
+`scripts/new-session.ps1`, reset onto AG.
+
+**Merge order: AF → AG → AH.** AH contains both.
+
+## 1. The control
+
+The Archived toggle pill, and the whole `PillRow` it sat on, are gone.
+In their place a **44×44 funnel button on the search row itself**:
+
+    [ Search name, email or phone        ] [▽]
+     16                             267  275  319
+     |<-------- 251 -------->|  gap 8  |<-44->|
+
+The screen gets back the ~40pt the pill row was spending on one control.
+
+### Matching Tasks "exactly" meant a variant, not a new control
+
+The brief asked for the active state to match how the Tasks filter shows
+activity. The only way to guarantee that is for both triggers to read the
+same stylesheet, so this is a new `iconOnly` prop on the **existing**
+`PillMenu` — the component Tasks itself uses — rather than a second
+control that looks like it. It drops the word and the chevron, keeps the
+glyph (Feather `filter`, the same funnel), and keeps `styles.triggerActive`
+untouched. A second implementation is how the two would drift.
+
+The one deliberate difference is glyph size: **18 rather than 13**. At 13
+the icon read as a speck in a 44pt square, where in the labelled pill it
+is one of three things sharing a line.
+
+Measured on the running screen, active state:
+
+| | value | source |
+| --- | --- | --- |
+| border | `rgb(201, 154, 91)` | `triggerActive.borderColor` — `colors.accent` |
+| fill | `rgba(201, 154, 91, 0.08)` | `triggerActive.backgroundColor` |
+| glyph | `colors.accent` | same ternary as the labelled trigger |
+| inactive border | `rgba(201, 154, 91, 0.38)` | `colors.borderStrong`, untouched |
+
+Byte-identical to what Tasks renders, because it is the same style object.
+
+## 2. RECENT WAS DROPPED — the path taken, and the evidence
+
+**Path taken: the payload has no usable recency field, so Recent is not
+shipped and is reported as a one-field backend ask.** The options are
+**All · Archived**.
+
+This was investigated, not assumed. What `GET /clients` actually returns
+per row:
+
+| field | what it is | can it answer "active in the last 30 days"? |
+| --- | --- | --- |
+| `createdAt` | when the RECORD was created | **No** — that is "new clients". A client who booked yesterday and was entered two years ago is old by this measure. |
+| `updatedAt` | Prisma `@updatedAt` on the Client ROW | **No** — see below. |
+| `activity.upcomingAppointmentAt` | next confirmed appointment, `startTime >= now` | **No** — forward-looking by construction |
+| `activity.hasActiveProject` | boolean | **No** — state, not time |
+| `activity.hasPendingDeposit` | boolean | **No** — state, not time |
+
+The route's own `activity` query parameter offers exactly
+`upcoming_appointment`, `active_project`, `no_activity` — again no recency
+condition — and `orderBy: { createdAt: "desc" }` is the only ordering.
+
+### `updatedAt` was the brief's own candidate, so it was measured
+
+The brief named `updatedAt` as acceptable, so rather than argue from the
+schema it was tested against the dev database — **187 real client rows**:
+
+| finding | number |
+| --- | --- |
+| rows where `updatedAt === createdAt` (record never edited since creation) | **125 / 187 = 67%** |
+| clients WITH real activity whose `updatedAt` is OLDER than that activity | **41 / 127 = 32%** |
+| **rows `updatedAt <= 30d` would get WRONG** vs. real activity | **41 / 187 = 21.9%** |
+| — of which false positives (not actually recent) | 26 |
+| — of which false negatives (recent, but missed) | 15 |
+
+The mechanism is in the distribution: `updatedAt` clusters hard at one
+age — **47 of 187 rows land on the same day** — because a migration
+stamped the table. `updatedAt` here is largely recording a **backfill**,
+not client behaviour. It moves when somebody EDITS the record; booking,
+messaging, paying a deposit and opening a project all write other tables,
+and a nested `connect` does not touch the parent's timestamp.
+
+A filter that is wrong about a fifth of the list is worse than no filter,
+and faking it per-client was explicitly ruled out. So Recent is absent.
+
+### The backend ask — genuinely one field, and no schema change
+
+`withActivity()` in `apps/api/src/routes/clients.ts` **already** runs three
+grouped aggregates over the page's client ids (it was built precisely to
+avoid an N+1). A fourth — `_max` of past appointment `startTime` and
+inquiry `updatedAt` — would put a real `lastActivityAt` on the same
+payload with **no new column, no backfill and no extra round trip per
+row**. That is the field Recent needs; the moment it exists, Recent is
+three lines here.
+
+## 3. Archived — same records, and a naming tension worth a ruling
+
+Item 4 said the archived behaviour is unchanged in substance, so it is
+byte-identical: selecting Archived still sends `includeArchived=true` and
+nothing else changed.
+
+**What that actually returns is worth stating, because the new label
+implies otherwise.** On the API, `includeArchived` only REMOVES the
+exclusion — `...(includeArchived ? {} : NOT_ARCHIVED)` — so the response
+is active clients **and** archived ones together, not archived alone.
+
+Proven on the dev database rather than read off the source (dev had no
+archived clients at all, so one was archived and restored, on a 12-client
+studio so the route's `take: 100` cap could not mask the difference):
+
+    BEFORE:              includeArchived=false -> 12 rows (12 active + 0 archived)
+                         includeArchived=true  -> 12 rows (12 active + 0 archived)
+    WITH one archived:   includeArchived=false -> 11 rows (11 active + 0 archived)
+                         includeArchived=true  -> 12 rows (11 active + 1 archived)
+    restored: archivedAt = null
+
+As a toggle labelled "Archived", "show me archived ones too" was a fair
+reading. As a **single-select filter option**, the same word now reads
+"archived only" — which is not what it does. Left as specified and flagged:
+if the owner wants archived-only, it is one clause on the client
+(`filter === 'archived' ? rows.filter(c => c.archivedAt) : rows`) or one
+new query parameter on the route. **Owner's call.**
+
+## 4. Verification
+
+Preview: the **real** `ClientsScreen` at a temporary route, against the
+scratchpad fixture, at a true 320pt content width (viewport 335, per AG's
+scrollbar correction). The fixture was taught to honour `includeArchived`
+the way the real route does — 6 rows without it, 8 with — because a
+fixture that ignores the parameter cannot verify the filter that sets it.
+
+Three states captured to `design-refs/session-ah/`: default, sheet open,
+Archived active.
+
+**Item 5, composition at 320pt:**
+
+| | measured |
+| --- | --- |
+| search field | x=16, **251×44** |
+| gap | **8pt** |
+| filter button | x=275, **44×44**, right edge 319 |
+| placeholder `"Search name, email or phone"` | **206.4pt in a 227pt inner width — fits, 20.6pt spare** |
+
+So it does not truncate at all, gracefully or otherwise. One honest caveat:
+the field has no `maxFontSizeMultiplier`, and `textOverflow` is `clip`, so
+at large Dynamic Type the placeholder starts clipping at **1.10×** where
+before this change it clipped at **1.28×**. Pre-existing behaviour made
+marginally worse; the one-line fix, if wanted, is a shorter placeholder
+("Search clients" measures 97.5pt and survives to 2.3×).
+
+**End-to-end through the real screen**, from the fixture's request log:
+
+    Filter: All       ->  GET /clients                          6 rows
+    Filter: Archived  ->  GET /clients?includeArchived=true      8 rows (6 active + 2 archived)
+
+and the count line follows: `6 clients` → `6 clients · 2 archived`.
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         built in 14.15s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean, matches schema.prisma
+    apps/api      test suite                   233/233 pass
+
+### A PRE-EXISTING bug found, attributed, and NOT introduced here
+
+Switching to Archived grows the list 6 → 8, and in the web preview the two
+new rows paint **on top of** rows 1 and 2 — a real DOM overlap
+(`transform: none`, `opacity: 1`, two rows 5pt apart), not an unfinished
+animation.
+
+It would have been easy to assume this session caused it. It did not, and
+that was checked rather than claimed: reverting all three changed files
+and driving the **old** Archived pill reproduces it identically — 8 rows,
+the same 2 overlaps, the same offsets. It lives in the `Appear` +
+`FlatList` refetch path, which this session did not touch.
+
+Not verified on a device, and it may well be a `react-native-web`
+VirtualizedList artifact that never appears on a phone. Worth a look at
+the gate: toggle the filter to Archived and see whether the list settles
+cleanly.
+
+## 5. Database
+
+**No schema change, no migration, no backfill.** Two READS against **dev**
+(the `updatedAt` recency measurements), plus one temporary write against
+**dev** — a single client archived and restored to `archivedAt = null`
+within the same script, confirmed by re-reading the row.
+
+# Mobile session AI — the sheet animation, root-caused; and the client row's `⋯`
+
+Base: **`mobile/session-ah` at `a98e28c`**, the stack head. AF, AG and AH
+are all still at the owner's gate and unmerged (`origin/main` is
+`bb157da`). Branch `mobile/session-ai`, own worktree, reset onto AH.
+
+**Merge order: AF → AG → AH → AI.** AI contains all three.
+
+## 1. The sheet animation — the scrim was a CHILD of the thing that slid
+
+### Root cause
+
+Every sheet in the app was built this way:
+
+    <Modal animationType="slide">        <- RN translates this whole view
+      <Pressable style={backdrop}>       <- the scrim, INSIDE it
+        <Pressable style={sheet}>        <- the panel
+
+`animationType="slide"` translates the modal's **entire content view**.
+The scrim was part of that content, so the dark wash slid up from the
+bottom edge along with the panel — the display arriving as one moving
+block instead of a panel rising into a room that had dimmed.
+
+So this was not a timing tweak. The scrim had to stop being a descendant
+of the thing that translates.
+
+### The fix — a real shared component, which did not exist before
+
+The brief said "fix in the shared sheet component". There wasn't one:
+**thirteen files each had their own `<Modal>` + backdrop + panel and their
+own copies of the same two style blocks.** So the fix is a new
+`components/Sheet.tsx` that owns the anatomy, plus a migration of all
+thirteen onto it.
+
+`animationType="none"`, RN animates nothing, and the two layers are
+**siblings** driven by **two separate shared values**:
+
+| layer | property | from → to | duration | easing |
+| --- | --- | --- | --- | --- |
+| scrim | `opacity` | 0 → 1 | `duration.base` **200ms** | `easing.standard` |
+| panel | `translateY` | height → 0 | `duration.slow` **300ms** | `easing.out` (in) / `standard` (out) |
+
+Both are the motion canon's own tokens (`theme/motion.ts`), and 200ms sits
+inside the brief's 180–250ms window for the scrim.
+
+Two details carried over from `NavDrawer` — this repo's only previously
+correct sheet, and the model for this one:
+
+- **The Modal outlives `visible`.** RN unmounts a `<Modal>` the instant
+  `visible` goes false, which would cut every dismissal off at frame zero.
+  `visible` starts the animation; only when it LANDS does the Modal go.
+- **The travel distance is measured**, not a constant. These sheets size
+  to their content; animating from a fixed large value would put most of
+  the travel below the screen edge and the visible part would happen in
+  the last third of the duration, reading as a late pop.
+
+One deliberate divergence from `NavDrawer`: it computes its scrim opacity
+**from** its panel position, which couples them into a single motion.
+That is right for a drawer a finger is dragging, and wrong here — the
+brief asked for two independent animations.
+
+### Proof: frame-by-frame, both directions
+
+Sampled per `requestAnimationFrame` on the running screen.
+
+**Opening** — scrim reaches full opacity at ~232ms while the panel is
+still travelling for another ~100ms:
+
+| t (ms) | scrim opacity | panel top |
+| --- | --- | --- |
+| 65 | 0.056 | 740 |
+| 99 | 0.386 | 698 |
+| 132 | 0.741 | 660 |
+| 165 | 0.905 | 629 |
+| 199 | 0.977 | 603 |
+| **232** | **1.000** | 582 |
+| 266 | 1.000 | 567 |
+| 299 | 1.000 | 558 |
+| 332 | 1.000 | **554 (settled)** |
+
+**Dismissing** — the reverse, and the decisive column is the scrim's
+GEOMETRY:
+
+| t (ms) | scrim opacity | scrim top / height | panel top |
+| --- | --- | --- | --- |
+| 30 | 1.000 | **0 / 780** | 554 |
+| 99 | 0.709 | **0 / 780** | 576 |
+| 166 | 0.120 | **0 / 780** | 693 |
+| 232 | 0.002 | **0 / 780** | 756 |
+| 265 | **0** | **0 / 780** | 769 |
+| 332 | 0 | **0 / 780** | **780 (off)** |
+| 365 | *unmounted* | — | — |
+
+**The scrim's top and height never change — it fades in place while the
+panel moves.** That is the bug, gone. And the unmount at ~365ms, after the
+motion lands, is the mount-outlives-`visible` guard working.
+
+Frame images: `design-refs/session-ai/sheet-open-t{040,090,140,200,320}ms.png`.
+At t=40ms the list is barely dimmed (scrim 0.13) with the panel still
+mostly off-screen; at t=90ms the screen is fully dimmed while the panel is
+still 16pt short of resting. Those two frames could not both exist under
+the old behaviour.
+
+### Call-site inventory — 13 migrated, all inherit the fix
+
+| file | sheet | confirmed |
+| --- | --- | --- |
+| `PillMenu.tsx` ×3 | `PillMenu`, `MultiPillMenu`, `GroupedPillMenu` | **yes — sampled mid-open**: scrim 0.92 while panel still at 635, scrim top 0 |
+| `ClientMoreSheet.tsx` | client detail `⋯` | yes (renders, same component) |
+| `ContactAddSheet.tsx` | add phone/email | yes |
+| `MergeClientSheet.tsx` | merge | yes |
+| `AttachSessionSheet.tsx` | gift-card session | yes |
+| `MessageActions.tsx` | message long-press | yes |
+| `RetrySheet.tsx` | failed-send retry | yes |
+| `InquiryRespondSheet.tsx` | accept/decline | yes (keeps its `KeyboardAvoidingView`) |
+| `Composer.tsx` ×3 | attach source, insert link, channel picker | yes |
+| **new** `ClientRowActionsSheet.tsx` | the row `⋯` (§2) | **yes — the frame series above IS this sheet** |
+
+The two sheets that were already correct are untouched: `NavDrawer`
+(`animationType="none"`, its own animation) and `AccountMenu` /
+`PhotoViewer` (`animationType="fade"`, no slide to decouple).
+
+Net effect on the codebase: **−31 lines**. The shared component removed
+more duplicated backdrop/panel styling than it added.
+
+## 2. The row `⋯` menu
+
+The per-row Message icon becomes `⋯` (new `MoreIcon`, drawn on the same
+`0 0 20 20` grid as every other icon in `icons.tsx`; the client DETAIL
+header already used Feather's `more-horizontal` for the same glyph). Same
+44pt button, same right edge. Message did not go away — it is the first
+item inside, still navigating to an existing thread and still saying so
+when there isn't one. What changed is that the row now has room for a
+SECOND action.
+
+### Share — omitted, and that was the investigation's answer
+
+The brief's fallback chain ended "else omit Share and report". Both
+earlier branches came back empty:
+
+**Web has no client share.** `ClientDetail.tsx`'s own `⋯` holds exactly
+Archive/Unarchive and Delete. The Clients TABLE has no per-row menu at
+all. `navigator.share` appears nowhere in the repo.
+
+**There is no client-scoped public link.** Every public token in
+`schema.prisma` hangs off an Inquiry, a DepositForm, a LiabilityWaiver, a
+GiftCard or a PrefillDraft. The Client model's only token is
+`smsConsentToken` — single-use, expiring, and it grants nothing but
+ticking a consent box.
+
+The near-miss worth naming: `GET /clients/:id/shareable-links` exists and
+mobile already consumes it (`lib/shareableLinks.ts`, in the Composer's
+link menu). But its own header comment says it "deliberately does NOT
+generate/rotate any token" — it is a read-only aggregator, and every link
+it returns belongs to **another entity**. Its `intakeFormUrl` is
+`/inquiry/{studio.slug}`: the STUDIO's form, byte-identical for every
+client in the studio. Sharing that from a row headed by one person's name
+would imply it is that person's link. It isn't.
+
+**What a real Share would need** — a client-scoped token on `Client`
+following the repo's established convention (random token + expiry,
+verified server-side), which is exactly the shape `smsConsentToken`
+already uses. That is a backend change, not a mobile one.
+
+### Archive — live, optimistic, revert on failure
+
+`POST /clients/:id/archive` and `/unarchive` are the same pair the client
+detail header already calls, so no new write surface — an existing one
+moved where the list can reach it.
+
+**No undo toast, because the pattern does not exist.** The brief allowed
+one "if the pattern exists". The only toast in this app is
+`conversation/[id].tsx`'s save note, which is `pointerEvents="none"` — a
+passive message with nothing to tap. An undo toast is interactive, timed
+and queued; inventing one here would be a new pattern, not a reused one.
+So the safety net is the honest cheap one: the row leaves immediately and
+comes back exactly where it was if the server refuses.
+
+**The confirm is a second state of the sheet, not `Alert.alert`.** Two
+reasons, and the second is why it earns its extra state: an alert over a
+sheet is two stacked modals on iOS, and `react-native-web` stubs
+`Alert.alert` to a no-op — so a confirm built that way would be invisible
+to the harness this app is verified with. It could be claimed, never
+shown. This one renders (`design-refs/session-ai/menu-confirm-320.png`).
+
+## 3. Two real bugs the verification caught in my own work
+
+Both were found by testing, not by reading, and both are worth recording
+because in each case the code looked right.
+
+**a. The exit animation was being destroyed by the PARENT.** I first wrote
+the call site as `{actionsFor ? <ClientRowActionsSheet/> : null}`, which
+unmounts the sheet the instant the selection clears — killing the
+dismissal at frame zero, the exact failure `Sheet` guards against
+internally. Its `mounted`-outlives-`visible` logic cannot help if the
+parent removes it first. Frame-sampling the dismissal returned
+`unmounted` on every frame, which is how it surfaced. Fixed by keeping the
+sheet mounted and holding the last non-null row so the panel still has a
+name to draw while it slides away. Checked the other 13 call sites for the
+same trap: all render unconditionally with a `visible` prop.
+
+**b. A failed archive was replacing the entire client list.** The catch
+called `setError`, and `error` is the state the screen renders a full-page
+"The client list didn't load" for — so a refused write destroyed the very
+rows the revert had just restored. Now a passive toast over an intact
+list. Related: `screenErrorMessage` takes a SUBJECT NOUN and builds
+load-failure sentences around it, so handing it a finished sentence
+produced "Your role does not have access to Could not archive Ana Ruiz..".
+Replaced with a write-specific message that prefers the server's own
+sentence.
+
+## 4. Verification
+
+Preview: the real `ClientsScreen` at a temporary route against the
+scratchpad fixture, deleted before committing. The fixture was taught to
+handle `POST /clients/:id/archive|unarchive` against its own in-memory
+rows, **plus a deliberate 403 on one client id**, so the failure path runs
+on a genuinely rejected request rather than being argued about.
+
+**Archive round-trip, driven through the real UI:**
+
+    1. sheet open on Ana Ruiz     Message · Archive · DONE      6 rows, "6 clients"
+    2. tap Archive                Yes, archive · Cancel · DONE  6 rows (confirm state)
+    3. confirm                    Ana Ruiz gone                 5 rows, "5 clients"
+    fixture log: POST /clients/c1/archive -> archive c1; archivedAt=2026-08-26T23:04:22.504Z
+    fixture read-back: c1 archivedAt = 2026-08-26T23:04:22.504Z
+
+The write really landed — checked by reading the row back off the fixture,
+not by trusting the 200.
+
+**Revert on failure, on the 403 probe:**
+
+    before      5 rows, Sebastian present, no toast
+    confirm     -> optimistic removal
+    after 403   5 rows, Sebastian PRESENT, list intact
+                toast: "You do not have permission to archive clients."   <- the server's own sentence
+
+**Item 3, Unarchive:** an archived client's menu reads `Message Jo Ng` /
+**`Unarchive Jo Ng`** — not Archive.
+
+**Item 4, 320pt** (true 320 content width):
+
+| | measured |
+| --- | --- |
+| content width | 320 |
+| row height | **68** — unchanged |
+| avatar | 40 at x=16 |
+| text inset / divider inset | **68 / 68** — AG's rule still holds |
+| name box | **106** — identical to AG; the `⋯` is the same 44pt as the icon it replaced |
+| status chip | one line, every row |
+| `⋯` button | 44×44, x=260, right edge 304 |
+| chip → `⋯` clearance | 12pt |
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         built in 14.11s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean, matches schema.prisma
+    apps/api      test suite                   233/233 pass
+
+### What this could NOT verify
+
+`react-native-web` in Chromium, not a device. Specifically: RN's native
+Modal presentation differs from the web shim, so **the animation numbers
+above are the shared values' own timings, which are platform-independent,
+but the perceived smoothness on-device is not something this proves.**
+Worth watching at the gate on a real phone.
+
+Also: **AH's row-overlap bug is still present and got in the way.** After
+the filter grows the list, rows paint on top of each other (measured this
+session: three rows at y=272, 273, 275), which made one menu tap land on
+the wrong client until I targeted a row clear of the cluster. Still not
+this session's doing — AH proved it reproduces on pre-AH code — but it is
+now interfering with a second feature and is worth its own fix.
+
+## 5. Database
+
+**No schema change, no migration, no backfill.** No database contact at
+all this session — the archive round-trip ran against the scratchpad
+fixture, not against dev.

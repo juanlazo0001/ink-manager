@@ -1,6 +1,8 @@
 import Feather from '@expo/vector-icons/Feather';
 import { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+
+import { Sheet } from '@/components/Sheet';
 
 import { Eyebrow, GoldButton, QuietButton } from '@/components/ui';
 import { colors, hairline, radius, space, type } from '@/theme';
@@ -62,10 +64,8 @@ export function InquiryRespondSheet({
   const canDecline = note.trim().length > 0 && !submitting;
 
   return (
-    <Modal visible={mode !== null} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
+    <Sheet visible={mode !== null} onClose={onClose}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
             {mode === 'decline' ? (
               <>
                 <Eyebrow>Decline this project</Eyebrow>
@@ -142,26 +142,12 @@ export function InquiryRespondSheet({
                 </View>
               </>
             )}
-          </Pressable>
         </KeyboardAvoidingView>
-      </Pressable>
-    </Modal>
+    </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'flex-end' },
-  sheet: {
-    backgroundColor: colors.surfaceRaised,
-    borderTopLeftRadius: radius.card,
-    borderTopRightRadius: radius.card,
-    borderTopWidth: hairline,
-    borderColor: colors.borderStrong,
-    paddingHorizontal: space.lg,
-    paddingTop: space.lg,
-    paddingBottom: space.xxl,
-    gap: space.sm,
-  },
   eyebrowAccent: { color: colors.accent },
   eyebrowAlert: { color: colors.danger },
   title: { ...type.heading, color: colors.fg },

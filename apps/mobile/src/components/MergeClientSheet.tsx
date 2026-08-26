@@ -10,6 +10,8 @@ import {
   View,
 } from 'react-native';
 
+import { Sheet } from '@/components/Sheet';
+
 import { Eyebrow } from '@/components/ui';
 import { clientName, fetchClients, filterClients, type ClientDetail, type ClientListItem } from '@/lib/clients';
 import { mergeClients } from '@/lib/clientWrites';
@@ -110,9 +112,7 @@ export function MergeClientSheet({
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
-      <Pressable style={styles.backdrop} onPress={close}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+    <Sheet visible={visible} onClose={close}>
           <Eyebrow style={styles.eyebrow}>Merge with another client</Eyebrow>
 
           {!picked ? (
@@ -227,25 +227,11 @@ export function MergeClientSheet({
           <Pressable onPress={close} style={styles.done}>
             <Text style={styles.doneLabel}>CANCEL</Text>
           </Pressable>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'flex-end' },
-  sheet: {
-    maxHeight: '85%',
-    backgroundColor: colors.surfaceRaised,
-    borderTopLeftRadius: radius.card,
-    borderTopRightRadius: radius.card,
-    borderTopWidth: hairline,
-    borderColor: colors.borderStrong,
-    paddingHorizontal: space.lg,
-    paddingTop: space.lg,
-    paddingBottom: space.xxl,
-  },
   eyebrow: { marginBottom: space.sm },
   lead: { ...type.small, color: colors.fgSecondary, marginBottom: space.sm },
   strong: { color: colors.fg },

@@ -111,6 +111,44 @@ export const type = {
   /** Timestamps and the quietest metadata. */
   meta: { fontFamily: fonts.bodyLight, fontSize: 12, lineHeight: 16 },
 
+  /**
+   * A LIST ROW'S ENTITY NAME — a client, and for now only a client.
+   *
+   * Owner-directed (session AF): the name that leads a row is the BODY
+   * face, not the display face. This turns out to be parity with web
+   * rather than a divergence from it: every list-row entity name in
+   * `apps/web/src` inherits `font-sans` (Outfit under editorial-gold) and
+   * not one carries `font-display`. Clients is
+   * `apps/web/src/pages/Clients.tsx:566`, whose name cell is `py-3
+   * text-fg` — no font utility, so the body face. Web's only `font-display`
+   * name anywhere is the OPEN CHAT THREAD'S HEADER
+   * (`ConversationsPanel.tsx:2719`), which is chrome, not a row.
+   *
+   * 18, not 19, and measured rather than guessed. Rendered in the browser
+   * at the real faces:
+   *
+   *   Fraunces 500 @19   x-height 9   cap 14   "Marcus Delacroix" 159pt
+   *   Outfit   500 @19   x-height 10  cap 14   "Marcus Delacroix" 147pt
+   *   Outfit   500 @18   x-height 9   cap 13   "Marcus Delacroix" 139pt
+   *
+   * x-height is what the eye reads as size, and Outfit @18 matches the
+   * Fraunces @19 it replaces exactly, where @19 would read a step LARGER.
+   * The width is the payoff: the name box on a 320pt phone is 143pt once
+   * a status chip is on the line, and "Marcus Delacroix" is a 16-character
+   * name — the dev database's MEDIAN client name length. Fraunces truncated
+   * it; so does Outfit @19; Outfit @18 fits it.
+   *
+   * Weight is Medium (500), the heaviest Outfit face this app loads. No
+   * new face was added for it: at 18/500 against a 12/300 subtitle the
+   * name leads the row on size and weight both.
+   *
+   * Deliberately its own token rather than a tweak to `heading`: `heading`
+   * is also a SECTION heading, and the row-name question is one the owner
+   * is deciding context by context off session AF's inventory. When a
+   * context is ruled on, it moves from `type.heading` to this.
+   */
+  rowName: { fontFamily: fonts.bodyMedium, fontSize: 18, lineHeight: 23 },
+
   /*
    * ---- Editorial Gold display treatments, ported from apps/web ----
    * Each entry names the web rule it comes from, so a change on either

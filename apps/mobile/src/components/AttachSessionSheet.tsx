@@ -1,6 +1,8 @@
 import type { AppointmentListItem } from '@ink-manager/shared-types';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+
+import { Sheet } from '@/components/Sheet';
 
 import { Eyebrow } from '@/components/ui';
 import { fetchAppointments } from '@/lib/appointments';
@@ -113,9 +115,7 @@ export function AttachSessionSheet({
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
-      <Pressable style={styles.backdrop} onPress={close}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+    <Sheet visible={visible} onClose={close}>
           <Eyebrow style={styles.eyebrow}>Attach to a session</Eyebrow>
 
           {!picked ? (
@@ -222,25 +222,11 @@ export function AttachSessionSheet({
           <Pressable onPress={close} style={styles.done}>
             <Text style={styles.doneLabel}>CANCEL</Text>
           </Pressable>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'flex-end' },
-  sheet: {
-    maxHeight: '85%',
-    backgroundColor: colors.surfaceRaised,
-    borderTopLeftRadius: radius.card,
-    borderTopRightRadius: radius.card,
-    borderTopWidth: hairline,
-    borderColor: colors.borderStrong,
-    paddingHorizontal: space.lg,
-    paddingTop: space.lg,
-    paddingBottom: space.xxl,
-  },
   eyebrow: { marginBottom: space.sm },
   lead: { ...type.small, color: colors.fgSecondary, marginBottom: space.sm },
   strong: { color: colors.fg },
