@@ -8,7 +8,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { isMessageEdited } from '@/lib/conversations';
 import { linkify, truncateMiddle } from '@/lib/linkify';
 import type { DisplayMessage } from '@/lib/threadRows';
-import { colors, hairline, radius, space, type } from '@/theme';
+import { chat, colors, hairline, radius, space, type } from '@/theme';
 import { timeOfDay } from '@/lib/time';
 
 /**
@@ -74,6 +74,9 @@ export function MessageBubble({
   showMeta,
   showAuthor,
   grouped,
+  lastInGroup,
+  attribution,
+  isLastOutgoing,
   revealX,
   onRetry,
   onOpenImage,
@@ -87,8 +90,17 @@ export function MessageBubble({
   showMeta: boolean;
   /** GROUP threads only: whose message this is, when it isn't the viewer's. */
   showAuthor: boolean;
-  /** Continues a run from the same side — tighter gap above. */
+  /** Continues a run from the same side — tighter gap above (§2.1). */
   grouped: boolean;
+  /** Last bubble of its group: the only one that gets a tail (§2.1). */
+  lastInGroup: boolean;
+  /** `SENT BY {NAME}` / `{NAME}` above a group's first bubble (§2.1). */
+  attribution: string | null;
+  /**
+   * Spec §2.2: the delivery status line renders under the LAST outgoing
+   * message only, not under every one of them.
+   */
+  isLastOutgoing: boolean;
   /** Thread-wide drag offset. Negative slides everything left. */
   revealX: SharedValue<number>;
   onRetry?: () => void;
@@ -146,7 +158,17 @@ export function MessageBubble({
         slide,
       ]}
     >
-      {showAuthor && !own && authorName ? <Text style={styles.author}>{authorName}</Text> : null}
+      {/*
+        §2.1 sender attribution. Replaces AE's `showAuthor` line, which
+        only ever named an incoming sender in a group thread; the spec
+        also wants OUTGOING groups attributed when a colleague sent them,
+        because a shared inbox otherwise reads as one anonymous voice.
+      */}
+      {attribution ? <Text style={styles.attribution}>{attribution}</Text> : null}
+
+      {/* The badge is a SIBLING of the bubble, on the surface — see the
+          delivery-states note below for why it is not inside it. */}
+      {failed ? <View style={styles.failBadge}><Feather name="alert-circle" size={18} color={chat.alert} /></View> : null}
 
       <Pressable
           onLongPress={onLongPress}
@@ -156,6 +178,11 @@ export function MessageBubble({
           style={[
             bare ? styles.bare : styles.bubble,
             !bare && (own ? styles.bubbleOwn : styles.bubbleTheirs),
+            // §2.1: the tail is one squared corner on the group's last
+            // bubble — own bottom-right, incoming bottom-left. Drawn by
+            // collapsing the radius rather than by an SVG notch: it reads
+            // identically at this radius and costs no extra view.
+            !bare && lastInGroup && (own ? styles.tailOwn : styles.tailTheirs),
             pending && styles.bubblePending,
             // A failed send gets a red edge — the one place red belongs on
             // this screen, because something genuinely did not happen.
@@ -262,24 +289,48 @@ export function MessageBubble({
         </Text>
       </View>
 
+      {/*
+        §2.4 DELIVERY STATES — SURFACE-ANCHORED, which is the compensating
+        rule the owner's red-bubble ruling depends on.
+        ────────────────────────────────────────────────────────────────
+        The bubble is now brand-red. Alert-red on brand-red is invisible,
+        so failure NEVER recolours the fill: the badge sits on the espresso
+        surface at the bubble's outer-left, and the status line sits below
+        on the same surface. Both read against the page, not against the
+        message. Do not "just tint the failed bubble" — that is exactly
+        what this shape exists to prevent.
+
+        Truth constraint: only QUEUED / SENT / FAILED render. The
+        investigation found no status column, so SENT means "the API
+        persisted it" and nothing here claims delivery. (See the report —
+        `metadata.deliveryStatus` now exists and could make DELIVERED
+        truthful, but rev D keeps it dormant and this session obeys that.)
+      */}
       {failed ? (
         <Pressable
           onPress={onRetry}
           accessibilityRole="button"
-          style={({ pressed }) => [styles.failedRow, pressed && styles.pressed]}
+          accessibilityLabel="Not delivered. Tap to retry."
+          hitSlop={8}
+          style={({ pressed }) => [
+            styles.failedRow,
+            own ? styles.failedRowOwn : styles.failedRowTheirs,
+            pressed && styles.pressed,
+          ]}
         >
-          <Feather name="alert-circle" size={12} color={colors.danger} />
-          <Text style={styles.failedLabel}>Not sent — tap to retry</Text>
+          <Text style={styles.failedLabel}>NOT DELIVERED · TAP TO RETRY</Text>
         </Pressable>
       ) : pending && showMeta ? (
-        /*
-         * The only status line left in the default render. Channel, time
-         * and "Edited" moved to the long-press detail (item 2); "Sending…"
-         * stays because it is about THIS moment, not about the record —
-         * a bubble in flight has to say so without being asked.
-         */
         <View style={[styles.meta, own ? styles.metaOwn : styles.metaTheirs]}>
-          <Text style={styles.metaText}>Sending…</Text>
+          <Text style={styles.metaText}>SENDING…</Text>
+        </View>
+      ) : own && isLastOutgoing && showMeta ? (
+        /*
+         * §2.2: under the last outgoing message only. "SENT" is the whole
+         * truth the API can support today.
+         */
+        <View style={[styles.meta, styles.metaOwn]}>
+          <Text style={styles.metaText}>SENT</Text>
         </View>
       ) : null}
     </Animated.View>
@@ -302,22 +353,41 @@ const styles = StyleSheet.create({
    * touching and opens a real gap when the speaker changes; the contrast
    * between the two IS the grouping cue, so both numbers matter.
    */
+  /* §2.1 gaps: intra-group 2, inter-group 10. AE shipped 2 / 12. */
   wrapGrouped: { marginTop: 2 },
-  wrapNewRun: { marginTop: space.md },
+  wrapNewRun: { marginTop: 10 },
 
-  author: { ...type.label, color: colors.fgMuted, marginBottom: space.xs, marginLeft: space.sm },
+  /* §2.1 attribution: Jura 10 caps, muted, above the group's first bubble. */
+  attribution: {
+    ...type.label,
+    fontSize: 10,
+    color: chat.textMuted,
+    marginBottom: 3,
+    marginHorizontal: space.sm,
+  },
 
   bubble: {
-    maxWidth: '84%',
-    /* Tighter than before (was 12 / 10) — Messages' bubbles hug their
-       text, and the old padding read as a card. */
-    paddingHorizontal: space.md,
-    paddingVertical: 7,
+    /* §2.1: max width 78%, padding 10x14, radius 18 (radius.bubble). */
+    maxWidth: '78%',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderRadius: radius.bubble,
     borderWidth: hairline,
   },
-  bubbleOwn: { backgroundColor: colors.accent, borderColor: colors.accent },
-  bubbleTheirs: { backgroundColor: colors.surface, borderColor: colors.border },
+  /*
+   * THE OWNER RULING (Juan, 2026-08-26). Outgoing bubbles are red —
+   * `chat.bubbleOwnBg` = `colors.dangerStrong` — the second sanctioned
+   * red fill in this app after the CHAT tab. Was `colors.accent` (gold).
+   * Its compensating rule is the surface-anchored failure treatment
+   * above; the two ship together or not at all.
+   */
+  bubbleOwn: { backgroundColor: chat.bubbleOwnBg, borderColor: chat.bubbleOwnBg },
+  bubbleTheirs: { backgroundColor: chat.bubbleInBg, borderColor: colors.border },
+
+  /* §2.1 tail: the group's last bubble squares off its inner-bottom
+     corner toward its own side. */
+  tailOwn: { borderBottomRightRadius: 5 },
+  tailTheirs: { borderBottomLeftRadius: 5 },
   bubblePending: { opacity: 0.55 },
   bubbleFailed: { borderColor: colors.dangerStrong },
 
@@ -329,8 +399,9 @@ const styles = StyleSheet.create({
      its text tighter than a reading column, because a chat line is a
      sentence rather than a paragraph. */
   body: { ...type.message, lineHeight: 21 },
-  bodyOwn: { color: colors.accentFg },
-  bodyTheirs: { color: colors.fg },
+  /* §1: white on the red fill, not cream — 5.16:1 vs 4.39:1 (CLAUDE.md). */
+  bodyOwn: { color: chat.bubbleOwnText },
+  bodyTheirs: { color: chat.textPrimary },
 
   link: { textDecorationLine: 'underline' },
   /* On the gold bubble the body colour already contrasts; underline alone
@@ -399,14 +470,25 @@ const styles = StyleSheet.create({
     paddingLeft: space.sm,
     justifyContent: 'center',
   },
-  revealTime: { ...type.meta, color: colors.fgMuted },
+  revealTime: { ...type.label, fontSize: 10, color: chat.textMuted },
 
-  meta: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: 2, paddingHorizontal: space.xs },
+  meta: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: 3, paddingHorizontal: space.xs },
   metaOwn: { justifyContent: 'flex-end' },
   metaTheirs: { justifyContent: 'flex-start' },
-  metaText: { ...type.meta, color: colors.fgMuted },
+  /* §1.2: delivery status is metadata — Jura 10 caps, muted. */
+  metaText: { ...type.label, fontSize: 10, color: chat.textMuted },
 
-  failedRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: 2 },
-  failedLabel: { ...type.meta, color: colors.danger },
+  /*
+   * §2.4 surface-anchored failure. The badge is absolutely positioned so
+   * it hangs off the bubble's outer edge without widening the row, and it
+   * sits on the espresso surface where alert-red is legible.
+   */
+  failBadge: { position: 'absolute', left: space.xs, top: 6, zIndex: 1 },
+  failedRow: { marginTop: 3, paddingHorizontal: space.xs },
+  failedRowOwn: { alignSelf: 'flex-end' },
+  failedRowTheirs: { alignSelf: 'flex-start' },
+  /* `alertText` (#e08272), not `alert` (#c2402f): the strong red only
+     clears the 3:1 non-text floor, and this is text. */
+  failedLabel: { ...type.label, fontSize: 10, color: chat.alertText },
   pressed: { opacity: 0.6 },
 });

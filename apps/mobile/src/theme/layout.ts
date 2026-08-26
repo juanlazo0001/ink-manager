@@ -18,7 +18,8 @@ export const radius = {
   /** Chips, pills, avatars. */
   pill: 999,
   /** Message bubbles. */
-  bubble: 14,
+  /* Chat spec 2.1. Was 14; the spec sets 18 and the prototype confirms it. */
+  bubble: 18,
 } as const;
 
 /** One physical hairline reads too thin on a dark surface; 1 is the floor here. */

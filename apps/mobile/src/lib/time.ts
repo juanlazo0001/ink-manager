@@ -67,3 +67,37 @@ export function relativeStamp(iso: string | null): string {
 export function sameMinute(a: string, b: string): boolean {
   return Math.floor(new Date(a).getTime() / MINUTE) === Math.floor(new Date(b).getTime() / MINUTE);
 }
+
+/**
+ * The thread separator's label (chat spec §2.2).
+ *
+ * A day word plus a time, in the four shapes the spec names:
+ *
+ *   Today 2:14 PM        · today
+ *   Yesterday 2:14 PM    · yesterday
+ *   Tue 2:14 PM          · within the last 7 days
+ *   Aug 12, 2:14 PM      · older
+ *
+ * `dayLabel` above is deliberately NOT reused: it answers "which day is
+ * this" for a date-only context and returns a long "August 12, 2026" that
+ * reads as a heading. A separator is a timestamp, so it wants the short
+ * form and always carries the clock.
+ */
+export function separatorLabel(iso: string): { day: string; time: string } {
+  const date = new Date(iso);
+  const time = timeOfDay(iso);
+
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) return { day: 'Today', time };
+  if (date.toDateString() === yesterday.toDateString()) return { day: 'Yesterday', time };
+
+  // Seven days back, measured in whole days so a message from 6 days and
+  // 23 hours ago does not flip format mid-scroll.
+  const days = Math.floor((today.getTime() - date.getTime()) / 86_400_000);
+  if (days <= 7) return { day: date.toLocaleDateString(undefined, { weekday: 'short' }), time };
+
+  return { day: `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })},`, time };
+}

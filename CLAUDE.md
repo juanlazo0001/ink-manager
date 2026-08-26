@@ -129,6 +129,12 @@ Concise operating rules, not a project history — see REPORT.md for history.
     and recorded it, and the chat label is the smallest type in either client.
   - Its unread badge is **cream fill with dark text** (`--color-fg` on `--color-accent-fg`), the
     same bubble treatment every other count in the app uses — the badge is not red.
+  - **Owner ruling (Juan, 2026-08-26):** `chat.bubble.own.bg` = `colors.dangerStrong` (#C2402F).
+    Outgoing chat bubbles are the second sanctioned red fill, alongside the chat entry point.
+    Compensating rule: failure affordances in chat (failed-send badge, NOT DELIVERED line, unread
+    indicators) are always **surface-anchored** — rendered on the screen surface adjacent to or
+    below the bubble, never as a recolor of the bubble fill — so alert-red remains legible against
+    brand-red.
 - `backdrop-filter` establishes a containing block for `position: fixed` descendants, same as
   `transform`/`filter` — a fixed-position layer nested inside a `backdrop-filter` ancestor gets
   sized/clipped to that ancestor's box, not the viewport. Portal full-viewport fixed layers

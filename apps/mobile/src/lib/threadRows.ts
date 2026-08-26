@@ -1,6 +1,6 @@
 import type { Message } from '@ink-manager/shared-types';
 
-import { dayKey, dayLabel, sameMinute } from './time';
+import { separatorLabel } from './time';
 
 /** Local-only send states. The API never returns these. */
 export type MessageStatus = 'sent' | 'pending' | 'failed';
@@ -17,27 +17,25 @@ export type Row =
       showAuthor: boolean;
       own: boolean;
       /**
-       * This bubble continues a run from the same side, so it sits tight
-       * under the one above it. False starts a new run and takes the
-       * larger gap. iOS Messages' rhythm, and the thing that makes a
-       * thread read as a conversation rather than a list.
+       * A bubble sits tight under the one above it (spec §2.1: intra-group
+       * gap 2) rather than opening the inter-group gap of 10.
        */
       grouped: boolean;
+      /**
+       * Spec §2.1: the tail is drawn on the LAST bubble of a group only.
+       * In an inverted list that is the bubble with no same-group message
+       * after it in time — visually the bottom one of the run.
+       */
+      lastInGroup: boolean;
+      /**
+       * Spec §2.1 sender attribution, above a group's first bubble.
+       * `SENT BY {NAME}` for an outgoing group someone else sent, the bare
+       * `{NAME}` for a sender change inside an IN-APP group thread, and
+       * null for your own sends — which say nothing, ever.
+       */
+      attribution: string | null;
     }
-  | { kind: 'day'; label: string; key: string };
-
-/**
- * How long a pause breaks a visual run, even from the same person.
- *
- * Five minutes: long enough that two texts fired off together stay
- * together, short enough that "…and one more thing" an hour later reads
- * as a new thought. Messages uses a comparable window.
- *
- * NOTE this is a different question from `showMeta`'s "same burst", which
- * is same-MINUTE and governs the timestamp. A run can span several
- * minutes; a burst cannot.
- */
-const GROUP_GAP_MS = 5 * 60 * 1000;
+  | { kind: 'separator'; day: string; time: string; key: string };
 
 /**
  * Which side a message sits on.
@@ -52,6 +50,44 @@ export function isOwnSide(message: Message, viewerUserId: string, isClientThread
   return isClientThread ? message.direction === 'OUTBOUND' : message.authorUserId === viewerUserId;
 }
 
+/** Spec §2.1: bubbles group only within a minute of each other. */
+const GROUP_GAP_MS = 60 * 1000;
+
+/** Spec §2.2: a gap this long earns a centred separator. */
+const SEPARATOR_GAP_MS = 60 * 60 * 1000;
+
+/**
+ * FAILED breaks a group (spec §2.1).
+ *
+ * Not cosmetic: a failed send carries a badge and a status line of its
+ * own, and burying it mid-run under a shared tail would hide the one
+ * message that needs attention. `pending` and `sent` share a class because
+ * a queued bubble becomes a sent one in place, and the run must not
+ * re-flow underneath the person the instant an ack lands.
+ */
+function statusClass(status: MessageStatus): 'failed' | 'ok' {
+  return status === 'failed' ? 'failed' : 'ok';
+}
+
+/** Spec §2.1's four conditions, in one place so grouping and tails agree. */
+function sameGroup(
+  a: DisplayMessage | undefined,
+  b: DisplayMessage | undefined,
+  viewerUserId: string,
+  isClientThread: boolean,
+): boolean {
+  if (!a || !b) return false;
+  if (isOwnSide(a, viewerUserId, isClientThread) !== isOwnSide(b, viewerUserId, isClientThread)) return false;
+  if (a.direction !== b.direction) return false;
+  if (a.authorUserId !== b.authorUserId) return false;
+  if (statusClass(a.status) !== statusClass(b.status)) return false;
+  return Math.abs(new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) <= GROUP_GAP_MS;
+}
+
+function displayName(message: DisplayMessage): string | null {
+  return message.author?.name ?? message.author?.email ?? null;
+}
+
 /**
  * Turns an oldest-first message array into the rows an **inverted**
  * FlatList renders.
@@ -59,12 +95,11 @@ export function isOwnSide(message: Message, viewerUserId: string, isClientThread
  * Inverted means the array is newest-first and drawn bottom-up, which has
  * two consequences worth stating because both are easy to get backwards:
  *
- *  - A day separator is emitted AFTER the day's oldest message, so it
- *    lands visually above it.
+ *  - A separator is emitted AFTER the message that opens a new time block,
+ *    so it lands visually above it.
  *  - "Bursts" (consecutive same-side messages inside one minute, sharing a
- *    single meta row, same rule as the web app) are detected by looking at
- *    the message that comes LATER in time, since that is the one drawn
- *    below — the meta row belongs to the last message of a burst.
+ *    single meta row) are detected by looking at the message that comes
+ *    LATER in time, since that is the one drawn below.
  *
  * Kept as a pure function, out of the screen component, so this is
  * verifiable without rendering anything.
@@ -84,41 +119,59 @@ export function buildThreadRows(params: {
     const own = isOwnSide(message, viewerUserId, isClientThread);
 
     const later = messages[i + 1];
-    const sameBurstAsLater =
-      later !== undefined &&
-      isOwnSide(later, viewerUserId, isClientThread) === own &&
-      sameMinute(later.createdAt, message.createdAt);
-
     const earlier = messages[i - 1];
-    const startsNewDay = earlier === undefined || dayKey(earlier.createdAt) !== dayKey(message.createdAt);
 
     /*
-     * Grouped with the bubble ABOVE — which, in an inverted list, is the
-     * message EARLIER in time. Same side, same author, same day, and
-     * within the gap.
-     *
-     * The author check matters only on GROUP threads, where two
-     * colleagues are both "not the viewer" and would otherwise merge into
-     * one run.
+     * A separator sits between this message and the one before it when
+     * more than an hour passed, or when nothing came before at all —
+     * every thread opens with one.
      */
-    const grouped =
-      earlier !== undefined &&
-      !startsNewDay &&
-      isOwnSide(earlier, viewerUserId, isClientThread) === own &&
-      earlier.authorUserId === message.authorUserId &&
-      new Date(message.createdAt).getTime() - new Date(earlier.createdAt).getTime() < GROUP_GAP_MS;
+    const startsBlock =
+      earlier === undefined ||
+      new Date(message.createdAt).getTime() - new Date(earlier.createdAt).getTime() > SEPARATOR_GAP_MS;
+
+    /*
+     * A separator always breaks a run, whatever the clock says: a group
+     * cannot span the line that was drawn to divide it.
+     */
+    const grouped = !startsBlock && sameGroup(earlier, message, viewerUserId, isClientThread);
+
+    const laterStartsBlock =
+      later !== undefined &&
+      new Date(later.createdAt).getTime() - new Date(message.createdAt).getTime() > SEPARATOR_GAP_MS;
+    const lastInGroup = laterStartsBlock || !sameGroup(message, later, viewerUserId, isClientThread);
+
+    /*
+     * Attribution rides the group's FIRST bubble, so it renders once per
+     * run rather than once per message.
+     */
+    let attribution: string | null = null;
+    if (!grouped) {
+      const name = displayName(message);
+      if (isGroupThread && !own && name) {
+        // Every sender change in an IN-APP group thread, per §2.1.
+        attribution = name;
+      } else if (own && message.authorUserId && message.authorUserId !== viewerUserId && name) {
+        // A shared inbox: this went out under the studio's name, but a
+        // colleague wrote it. Your own sends stay silent.
+        attribution = `SENT BY ${name}`;
+      }
+    }
 
     rows.push({
       kind: 'message',
       message,
       own,
-      showMeta: !sameBurstAsLater,
+      showMeta: !sameGroup(message, later, viewerUserId, isClientThread),
       showAuthor: isGroupThread && !own && (earlier === undefined || earlier.authorUserId !== message.authorUserId),
       grouped,
+      lastInGroup,
+      attribution,
     });
 
-    if (startsNewDay) {
-      rows.push({ kind: 'day', label: dayLabel(message.createdAt), key: `day:${dayKey(message.createdAt)}` });
+    if (startsBlock) {
+      const label = separatorLabel(message.createdAt);
+      rows.push({ kind: 'separator', day: label.day, time: label.time, key: `sep:${message.id}` });
     }
   }
 

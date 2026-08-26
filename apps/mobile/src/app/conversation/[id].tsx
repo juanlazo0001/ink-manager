@@ -25,6 +25,7 @@ import Animated, { useSharedValue, withSpring } from 'react-native-reanimated';
 import { ScreenShell } from '@/components/ScreenShell';
 import { Composer, type ComposerSendState } from '@/components/Composer';
 import { MessageActions } from '@/components/MessageActions';
+import { RetrySheet } from '@/components/RetrySheet';
 import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
 import { channelLabel } from '@/components/ConversationRow';
 import { MessageBubble, REVEAL_WIDTH, messageImages } from '@/components/MessageBubble';
@@ -45,8 +46,8 @@ import {
   type ReactionEmoji,
 } from '@/lib/conversations';
 import { saveImageToLibrary } from '@/lib/saveImage';
-import { buildThreadRows, type DisplayMessage, type Row } from '@/lib/threadRows';
-import { colors, hairline, radius, space, type } from '@/theme';
+import { buildThreadRows, isOwnSide, type DisplayMessage, type Row } from '@/lib/threadRows';
+import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
 
 /** See the note in the list screen: polling, not sockets, this session. */
 const THREAD_POLL_MS = 30_000;
@@ -240,11 +241,25 @@ export default function ConversationScreen() {
 
   /** ITEM 3 — quick-save, from the long-press sheet and the viewer. */
   const [saveNote, setSaveNote] = useState<string | null>(null);
+  /** §2.4: tapping a failed message opens a sheet, never a silent resend. */
+  const [retryFor, setRetryFor] = useState<DisplayMessage | null>(null);
   const handleSaveImage = useCallback(async (url: string) => {
     const result = await saveImageToLibrary(url);
     setSaveNote(result.ok ? 'Saved to your photos' : result.message);
     setTimeout(() => setSaveNote(null), 2600);
   }, []);
+
+  /**
+   * §2.2: the delivery status line renders under the LAST outgoing
+   * message only. Computed once per render off the same array the rows
+   * come from, so it cannot disagree with them.
+   */
+  const lastOutgoingId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (isOwnSide(messages[i], viewerUserId, isClientThread)) return messages[i].id;
+    }
+    return null;
+  }, [messages, viewerUserId, isClientThread]);
 
   const doSend = useCallback(
     async (body: string, attachments: string[] = [], retryOf?: DisplayMessage) => {
@@ -435,16 +450,25 @@ export default function ConversationScreen() {
           ref={listRef}
           inverted
           data={rows}
-          keyExtractor={(row) => (row.kind === 'day' ? row.key : row.message.id)}
+          keyExtractor={(row) => (row.kind === 'separator' ? row.key : row.message.id)}
           renderItem={({ item }) =>
-            item.kind === 'day' ? (
-              /* Day chips stay put while the thread slides — Messages
-                 shows these persistently, and they belong to the thread
-                 rather than to any one bubble. */
-              <View style={styles.daySeparator}>
-                <View style={styles.dayRule} />
-                <Text style={styles.dayLabel}>{item.label.toUpperCase()}</Text>
-                <View style={styles.dayRule} />
+            item.kind === 'separator' ? (
+              /*
+                §2.2: a CENTRED separator — bold day word, regular time —
+                every time more than an hour passes. AE drew a ruled
+                day-change divider instead; the spec's is quieter and
+                fires on time gaps, so a long morning and a long afternoon
+                on one day are two blocks rather than one wall of bubbles.
+
+                It stays put while the thread slides sideways: separators
+                belong to the thread, not to any one bubble.
+              */
+              <View style={styles.separator}>
+                <Text style={styles.separatorText}>
+                  <Text style={styles.separatorDay}>{item.day}</Text>
+                  <Text>{'  '}</Text>
+                  <Text>{item.time}</Text>
+                </Text>
               </View>
             ) : (
               <MessageBubble
@@ -453,8 +477,11 @@ export default function ConversationScreen() {
                 showMeta={item.showMeta}
                 showAuthor={item.showAuthor}
                 grouped={item.grouped}
+                lastInGroup={item.lastInGroup}
+                attribution={item.attribution}
+                isLastOutgoing={item.message.id === lastOutgoingId}
                 revealX={revealX}
-                onRetry={() => doSend(item.message.body, item.message.attachments ?? [], item.message)}
+                onRetry={() => setRetryFor(item.message)}
                 onOpenImage={(urls, index) =>
                   setLightbox({ images: urls.map((url) => ({ url })), index })
                 }
@@ -580,6 +607,37 @@ export default function ConversationScreen() {
         }}
       />
 
+      {/*
+        §2.4 / §7 retry sheet. Retry is wired to the real resend path —
+        `doSend(body, attachments, retryOf)` already existed and reuses the
+        failed row's own id, so a retry replaces the bubble in place rather
+        than stacking a second one. Discard drops it from the local list:
+        a failed message never reached the server, so there is nothing to
+        delete there.
+      */}
+      <RetrySheet
+        visible={!!retryFor}
+        onClose={() => setRetryFor(null)}
+        onRetry={() => {
+          const target = retryFor;
+          setRetryFor(null);
+          if (target) doSend(target.body, target.attachments ?? [], target);
+        }}
+        onCopy={() => {
+          if (retryFor?.body) void Clipboard.setStringAsync(retryFor.body);
+          setRetryFor(null);
+        }}
+        canCopy={!!retryFor?.body}
+        onDiscard={() => {
+          const target = retryFor;
+          setRetryFor(null);
+          if (target) {
+            pendingRef.current.delete(target.id);
+            setMessages((current) => current.filter((m) => m.id !== target.id));
+          }
+        }}
+      />
+
       <PhotoViewer
         images={lightbox?.images ?? []}
         initialIndex={lightbox?.index ?? 0}
@@ -597,15 +655,11 @@ const styles = StyleSheet.create({
   centre: { flex: 1, justifyContent: 'center' },
   listContent: { paddingVertical: space.md },
   listEmpty: { flexGrow: 1, justifyContent: 'center', transform: [{ scaleY: -1 }] },
-  daySeparator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.md,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.lg,
-  },
-  dayRule: { flex: 1, height: hairline, backgroundColor: colors.borderSoft },
-  dayLabel: { ...type.label, color: colors.fgMuted },
+  /* §2.1: 16 of air around a separator, on both sides. */
+  separator: { alignItems: 'center', paddingVertical: 16, paddingHorizontal: space.lg },
+  /* §2.2: Jura 11, muted. */
+  separatorText: { ...type.label, fontSize: 11, color: chat.textMuted, textAlign: 'center' },
+  separatorDay: { fontFamily: fonts.labelBold },
   olderSpinner: { paddingVertical: space.lg, alignItems: 'center' },
   /* Sits above the composer, out of the way of the thumb. */
   toast: {
