@@ -92,7 +92,19 @@ interface ConversationSummary {
     participants?: { id: string; name: string; avatarUrl: string | null }[]
   } | null
   primaryInquiry: PrimaryInquirySummary | null
-  lastMessage: { body: string; channel: string; direction: string; createdAt: string } | null
+  lastMessage: {
+    body: string
+    channel: string
+    direction: string
+    createdAt: string
+    // Who actually wrote it. Null for an inbound client message (no
+    // logged-in author) and for anything predating authorship. `direction`
+    // above cannot answer this -- see previewPrefix below.
+    authorUserId: string | null
+    author: { id: string; name: string | null; email: string } | null
+    // Stated outright rather than inferred from an empty body.
+    attachments: string[] | null
+  } | null
   unreadCount: number
 }
 
@@ -966,6 +978,36 @@ const SORT_OPTIONS = [
 // since the PUT .../reaction route rejects anything outside it.
 const REACTION_EMOJIS = ['❤️', '👍', '👎', '😂', '‼️', '❓'] as const
 
+// Who wrote the last message in a thread, for its one-line preview.
+//
+// This used to be `direction === 'OUTBOUND' ? 'You: ' : ''`, which is
+// wrong twice over:
+//
+//  1. `direction` separates the STUDIO from the CLIENT, never the viewer
+//     from a colleague. On a client thread an OUTBOUND message may well
+//     have been written by someone else at the studio -- the API's own
+//     summary helper reads it as `INBOUND ? "Client" : "Studio"`.
+//  2. On STAFF and GROUP threads it is a CONSTANT: the API rejects any
+//     other value outright ("Staff conversations only support OUTBOUND
+//     direction"), so every row on every team thread claimed to be the
+//     viewer's own message, whoever actually wrote it.
+//
+// `lastMessage.authorUserId`/`.author` answer it properly. apps/mobile's
+// ConversationRow.tsx fixed the identical line first and this deliberately
+// mirrors it, down to naming a colleague by first name only, so the two
+// clients cannot drift on what a preview says.
+function previewPrefix(
+  lastMessage: { authorUserId: string | null; author: { name: string | null; email: string } | null },
+  viewerUserId: string | undefined,
+): string {
+  if (lastMessage.authorUserId && viewerUserId && lastMessage.authorUserId === viewerUserId) return 'You: '
+  const name = lastMessage.author?.name ?? lastMessage.author?.email
+  if (name) return `${name.split(' ')[0]}: `
+  // An inbound client message has no author at all -- the counterpart's
+  // name is already the row's title, so prefixing it would just repeat it.
+  return ''
+}
+
 function ConversationListView({
   tab,
   isOpen,
@@ -1022,6 +1064,11 @@ function ConversationListView({
   const [addingClient, setAddingClient] = useState(false)
 
   const { profile } = useUserProfile()
+  // Needed to say "You" rather than naming the viewer to themselves -- see
+  // previewPrefix above. useEffectiveUser (not the raw auth user) so an
+  // admin using View As sees the preview the person they are viewing as
+  // would see, consistent with every other identity read on this page.
+  const user = useEffectiveUser()
   const { target: viewAsTarget } = useViewAs()
   // clients.manage was retired -- this hits the same POST /clients route
   // Clients.tsx's own "Add Client" button does, gated clients.edit there too.
@@ -1493,8 +1540,14 @@ function ConversationListView({
                     </div>
                     {conversation.lastMessage && (
                       <p className={`mt-1 truncate text-sm ${isUnread ? 'text-fg' : 'text-fg-secondary'}`}>
-                        {conversation.lastMessage.direction === 'OUTBOUND' ? 'You: ' : ''}
-                        {conversation.lastMessage.body || '📷 Image'}
+                        {previewPrefix(conversation.lastMessage, user?.userId)}
+                        {/* `attachments` says so outright now. Inferring an
+                            image from an empty body was wrong in both
+                            directions: a captioned message WITH images
+                            showed no indicator, and any genuinely empty
+                            message claimed one. */}
+                        {conversation.lastMessage.body ||
+                          ((conversation.lastMessage.attachments?.length ?? 0) > 0 ? '📷 Image' : '')}
                       </p>
                     )}
                     {conversation.primaryInquiry && (
