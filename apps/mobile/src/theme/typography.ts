@@ -6,7 +6,12 @@ import {
   Fraunces_600SemiBold,
 } from '@expo-google-fonts/fraunces';
 import { Jura_500Medium, Jura_600SemiBold, Jura_700Bold } from '@expo-google-fonts/jura';
-import { Outfit_300Light, Outfit_400Regular, Outfit_500Medium } from '@expo-google-fonts/outfit';
+import {
+  Outfit_300Light,
+  Outfit_400Regular,
+  Outfit_500Medium,
+  Outfit_600SemiBold,
+} from '@expo-google-fonts/outfit';
 import { useFonts } from 'expo-font';
 
 /**
@@ -35,6 +40,7 @@ export const fontsToLoad = {
   Outfit_300Light,
   Outfit_400Regular,
   Outfit_500Medium,
+  Outfit_600SemiBold,
 };
 
 /**
@@ -56,6 +62,13 @@ export const fonts = {
   bodyLight: 'Outfit_300Light',
   body: 'Outfit_400Regular',
   bodyMedium: 'Outfit_500Medium',
+  /*
+   * §1.2 sets person and customer names in Outfit 600 -- 16 in list rows,
+   * 17 in the thread header. The face was not loaded because nothing had
+   * asked for it; same package, no new dependency, exactly like the two
+   * italic Fraunces faces above.
+   */
+  bodySemiBold: 'Outfit_600SemiBold',
 } as const;
 
 export function useAppFonts(): boolean {

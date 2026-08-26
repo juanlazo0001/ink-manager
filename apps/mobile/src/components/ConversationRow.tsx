@@ -3,9 +3,9 @@ import Feather from '@expo/vector-icons/Feather';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar, initialsOf } from '@/components/Avatar';
-import { ChannelSwatch } from '@/components/ChannelSwatch';
+import { ChannelBadge } from '@/components/ChannelBadge';
 import { LIST_AVATAR, LIST_INSET } from '@/theme/listMetrics';
-import { colors, hairline, radius, space, type } from '@/theme';
+import { chat, colors, fonts, space } from '@/theme';
 import { relativeStamp } from '@/lib/time';
 
 const CHANNEL_LABELS: Record<string, string> = {
@@ -84,25 +84,46 @@ export function ConversationRow({
       accessibilityLabel={`${name}${unread ? `, ${item.unreadCount} unread` : ''}`}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
+      {/*
+        §8: the unread dot leads the row IN FLEX FLOW, not pinned to the
+        edge. Pinned, it floats in the margin and every row's text starts
+        in the same place whether or not anything is unread -- so the dot
+        has to be looked FOR. In flow it displaces the row, which is what
+        makes a screen of threads scannable at arm's length.
+
+        Its space is reserved either way, so reading a thread does not
+        make the column jog sideways.
+
+        Red -- and this reverses an earlier note here that argued for gold
+        because "an unread count is data". §8 asks for red and §8 is
+        right: at 8pt this is punctuation, not a fill, which is precisely
+        what CLAUDE.md reserves red for.
+      */}
+      <View style={styles.dotSlot}>{unread ? <View style={styles.unreadDot} /> : null}</View>
+
       {/* The counterpart's own photo, for every thread type -- which is
           what web does: ProgressRingAvatar takes counterpart.avatarUrl on
           CLIENT, STAFF and GROUP alike and falls back to initials. Mobile
           had only ever drawn initials. */}
-      <Avatar
-        url={item.counterpart?.avatarUrl}
-        initials={initialsOf(name)}
-        // §8: 44. The separator's 76pt inset is 20 + 44 + 12 -- the rule
-        // starts where the text starts -- so this number and
-        // LIST_SEPARATOR_INSET move together; see theme/listMetrics.ts.
-        size={LIST_AVATAR}
-        ring={unread ? colors.accent : undefined}
-        style={styles.avatar}
-        labelStyle={[styles.avatarLabel, unread && styles.avatarLabelUnread]}
-      />
+      <View style={styles.avatarWrap}>
+        <Avatar
+          url={item.counterpart?.avatarUrl}
+          initials={initialsOf(name)}
+          // §8: 44. The separator's 76pt inset is 20 + 44 + 12 -- the rule
+          // starts where the text starts -- so this number and
+          // LIST_SEPARATOR_INSET move together; see theme/listMetrics.ts.
+          size={LIST_AVATAR}
+          ring={unread ? colors.accent : undefined}
+          labelStyle={styles.avatarLabel}
+        />
+        {/* §1.1: the channel as letters ON the avatar, replacing a third
+            line of row furniture. */}
+        {item.lastMessage ? <ChannelBadge channel={item.lastMessage.channel} /> : null}
+      </View>
 
       <View style={styles.middle}>
         <View style={styles.topLine}>
-          <Text style={[styles.name, unread && styles.nameUnread]} numberOfLines={1}>
+          <Text style={styles.name} numberOfLines={1}>
             {name}
           </Text>
           <Text style={styles.stamp}>{relativeStamp(item.lastMessageAt)}</Text>
@@ -116,29 +137,13 @@ export function ConversationRow({
           {hasAttachment ? ' ' : ''}
           {previewText}
         </Text>
-
-        <View style={styles.metaLine}>
-          {item.lastMessage ? (
-            <View style={styles.channel}>
-              <ChannelSwatch channel={item.lastMessage.channel} />
-              <Text style={styles.channelLabel}>{channelLabel(item.lastMessage.channel).toUpperCase()}</Text>
-            </View>
-          ) : (
-            <View />
-          )}
-
-          {unread ? (
-            // Gold, not red. An unread count is data, and red in this
-            // palette is reserved for something actually wrong.
-            <View style={styles.unreadBadge}>
-              <Text style={styles.unreadCount}>{item.unreadCount > 99 ? '99+' : item.unreadCount}</Text>
-            </View>
-          ) : null}
-        </View>
       </View>
     </Pressable>
   );
 }
+
+/** §8: an 8pt dot -- punctuation, not a fill. */
+const UNREAD_DOT = 8;
 
 const styles = StyleSheet.create({
   row: {
@@ -155,30 +160,44 @@ const styles = StyleSheet.create({
   },
   pressed: { backgroundColor: colors.surface },
 
-  avatar: { marginTop: 2 },
-  avatarLabel: { ...type.label, fontSize: 13, color: colors.fgMuted },
-  avatarLabelUnread: { color: colors.accent },
-
-  middle: { flex: 1, gap: space.xs },
-  topLine: { flexDirection: 'row', alignItems: 'baseline', gap: space.sm },
-  name: { ...type.heading, color: colors.fgSecondary, flex: 1 },
-  nameUnread: { color: colors.fg },
-  stamp: { ...type.meta, color: colors.fgMuted },
-
-  preview: { ...type.small, color: colors.fgMuted },
-  previewUnread: { color: colors.fgSecondary },
-
-  metaLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 },
-  channel: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
-  channelLabel: { ...type.label, color: colors.fgMuted },
-
-  unreadBadge: {
-    minWidth: 20,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
+  /* Reserved whether or not the dot is drawn -- see the render. */
+  dotSlot: { width: UNREAD_DOT, alignItems: 'center', justifyContent: 'center' },
+  unreadDot: {
+    width: UNREAD_DOT,
+    height: UNREAD_DOT,
+    borderRadius: UNREAD_DOT / 2,
+    backgroundColor: chat.alert,
   },
-  unreadCount: { ...type.label, fontSize: 11, color: colors.accentFg },
+
+  /*
+   * `alignSelf: flex-start` is load-bearing, not tidiness. The row is a
+   * flex row, so by default this wrapper STRETCHES to the row's full
+   * height -- and the badge, anchored to the wrapper's bottom, then hung
+   * 19pt below the avatar instead of 3 (measured: offsetBottom -19).
+   * Hugging the avatar makes "bottom-right" mean the avatar's corner.
+   */
+  avatarWrap: { marginTop: 2, alignSelf: 'flex-start' },
+  /* §1.2: the monogram is the one place Fraunces belongs at row scale --
+     it is a mark, not a name. The name itself is Outfit, below. */
+  avatarLabel: { fontFamily: fonts.displaySemiBold, fontSize: 16, lineHeight: 20, color: colors.fgMuted },
+
+  middle: { flex: 1, gap: 3 },
+  topLine: { flexDirection: 'row', alignItems: 'baseline', gap: space.sm },
+  /*
+   * §1.2: Outfit 16/600, cream. This was type.heading -- Fraunces 19 --
+   * i.e. display type setting a person's name, which §1.2 forbids in
+   * those words: at row scale it shouts.
+   *
+   * It does NOT change with unread. The row already says unread twice
+   * (the dot, and the preview lifting); a third signal on the name is
+   * emphasis competing with itself, and it left read threads looking
+   * greyed-out rather than merely calm.
+   */
+  name: { fontFamily: fonts.bodySemiBold, fontSize: 16, lineHeight: 21, color: colors.fg, flex: 1 },
+  /* §8: Jura 11, muted, right. */
+  stamp: { fontFamily: fonts.labelSemiBold, fontSize: 11, letterSpacing: 0.4, color: colors.fgMuted },
+
+  /* §8: Outfit 14, two-line clamp. */
+  preview: { fontFamily: fonts.body, fontSize: 14, lineHeight: 19, color: colors.fgMuted },
+  previewUnread: { color: colors.fgSecondary },
 });
