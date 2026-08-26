@@ -3,6 +3,7 @@ import { prisma } from "./prisma";
 import { IntegrationChannel, IntegrationStatus, MessageChannel, MessageDirection } from "../../generated/prisma/enums";
 import { decryptSecret } from "./secrets";
 import { resolveTwilioSender, sendSms, type SmsIntegrationMetadata, type TwilioCredentials } from "./twilio";
+import { MMS_MAX_MEDIA_PER_MESSAGE, toMmsDeliveryUrl } from "./cloudinary";
 import { TWILIO_STATUS_CALLBACK_URL } from "./publicUrl";
 import { logAudit } from "./audit";
 import { emitInvalidation } from "./realtime/registry";
@@ -67,8 +68,9 @@ async function createOutboundSmsMessage(params: {
   actorUserId: string | null;
   replyToId?: string;
   metadata: { providerSid?: string; deliveryStatus: string; error?: string };
+  attachments?: string[];
 }) {
-  const { studioId, conversationId, body, actorUserId, replyToId, metadata } = params;
+  const { studioId, conversationId, body, actorUserId, replyToId, metadata, attachments } = params;
   const now = new Date();
   const message = await prisma.$transaction(async (tx) => {
     const created = await tx.message.create({
@@ -78,6 +80,11 @@ async function createOutboundSmsMessage(params: {
         channel: MessageChannel.SMS,
         direction: MessageDirection.OUTBOUND,
         body,
+        // The ORIGINAL Cloudinary URLs, not the downscaled renditions
+        // handed to Twilio -- staff looking back at the thread should see
+        // the photo they actually sent, not a carrier-grade recompression.
+        // See lib/cloudinary.ts's toMmsDeliveryUrl.
+        attachments: attachments && attachments.length > 0 ? attachments : undefined,
         authorUserId: actorUserId,
         replyToId,
         metadata,
@@ -134,8 +141,13 @@ async function sendSmsMessage(params: {
   // real spam, not a fix. Only the deposit-form auto-send call opts in
   // today; see lib/deposits.ts's own comment at its call site.
   logAttemptEvenOnFailure?: boolean;
+  // Original Cloudinary URLs. Supplying any makes this an MMS; the carrier-
+  // sized rendition handed to Twilio is derived per-URL at send time, while
+  // these originals are what get stored on the Message row.
+  attachments?: string[];
 }): Promise<SendSmsMessageResult> {
   const { studioId, conversationId, toPhone, body, actorUserId, replyToId, logAttemptEvenOnFailure } = params;
+  const attachments = params.attachments?.filter((url) => typeof url === "string" && url.trim().length > 0) ?? [];
 
   async function failed(reason: "not_connected" | "send_failed", error?: string): Promise<SendSmsMessageResult> {
     if (logAttemptEvenOnFailure) {
@@ -145,6 +157,7 @@ async function sendSmsMessage(params: {
         body,
         actorUserId,
         replyToId,
+        attachments,
         // Reuses the exact metadata shape/value ConversationsPanel.tsx's
         // smsStatusLabel already renders as "Not delivered" for a Twilio-
         // reported failure -- no frontend change needed to display this.
@@ -152,6 +165,13 @@ async function sendSmsMessage(params: {
       });
     }
     return { sent: false, reason, error };
+  }
+
+  // Twilio rejects the whole message over its own ceiling, so refuse here
+  // with a reason staff can act on rather than surfacing a raw provider
+  // error after the fact. See MMS_MAX_MEDIA_PER_MESSAGE in lib/cloudinary.ts.
+  if (attachments.length > MMS_MAX_MEDIA_PER_MESSAGE) {
+    return failed("send_failed", `A text can carry at most ${MMS_MAX_MEDIA_PER_MESSAGE} images`);
   }
 
   const integration = await prisma.studioIntegration.findUnique({
@@ -183,20 +203,30 @@ async function sendSmsMessage(params: {
 
   const toNumber = `+1${toPhone}`;
 
+  // Carrier-sized renditions, derived per URL. Never the originals: a
+  // modern phone photo is routinely 3-8 MB and Twilio rejects a message
+  // whose body plus media exceeds 5 MB outright. See toMmsDeliveryUrl.
+  const mediaUrls = attachments.map(toMmsDeliveryUrl);
+
   let result;
   if (isSmsDryRun()) {
     // Staging-only: everything above this line ran for real (integration
-    // lookup, credential decrypt, opted-out/no-phone gating), so what's
-    // exercised is the real send path minus the one irreversible step --
-    // handing the message to Twilio. The Message row is still written, so
-    // the thread shows exactly what staff would see, and deliveryStatus
-    // "queued" is the literal truth: accepted by the app, never handed to
-    // a carrier. See isSmsDryRun's own comment for why this cannot be on
-    // in production.
+    // lookup, credential decrypt, opted-out/no-phone gating, and the media
+    // rendition URLs above), so what's exercised is the real send path
+    // minus the one irreversible step -- handing the message to Twilio.
+    // The Message row is still written WITH its attachments, so the thread
+    // shows exactly what staff would see, and deliveryStatus "queued" is
+    // the literal truth: accepted by the app, never handed to a carrier.
+    // See isSmsDryRun's own comment for why this cannot be on in production.
     result = { sid: `DRYRUN${crypto.randomUUID().replace(/-/g, "").slice(0, 26)}`, status: "queued" };
+    if (mediaUrls.length > 0) {
+      console.warn(
+        `[SMS_DRY_RUN] would have attached ${mediaUrls.length} media URL(s):\n  ${mediaUrls.join("\n  ")}`,
+      );
+    }
   } else {
     try {
-      result = await sendSms(credentials, sender, toNumber, body, TWILIO_STATUS_CALLBACK_URL);
+      result = await sendSms(credentials, sender, toNumber, body, TWILIO_STATUS_CALLBACK_URL, mediaUrls);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Twilio send failed";
       return failed("send_failed", message);
@@ -209,6 +239,7 @@ async function sendSmsMessage(params: {
     body,
     actorUserId,
     replyToId,
+    attachments,
     metadata: { providerSid: result.sid, deliveryStatus: result.status },
   });
 
@@ -267,9 +298,23 @@ export async function sendClientSms(params: {
   // channel attempt (nothing was ever dialed), so there's no "attempt" to
   // log there the way there is for not_connected/send_failed.
   logAttemptEvenOnFailure?: boolean;
+  // Original Cloudinary URLs -- see sendSmsMessage. Passing any makes this
+  // an MMS. The consent/opt-out gates below are deliberately unchanged and
+  // apply to a picture exactly as they do to a text: a client who never
+  // consented, or who opted out, cannot be sent an image either.
+  attachments?: string[];
 }): Promise<SendClientSmsResult> {
-  const { studioId, clientId, conversationId, body, actorUserId, bypassOptOutCheck, replyToId, logAttemptEvenOnFailure } =
-    params;
+  const {
+    studioId,
+    clientId,
+    conversationId,
+    body,
+    actorUserId,
+    bypassOptOutCheck,
+    replyToId,
+    logAttemptEvenOnFailure,
+    attachments,
+  } = params;
 
   const client = await prisma.client.findUnique({
     where: { id: clientId },
@@ -307,6 +352,7 @@ export async function sendClientSms(params: {
     actorUserId,
     replyToId,
     logAttemptEvenOnFailure,
+    attachments,
   });
 }
 

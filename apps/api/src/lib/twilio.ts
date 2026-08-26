@@ -189,6 +189,12 @@ export async function sendSms(
   to: string,
   body: string,
   statusCallbackUrl?: string | null,
+  // Publicly fetchable URLs. Twilio fetches each one itself at send time,
+  // so they must need no auth -- which is why these are Cloudinary
+  // delivery URLs (see toMmsDeliveryUrl) and never a signed or private
+  // link. Supplying any turns this into an MMS; omitting them leaves the
+  // SMS path byte-for-byte as it was.
+  mediaUrls?: string[],
 ): Promise<SendSmsResult> {
   const client = Twilio(accountSid, authToken);
 
@@ -204,6 +210,7 @@ export async function sendSms(
     ...senderParams,
     to,
     body,
+    ...(mediaUrls && mediaUrls.length > 0 ? { mediaUrl: mediaUrls } : {}),
     ...(statusCallbackUrl ? { statusCallback: statusCallbackUrl } : {}),
   });
 

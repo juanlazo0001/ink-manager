@@ -3122,6 +3122,15 @@ function ThreadView({
                               ? 'rounded-tl-[18px] rounded-tr-[18px] rounded-bl-[18px] rounded-br-[5px]'
                               : 'rounded-tl-[18px] rounded-tr-[18px] rounded-br-[18px] rounded-bl-[5px]'
 
+                        // iMessage-style media: when a message carries
+                        // images, the picture IS the bubble -- no chrome, no
+                        // padding, corners on the image itself, caption (if
+                        // any) as a small line beneath. A shared-inquiry card
+                        // is excluded: it's a structured card with its own
+                        // border and grid, not a photo someone sent.
+                        const isMediaMessage =
+                          !sharedInquiryId && Array.isArray(message.attachments) && message.attachments.length > 0
+
                         const canEditMessage =
                           !isClientThread && !sharedInquiryId && message.authorUserId === user?.userId && !viewAsTarget
                         const isEditingThis = editingMessageId === message.id
@@ -3170,8 +3179,11 @@ function ThreadView({
                               // the middle of a tightly-stacked group would have
                               // its pills overlapping the next bubble down.
                               reactionSummary.length > 0 ? 'mb-3' : '',
-                              'max-w-full px-4 py-2.5 text-sm text-fg',
-                              cornerClass,
+                              // Media drops the bubble's own padding so the
+                              // image can run edge to edge; the rounding moves
+                              // onto the <img> itself further down.
+                              isMediaMessage ? 'max-w-full text-sm text-fg' : 'max-w-full px-4 py-2.5 text-sm text-fg',
+                              isMediaMessage ? '' : cornerClass,
                               // Dual themes: these used to be hardcoded olive-
                               // tinted hex (bg-[#23281a]/border-[#3d461f]) --
                               // hardcoded regardless of the studio's own accent
@@ -3181,11 +3193,16 @@ function ThreadView({
                               // instead, a universal fix (not shape-specific)
                               // that correctly tracks whichever of the five
                               // presets is active.
-                              sharedInquiryId
-                                ? 'border border-border bg-surface-raised/80'
-                                : group.isOutboundSide
-                                  ? 'border border-border bg-accent/[0.12]'
-                                  : 'border border-border-soft bg-surface-raised',
+                              // No background or border behind a photo -- the
+                              // image is the surface. Applies to both
+                              // alignments, inbound and outbound alike.
+                              isMediaMessage
+                                ? 'border-0 bg-transparent'
+                                : sharedInquiryId
+                                  ? 'border border-border bg-surface-raised/80'
+                                  : group.isOutboundSide
+                                    ? 'border border-border bg-accent/[0.12]'
+                                    : 'border border-border-soft bg-surface-raised',
                               recentlyAddedIds.has(message.id) ? 'animate-fade-slide-up' : '',
                             ].join(' ')}
                           >
@@ -3326,6 +3343,10 @@ function ThreadView({
                                 </div>
                               </div>
                             ) : (
+                              // A media message's body renders as a caption
+                              // BENEATH the image instead (see below), so it
+                              // is deliberately skipped here.
+                              !isMediaMessage &&
                               message.body && (
                                 <p className="whitespace-pre-wrap break-words">
                                   {linkifyText(message.body)}
@@ -3341,7 +3362,18 @@ function ThreadView({
                               )
                             )}
                             {message.attachments && message.attachments.length > 0 && (
-                              <div className={sharedInquiryId ? 'mt-1.5 grid grid-cols-2 gap-1' : 'mt-1.5 space-y-1.5'}>
+                              <div
+                                className={
+                                  sharedInquiryId
+                                    ? 'mt-1.5 grid grid-cols-2 gap-1'
+                                    : // No top margin in media mode -- there is no
+                                      // body above it to separate from, and the
+                                      // image should start flush at the bubble edge.
+                                      isMediaMessage
+                                      ? 'space-y-1'
+                                      : 'mt-1.5 space-y-1.5'
+                                }
+                              >
                                 {message.attachments.map((url) => (
                                   <div key={url} className="group relative">
                                     <button
@@ -3355,7 +3387,17 @@ function ThreadView({
                                       <img
                                         src={url}
                                         alt="Attachment"
-                                        className={sharedInquiryId ? 'max-h-48 rounded-lg' : 'w-full rounded-[12px]'}
+                                        // The rounding the bubble would have had
+                                        // now lives on the image, so a photo keeps
+                                        // the same silhouette (including the
+                                        // group's tail corner) with no chrome.
+                                        className={
+                                          sharedInquiryId
+                                            ? 'max-h-48 rounded-lg'
+                                            : isMediaMessage
+                                              ? `w-full ${cornerClass}`
+                                              : 'w-full rounded-[12px]'
+                                        }
                                       />
                                     </button>
                                     {isClientThread && !sharedInquiryId && (
@@ -3394,6 +3436,20 @@ function ThreadView({
                                 ))}
                               </div>
                             )}
+                            {/* The caption for a media message: a small line
+                                beneath the photo rather than a bubble of its
+                                own, so an image with a note still reads as one
+                                message. Aligned with the image edge on both
+                                sides via matching horizontal padding. */}
+                            {isMediaMessage && !isEditingThis && message.body && (
+                              <p
+                                className={`mt-1 whitespace-pre-wrap break-words px-1 text-[13px] text-fg-secondary ${
+                                  group.isOutboundSide ? 'text-right' : 'text-left'
+                                }`}
+                              >
+                                {linkifyText(message.body)}
+                              </p>
+                            )}
                             {sharedInquiryLink && isLastInGroup && (
                               <Link
                                 to={sharedInquiryLink}
@@ -3412,9 +3468,17 @@ function ThreadView({
                                 // send while it's still on its way (red is punctuation).
                                 return (
                                   <p
-                                    className={`mt-1 text-[10.5px] font-medium ${
-                                      status.tone === 'failed' ? 'text-danger' : 'text-[#8a8a92]'
-                                    }`}
+                                    className={[
+                                      'mt-1 text-[10.5px] font-medium',
+                                      status.tone === 'failed' ? 'text-danger' : 'text-[#8a8a92]',
+                                      // A bubble is sized to its content, so a
+                                      // left-aligned status already sits under
+                                      // the text. A media message has no bubble
+                                      // and runs the full column width, which
+                                      // left this stranded on the far side from
+                                      // an outbound image -- match the side.
+                                      isMediaMessage && group.isOutboundSide ? 'text-right' : '',
+                                    ].join(' ')}
                                   >
                                     {status.label}
                                   </p>

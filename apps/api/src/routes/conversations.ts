@@ -850,8 +850,15 @@ router.post("/:id/messages", async (req, res) => {
     });
 
     if (integration?.status === IntegrationStatus.CONNECTED) {
-      if (bodyText.length === 0) {
-        return res.status(400).json({ error: "A message body is required to send a real SMS" });
+      // A picture on its own is a complete message -- an empty body is only
+      // a problem when there is nothing else to send. This previously
+      // rejected any attachment-only send outright, and (worse) silently
+      // DROPPED attachments on a captioned one: they were never passed to
+      // sendClientSms and never stored on the Message row, so staff watched
+      // an image upload, hit send, and saw it vanish from the thread while
+      // the client received text only.
+      if (bodyText.length === 0 && (!attachments || attachments.length === 0)) {
+        return res.status(400).json({ error: "A message body or an image is required to send a real SMS" });
       }
 
       const result = await sendClientSms({
@@ -861,6 +868,7 @@ router.post("/:id/messages", async (req, res) => {
         body: bodyText,
         actorUserId: userId,
         replyToId,
+        attachments,
       });
 
       if (!result.sent) {
