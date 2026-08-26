@@ -3,6 +3,7 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Eyebrow } from '@/components/ui';
 import { REACTION_EMOJIS, type ReactionEmoji } from '@/lib/conversations';
+import { stamp } from '@/lib/format';
 import { colors, hairline, radius, space, type } from '@/theme';
 
 /**
@@ -35,10 +36,13 @@ export function MessageActions({
   /** False for a message with no text — there is nothing to put on the clipboard. */
   canCopy,
   copied,
+  detail,
+  images,
   onReact,
   onReply,
   onCopy,
   onEdit,
+  onSaveImage,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -46,11 +50,24 @@ export function MessageActions({
   canEdit: boolean;
   canCopy: boolean;
   copied: boolean;
+  /**
+   * ITEM 2/5 — the facts that used to sit under every bubble.
+   *
+   * Channel, exact time and "Edited" were true on every row and read on
+   * almost none, so they left the thread and live here, one long-press
+   * away. This is where they belong: it is the "tell me about THIS
+   * message" surface.
+   */
+  detail?: { channel: string; sentAt: string; edited: boolean } | null;
+  /** Image attachments on this message, if any — enables Save. */
+  images?: string[];
   onReact: (emoji: ReactionEmoji) => void;
   onReply: () => void;
   onCopy: () => void;
   onEdit: () => void;
+  onSaveImage?: (url: string) => void;
 }) {
+  const savable = images ?? [];
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
@@ -109,6 +126,35 @@ export function MessageActions({
             </Pressable>
           ) : null}
 
+          {savable.length > 0 && onSaveImage ? (
+            <Pressable
+              // One image saves it; several save the first, because the
+              // sheet belongs to the MESSAGE and picking among them is the
+              // viewer's job — it has its own save on the picture you are
+              // actually looking at.
+              onPress={() => onSaveImage(savable[0])}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.action, pressed && styles.pressed]}
+            >
+              <Feather name="download" size={16} color={colors.fgSecondary} />
+              <Text style={styles.actionLabel}>
+                {savable.length > 1 ? 'Save first image' : 'Save image'}
+              </Text>
+            </Pressable>
+          ) : null}
+
+          {detail ? (
+            <>
+              <View style={styles.divider} />
+              <View style={styles.detail}>
+                <Text style={styles.detailText}>
+                  {detail.channel} · {stamp(detail.sentAt)}
+                  {detail.edited ? ' · Edited' : ''}
+                </Text>
+              </View>
+            </>
+          ) : null}
+
           <Pressable onPress={onClose} style={styles.done}>
             <Text style={styles.doneLabel}>CANCEL</Text>
           </Pressable>
@@ -146,6 +192,8 @@ const styles = StyleSheet.create({
   emojiMine: { borderColor: colors.accent, backgroundColor: 'rgba(201, 154, 91, 0.08)' },
   emojiGlyph: { fontSize: 24, lineHeight: 30 },
 
+  detail: { paddingTop: space.sm, paddingHorizontal: space.xs },
+  detailText: { ...type.meta, color: colors.fgMuted },
   divider: { height: hairline, backgroundColor: colors.border, marginTop: space.md, marginBottom: space.xs },
 
   action: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md },

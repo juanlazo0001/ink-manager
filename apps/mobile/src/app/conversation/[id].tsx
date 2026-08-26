@@ -19,12 +19,15 @@ import {
   View,
 } from 'react-native';
 
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { useSharedValue, withSpring } from 'react-native-reanimated';
+
 import { ScreenShell } from '@/components/ScreenShell';
 import { Composer, type ComposerSendState } from '@/components/Composer';
 import { MessageActions } from '@/components/MessageActions';
 import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
 import { channelLabel } from '@/components/ConversationRow';
-import { MessageBubble } from '@/components/MessageBubble';
+import { MessageBubble, REVEAL_WIDTH, messageImages } from '@/components/MessageBubble';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -33,6 +36,7 @@ import { screenErrorMessage } from '@/lib/screenError';
 import {
   clearReaction,
   editMessage,
+  isMessageEdited,
   fetchIntegrationStatus,
   fetchThread,
   markConversationRead,
@@ -40,8 +44,9 @@ import {
   setReaction,
   type ReactionEmoji,
 } from '@/lib/conversations';
+import { saveImageToLibrary } from '@/lib/saveImage';
 import { buildThreadRows, type DisplayMessage, type Row } from '@/lib/threadRows';
-import { colors, hairline, space, type } from '@/theme';
+import { colors, hairline, radius, space, type } from '@/theme';
 
 /** See the note in the list screen: polling, not sockets, this session. */
 const THREAD_POLL_MS = 30_000;
@@ -82,6 +87,38 @@ export default function ConversationScreen() {
   const [replyTo, setReplyTo] = useState<DisplayMessage | null>(null);
   const [editing, setEditing] = useState<DisplayMessage | null>(null);
   const listRef = useRef<FlatList<Row>>(null);
+
+  /*
+   * ITEM 2 — drag the thread left to read the clock.
+   *
+   * ONE shared value for the whole list rather than one per row: every
+   * bubble slides by the same amount, so per-row state would be N copies
+   * of one number and N subscriptions to update per frame.
+   *
+   * The gesture has to lose to the FlatList, not fight it. `activeOffsetX`
+   * means it only claims the touch after a clear horizontal intent, and
+   * `failOffsetY` hands it back the moment the finger goes vertical —
+   * without that pair, a normal scroll would jiggle the thread sideways.
+   *
+   * Left only (`Math.min(0, …)`): there is nothing revealed on the right,
+   * and a bubble that can be dragged away from its own edge feels broken.
+   */
+  const revealX = useSharedValue(0);
+  const revealPan = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-14, 14])
+        .failOffsetY([-12, 12])
+        .onUpdate((event) => {
+          revealX.value = Math.max(-REVEAL_WIDTH, Math.min(0, event.translationX));
+        })
+        .onEnd(() => {
+          // Springs home the moment you let go — Messages never latches
+          // this open, and a latched state would need a way to close it.
+          revealX.value = withSpring(0, { damping: 22, stiffness: 220, mass: 0.6 });
+        }),
+    [revealX],
+  );
   const [unavailableChannels, setUnavailableChannels] = useState<Set<string>>(new Set());
   const [sendState, setSendState] = useState<ComposerSendState>({ channel: 'SMS', direction: 'OUTBOUND' });
 
@@ -200,6 +237,14 @@ export default function ConversationScreen() {
   }, [token, isClientThread]);
 
   useEffect(() => () => void ++requestRef.current, []);
+
+  /** ITEM 3 — quick-save, from the long-press sheet and the viewer. */
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+  const handleSaveImage = useCallback(async (url: string) => {
+    const result = await saveImageToLibrary(url);
+    setSaveNote(result.ok ? 'Saved to your photos' : result.message);
+    setTimeout(() => setSaveNote(null), 2600);
+  }, []);
 
   const doSend = useCallback(
     async (body: string, attachments: string[] = [], retryOf?: DisplayMessage) => {
@@ -385,6 +430,7 @@ export default function ConversationScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
       >
+        <GestureDetector gesture={revealPan}>
         <FlatList
           ref={listRef}
           inverted
@@ -392,6 +438,9 @@ export default function ConversationScreen() {
           keyExtractor={(row) => (row.kind === 'day' ? row.key : row.message.id)}
           renderItem={({ item }) =>
             item.kind === 'day' ? (
+              /* Day chips stay put while the thread slides — Messages
+                 shows these persistently, and they belong to the thread
+                 rather than to any one bubble. */
               <View style={styles.daySeparator}>
                 <View style={styles.dayRule} />
                 <Text style={styles.dayLabel}>{item.label.toUpperCase()}</Text>
@@ -403,6 +452,8 @@ export default function ConversationScreen() {
                 own={item.own}
                 showMeta={item.showMeta}
                 showAuthor={item.showAuthor}
+                grouped={item.grouped}
+                revealX={revealX}
                 onRetry={() => doSend(item.message.body, item.message.attachments ?? [], item.message)}
                 onOpenImage={(urls, index) =>
                   setLightbox({ images: urls.map((url) => ({ url })), index })
@@ -454,6 +505,13 @@ export default function ConversationScreen() {
             />
           }
         />
+        </GestureDetector>
+
+        {saveNote ? (
+          <View style={styles.toast} pointerEvents="none">
+            <Text style={styles.toastLabel}>{saveNote}</Text>
+          </View>
+        ) : null}
 
         <Composer
           isClientThread={isClientThread}
@@ -494,6 +552,20 @@ export default function ConversationScreen() {
         canEdit={!!actionFor && !isClientThread && actionFor.authorUserId === viewerUserId}
         canCopy={!!actionFor?.body}
         copied={!!actionFor && copiedId === actionFor.id}
+        detail={
+          actionFor
+            ? {
+                channel: channelLabel(actionFor.channel),
+                sentAt: actionFor.createdAt,
+                edited: isMessageEdited(actionFor),
+              }
+            : null
+        }
+        images={actionFor ? messageImages(actionFor) : []}
+        onSaveImage={(url) => {
+          setActionFor(null);
+          void handleSaveImage(url);
+        }}
         onReact={(emoji) => actionFor && handleReact(actionFor, emoji)}
         onReply={() => {
           setReplyTo(actionFor);
@@ -513,6 +585,7 @@ export default function ConversationScreen() {
         initialIndex={lightbox?.index ?? 0}
         visible={!!lightbox}
         onClose={() => setLightbox(null)}
+        onSave={(url) => void handleSaveImage(url)}
       />
     </ScreenShell>
   );
@@ -534,4 +607,19 @@ const styles = StyleSheet.create({
   dayRule: { flex: 1, height: hairline, backgroundColor: colors.borderSoft },
   dayLabel: { ...type.label, color: colors.fgMuted },
   olderSpinner: { paddingVertical: space.lg, alignItems: 'center' },
+  /* Sits above the composer, out of the way of the thumb. */
+  toast: {
+    position: 'absolute',
+    left: space.lg,
+    right: space.lg,
+    bottom: space.sm,
+    alignItems: 'center',
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: hairline,
+    borderColor: colors.border,
+  },
+  toastLabel: { ...type.small, color: colors.fg },
 });

@@ -409,6 +409,13 @@ const styles = StyleSheet.create({
     paddingTop: space.sm,
     paddingBottom: space.xs,
   },
+  /*
+   * "Sends for real over SMS" — kept, because it is now literally true and
+   * it is the last thing between a draft and a client's phone. Styled
+   * QUIETLY on purpose: it is a standing fact about the current mode, not
+   * a warning to be re-read on every keystroke. The channel dot beside it
+   * already carries the colour.
+   */
   stripLabel: { ...type.meta, color: colors.fgMuted, flex: 1 },
   dot: { width: 7, height: 7, borderRadius: radius.pill },
   dotOff: { opacity: 0.3 },
@@ -417,18 +424,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: space.sm,
-    paddingHorizontal: space.lg,
-    paddingTop: space.sm,
-    paddingBottom: space.md,
+    paddingHorizontal: space.md,
+    paddingTop: space.xs,
+    paddingBottom: space.sm,
   },
   input: {
     flex: 1,
     maxHeight: 120,
-    minHeight: 44,
+    minHeight: 40,
     backgroundColor: colors.inputBg,
     borderWidth: hairline,
     borderColor: colors.inputBorder,
-    borderRadius: radius.input,
+    /* Fully rounded, like the reference and like every messaging app —
+       `radius.input` is the rectangle a FORM field wants. A composer is a
+       capsule you type into, not a field on a page. */
+    borderRadius: radius.pill,
     color: colors.fg,
     ...type.body,
     fontSize: 16,
@@ -449,19 +459,23 @@ const styles = StyleSheet.create({
 
   attach: {
     width: 40,
-    height: 44,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },
   send: {
-    width: 44,
-    height: 44,
+    /* Matched to the field's own resting height so the two sit on one
+       line instead of the button hanging below it. */
+    width: 40,
+    height: 40,
     borderRadius: radius.pill,
     backgroundColor: colors.accentButton,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sendDisabled: { backgroundColor: colors.surface },
+  /* Nothing to send reads as a quiet outline rather than a grey slab —
+     the button is present but obviously inert. */
+  sendDisabled: { backgroundColor: 'transparent', borderWidth: hairline, borderColor: colors.border },
   sendPressed: { backgroundColor: colors.accentHover },
 
   backdrop: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'flex-end' },

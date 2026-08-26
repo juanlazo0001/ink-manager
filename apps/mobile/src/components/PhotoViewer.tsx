@@ -27,11 +27,21 @@ export function PhotoViewer({
   initialIndex,
   visible,
   onClose,
+  onSave,
 }: {
   images: ViewerImage[];
   initialIndex: number;
   visible: boolean;
   onClose: () => void;
+  /**
+   * Quick-save, on the picture actually on screen.
+   *
+   * The action lives here rather than on every image bubble on purpose:
+   * a permanent button on each thumbnail is exactly the clutter this
+   * session is removing, and by the time someone wants to keep a photo
+   * they have opened it.
+   */
+  onSave?: (url: string) => void;
 }) {
   const { width, height } = useWindowDimensions();
   /*
@@ -86,6 +96,17 @@ export function PhotoViewer({
             <Text style={styles.counter}>
               {images.length > 1 ? `${Math.min(index, images.length - 1) + 1} / ${images.length}` : ' '}
             </Text>
+            {onSave ? (
+              <Pressable
+                onPress={() => onSave(current.url)}
+                accessibilityRole="button"
+                accessibilityLabel="Save photo to your library"
+                hitSlop={12}
+                style={({ pressed }) => [styles.close, pressed && styles.pressed]}
+              >
+                <Feather name="download" size={20} color={colors.fg} />
+              </Pressable>
+            ) : null}
             <Pressable
               onPress={onClose}
               accessibilityRole="button"
