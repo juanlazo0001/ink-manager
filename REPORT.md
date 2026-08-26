@@ -25188,3 +25188,405 @@ Restart any `expo start` already running from the primary checkout first — the
 4. **The remove buttons** should be red, and still red while disabled.
 5. **If you have a 320pt-class phone**: a long email address should stay whole, with the tag and bin
    dropping to their own line beneath it.
+
+# Backend session — API integrity, and a notification system
+
+Six ordered items from the mobile architect thread, plus three addenda.
+Investigate-first throughout, with a stop-gate between findings and
+implementation. One branch, `session/api-integrity-notifications`, cut
+from `origin/main`, with a commit per item — stated up front, as the work
+order asked.
+
+Three of the nine items did not reproduce as described. That is worth
+saying first, because two of them were already built and one was
+mis-diagnosed, and finding that out cost far less than building them
+again would have.
+
+## What was already done
+
+**Item 4(a) — author on `lastMessage`.** Already shipped, in commit
+`e29a833` ("API: author + attachments on lastMessage; mobile: message
+actions"). `GET /conversations` has been returning `authorUserId` and
+`author {id, name, email}` on `lastMessage` since before this order was
+drafted. Nothing to build; only web's adoption of it remained, which is
+item 4(b).
+
+**Addendum A — reference photos on the inquiries LIST.** Already
+satisfied. `referenceImages` is present in *both* `INQUIRY_LIST_SELECT`
+and `ARTIST_INQUIRY_SELECT`. This matches mobile session AD's own
+conclusion — "the thumbnails were always in the payload" — so the field
+mobile needed was never missing. No change.
+
+**Addendum C — attachments on send.** Already built.
+`POST /conversations/:id/messages` accepts `attachments: string[]`,
+validates it, persists it on the Message row, and passes it through to a
+real Twilio MMS send. The one thing worth noting is that it is the *same*
+field the previous session added to `lastMessage`, so an attachment can
+now be both sent and honestly previewed.
+
+## 1. Appointments response projection
+
+Confirmed, and worse than reported. `GET /appointments/:id` resolved
+membership and `appointments.view` correctly and then did
+`res.json({ ...rest })` on the whole Appointment row. To any caller
+holding `appointments.view` — which is in **ARTIST's default set** — that
+put `finalCostCents`, `tipCents`, `closeoutNotes`, `paidVia`, both Stripe
+ids, the attached gift cards with their codes and dollar amounts, and the
+client's real phone, email and SMS-consent state on the wire.
+
+None of it rendered. `apps/web` hid every field behind
+`canCheckout`/`canViewGiftCards`/`canManage`, and `apps/mobile`
+re-derived the same three rules in its own `appointmentVisibility.ts`,
+whose header comment states outright that the API does not project the
+response and so "every one of these decisions is the client's". Two
+clients agreeing to hide a field is not the same as the field not being
+sent, and `curl` was bound by neither.
+
+**Not in the report: `GET /appointments` leaked the identical scalars.**
+The list route uses a Prisma `include`, so every column on the model rode
+along. `packages/shared-types`' own `AppointmentListItem` asserted the
+opposite — "the list route does not return money fields, notes, Stripe
+ids, or reminder timestamps" — which was describing an intention, not the
+behaviour. That comment has been corrected to say why it is true now.
+
+Both routes go through the new `lib/appointmentVisibility.ts`, which
+mirrors what the two clients already gate on rather than re-deciding
+anything:
+
+| what | gate |
+| --- | --- |
+| final cost, tip, closeout notes, payment plumbing, who closed it out | `appointments.checkout` |
+| the gift-card stack | `giftCards.view` |
+| the client's phone / email / SMS-consent state | staff standing (real OWNER/FRONT_DESK **and** the record at their own studio) |
+
+Every one is evaluated at the **record's** studio through
+`effectiveRoleAt`, never the caller's JWT role — so a solo studio's OWNER
+guesting at a host is judged as the artist they are there and does not
+collect OWNER's unconditional `hasPermission` short-circuit.
+
+Two deliberate details. `checkedOutAt` **survives**: "this session is
+closed out" is operational status, not a financial figure, and the
+project-stage derivation reads it — only *who* closed it out travels with
+the money. And withheld fields are **deleted, not nulled**:
+`"finalCostCents": null` is a claim (closed out at no charge); absence is
+not.
+
+One thing beyond the three rules. The detail route's embedded project
+carries `budget`/`priceEstimateLow`/`priceEstimateHigh` — the same three
+fields `StudioSettings.artistFieldVisibility.pricingDetail` already lets a
+studio hide from its artists on *every* `inquiries` route. A studio that
+had switched that off was still handing an artist the estimate through
+here: a way around a setting they had deliberately set, not a separate
+decision. Now honoured here too.
+
+It could not be fixed by narrowing the list query, which was the obvious
+move: web's `ClientDetail` reads `finalCostCents` off `GET /appointments`
+for its session-history table, so an entitled caller must still receive
+it. Hence a per-caller projection, batched per distinct `studioId`
+because an artist's list spans home plus every active guest studio in one
+response.
+
+### Adversarial probes (required by the work order)
+
+`appointmentProjection.test.ts`, real HTTP against the real router,
+asserting on **raw JSON key presence** (`in`), never a rendered value and
+never `== null`. Fixtures are a checked-out appointment with real money
+on it, a gift card attached, and a client with real contact details — so
+an assertion of absence means "withheld", not "there was nothing there".
+
+| probe | result |
+| --- | --- |
+| plain ARTIST, own appointment | all three groups absent; `checkedOutAt`, `notes`, client NAME still present |
+| guest-studio OWNER (solo owner-artist, real OWNER token) | all three groups absent; `fromGuestStudio` non-null confirms it is a guest record |
+| FRONT_DESK with `appointments.checkout` revoked | money absent; gift cards **and** contact details still present |
+| host OWNER | everything present, `finalCostCents === 45000` — nothing taken from someone who could already see it |
+| ARTIST *granted* `appointments.checkout` | money present; contact details still absent |
+| ARTIST granted checkout at their HOME viewing a HOST record | money absent — the permission is read where the record lives |
+| the LIST route | same stripping for the artist; `finalCostCents` still reaching the owner |
+
+The probes were then run against the pre-fix behaviour by neutering
+`applyAppointmentVisibility`: **6 of 7 failed**. The seventh is the host
+OWNER probe, which asserts *presence* and correctly passes either way.
+
+The narrowed types then did their own work: making the fields optional in
+`shared-types` broke `apps/mobile`'s compile in four places, all of them
+real reads that needed guarding, and web's own local interfaces needed
+the same treatment in nine.
+
+## 2. Inquiries list/detail scoping
+
+Confirmed symptom, different mechanism, **plus a second bug**.
+
+The order describes the list as home-studio-*scoped*. It is not:
+`GET /inquiries/assigned-to-me` keyed its query on `assignedArtistId`
+alone, with no studio filter of any kind. What was home-scoped was the
+*permission gate* — `requirePermission("inquiries.view")` reads
+`req.user.studioId`'s matrix, while the detail route uses
+`hasPermissionAt` against the record's studio. Home grants, host denies:
+list 15, 403 on all 15.
+
+The second bug is the serious one and nobody reported it. **With no
+studio filter, an artist kept seeing a studio's projects after their GUEST
+membership ended — indefinitely**, because nothing in the route referred
+to a studio at all. That is the ghost-access class CLAUDE.md's
+artist-scoping section exists for, and the same shape as the historical
+`GET /artists` roster bug. The detail route already closed it
+(`effectiveRoleAt` returns null with no live membership); the list never
+did.
+
+Both close on one change, per the architect thread's decision that the
+detail route's semantics win: resolve the studios this caller has a live
+relationship with **and** effectively holds `inquiries.view` at right now,
+per studio with their effective role there, and scope the query to that
+set.
+
+The old 403-on-denied is deliberately preserved for the single-studio
+artist — no qualifying studio at all still 403s rather than quietly
+returning an empty list, so the common case is byte-identical to before.
+It widens only where it must: a caller entitled at one of several studios
+now gets that studio's rows instead of a blanket 403, which was the
+*inverse* failure the same inconsistency caused (a project they could
+open, unreachable because the list it lived in refused to load).
+
+`inquiryListScoping.test.ts` covers all five cases, and each one walks
+every id the list returned and confirms it actually opens, rather than
+inferring it.
+
+**Left alone and re-flagged:** `GET /appointments` has the narrower
+version of this gap (per-studio permission, but it *is* membership-scoped,
+so no ghost access). Its own comment already records this as a deliberate
+residual, because closing it would turn a staff caller's 403-on-denied
+into a 200-with-empty-list — which the permission-context fix's rule 4
+rules out doing casually. Not quietly changed.
+
+## 3. Web 403 state — premise did not reproduce
+
+Reported as hanging on "Loading project…" **forever**. It does not, and
+both pages already had an error state *and* a back link — `InquiryDetail`
+even has a dedicated 403 string. What is actually wrong is subtler and
+still worth fixing:
+
+React Query's default is `retry: 3` with exponential backoff, applied to
+every failure. A 403 is this API deliberately saying no, and it says the
+same thing three more times. That is roughly **seven seconds** of
+"Loading project…" before a permission error surfaces — long enough to
+read as a hang, which is how it was reported — and then
+`MyProjectDetail` fell through to `error.message` and rendered the raw
+API string, **"Forbidden"**.
+
+`lib/api.ts` already draws exactly the needed line, and draws it for a
+reason that cost this repo a production incident: `isTransientApiFailure`
+separates an edge/proxy response and any 5xx ("ask again in a minute")
+from this API's own final answer. The query client now retries the first
+and never the second; network-level failures, which never become an
+`ApiError` at all, stay retried.
+
+Measured in the browser rather than asserted: navigating to a
+non-existent inquiry produced **exactly one** request to the API, not
+four, and the error state rendered immediately.
+
+`MyProjectDetail` gets a real 403 branch. It is genuinely reachable —
+that route's permission is evaluated at the project's studio, so a guest
+artist whose host studio denies ARTIST `inquiries.view` lands there
+holding a real assignment — so the copy names which studio decided and
+says the project is still theirs, with the back link repeated inside the
+error card.
+
+## 4. Conversations authorship
+
+(a) already shipped, above. (b) was real: `ConversationsPanel.tsx` tested
+`direction === 'OUTBOUND' ? 'You: '`, which is wrong twice. `direction`
+separates the STUDIO from the CLIENT, never the viewer from a colleague;
+and on STAFF/GROUP threads the API *rejects* any other value, so it is a
+constant and every team-thread row claimed to be the viewer's own message.
+
+Web now uses `authorUserId`/`author`, mirroring `apps/mobile`'s
+`ConversationRow.tsx` down to naming a colleague by first name only, so
+the two clients cannot drift on what a preview says. The image indicator
+also stops inferring an attachment from an empty body — wrong in both
+directions, since a captioned message *with* images showed nothing and any
+empty-bodied message claimed one.
+
+Visible in the browser gate. On the Team tab, where every row is
+constant-OUTBOUND, **three of five rows had been lying**: two
+system-generated artist reminders and a group reminder all said "You:" and
+now correctly say nothing, while the owner's own two messages still say
+"You:". On the Clients tab, a thread written by a different staff member
+now reads "Dev:" instead of "You:".
+
+## 5. Task due-date, and a correction to CLAUDE.md
+
+`fix/web-task-due-date` (`375c314`) is **not merged** — it exists locally
+and on origin, contained in no other branch. Reviewed: the fix is
+correct. `toDateString` returns zero-padded `YYYY-MM-DD` from local
+getters, so lexicographic comparison is chronological and it round-trips
+`parseDateString` exactly. **Held for the merge step, not merged
+unilaterally** — see Open items.
+
+The related CLAUDE.md note turned out to be a **factual error in the
+standing rules**, not a missing sentence. The timezone section called
+`parseDateString(...).toISOString()` and `new Date("YYYY-MM-DD")`
+"equivalent for this one write case":
+
+    new Date("2026-08-25")           -> 2026-08-25T00:00:00Z   UTC midnight
+    parseDateString("2026-08-25")    -> new Date(y, m-1, d)    LOCAL midnight
+      .toISOString()                 -> 2026-08-25T04:00:00Z   in EDT
+
+So the section's read-back rule — force `timeZone: 'UTC'` — is correct for
+the first and **wrong for the second**, showing the day before east of
+UTC. Which is precisely the bug `375c314` had to undo.
+
+Rewritten as two named conventions with the fields that actually use each,
+checked rather than assumed: gift card `expiresAt`, waiver `dateOfBirth`
+and residency start/end all go through single-arg `new Date` on a bare
+date string (UTC midnight); `PersonalTask.dueAt` goes through
+`parseDateString` (local midnight) and must be read back with
+`toDateString`, its exact inverse.
+
+## 6. Notification system
+
+Web's bell was a hardcoded sentence with no model, no endpoint and no
+feed. Built: `Notification`, `PushToken` and `PushReceipt` models;
+`GET /notifications` (cursor-paginated), `GET /notifications/unread-count`,
+`POST /notifications/mark-read`, `POST /notifications/mark-all-read`,
+`POST /push-tokens`, `DELETE /push-tokens/:token`,
+`PATCH /push-tokens/preferences`; Expo push; and a real feed on the bell.
+
+**The design rule: emit from the same call sites the WebSocket layer
+already fires from.** Nothing here invents a new definition of "something
+happened" — each event already had a live-update call, and this persists
+what that call was only ever broadcasting to whoever happened to be
+connected at that instant.
+
+`MESSAGE_CREATED` needed **five** call sites, not one:
+`POST /:id/messages` has three early returns (real SMS, real email,
+log-only), and inbound client SMS and email arrive through the Twilio
+webhook and the email poller. The inbound pair matter most — they are
+out-of-band from any staff action, so nobody is looking when they land.
+
+Who counts as "a conversation you participate in" was the one genuinely
+open question, and it was put to the owner. STAFF/GROUP is unambiguous
+(the thread has explicit membership). A CLIENT thread has none: it is
+visible to whoever's permissions allow, which at most studios is all of
+front desk. Notifying everyone entitled to *look* at a thread would mean
+every inbound client text pushing to the whole studio — which is how a
+notification system becomes something people switch off. Chosen: the
+artists assigned to that client's live projects, plus anyone who has
+actually written in the thread. "Participates in", not "could read".
+
+Delivery is three steps in a deliberate order — the row, then the socket,
+then the push — and **only the row may fail loudly**. A socket that is
+down or an Expo outage must never turn into a failed HTTP response on the
+message someone was actually sending.
+
+Expo push is built in full and is **inert until `apps/mobile` registers a
+device**: chunked at Expo's documented 100/request; tickets queued to
+`PushReceipt`, because Expo's send call reports acceptance and never
+delivery; and a 15-minute job collecting receipts to prune
+`DeviceNotRegistered` tokens. That pruning is the real reason receipts are
+checked — Expo recycles tokens, so a stale row eventually means pushing
+one person's notifications to a stranger's phone. Malformed tokens are
+rejected at registration *and* filtered at send, because one bad token
+makes Expo reject the entire 100-message chunk it lands in.
+
+`pushEnabled` defaults true and governs **push only** — the in-app feed is
+never suppressed by it. A notification you can go and look at is not an
+interruption, and hiding a record someone still holds is how people end up
+not knowing something happened.
+
+No permission key gates the feed. A notification is addressed to one
+person by construction and the emitter already decided they were entitled
+to know; re-gating the read would allow a row to exist that its own
+recipient cannot see. Scoped by `userId`, never `studioId`, so a guest
+artist's notifications from a host studio reach them wherever they are
+logged in and a stale JWT `studioId` claim cannot matter.
+
+One thing the API cannot decide for the client: **an Inquiry has two
+detail pages and the right one depends on the viewer.** `/inquiries/:id`
+is `requireRole(OWNER, FRONT_DESK)` server-side, so routing an artist
+there is a guaranteed 403; theirs is `/my-inquiries/:id`. Web's bell
+branches on this, and it is documented in `shared-types` so the mobile
+session does not have to rediscover it.
+
+`notifications.test.ts` is centred on **targeting and isolation**, not
+rendering — a system that notifies the wrong people is worse than not
+having one. A present, fully-entitled, completely uninvolved bystander's
+feed is asserted empty in every single test. Also covered: the actor is
+never notified of their own action, self-assigned tasks are silent,
+`mark-read` cannot touch another user's row even by id (the route filters
+on `userId` in the WHERE clause, so it returns `updated: 0` rather than
+leaking whether that id exists), `readAt` is not re-stamped on a repeat,
+and the cursor skips its own row rather than repeating it.
+
+## Addendum B — client activity signal
+
+`GET /clients` already computed exactly these conditions **as filters**.
+A staff member could narrow the list to "has an upcoming appointment" and
+then not one returned row could say which ones did. Each client now
+carries `activity`: the next confirmed appointment's instant, whether a
+project is active, whether a deposit is pending.
+
+Three grouped aggregates for the whole page, never one per row — the list
+is capped at 100 and an N+1 would be 300 round trips. Cheap enough not to
+need the addendum's "if costly, say so and skip" escape. The
+upcoming-appointment condition is byte-identical to the filter's own,
+deliberately including its not excluding archived appointments: a chip
+that disagreed with the filter that selected the row would be a second
+source of truth.
+
+## Verification
+
+- **API suite: 221/221**, up from a 200/200 baseline (+7 appointment
+  projection, +5 inquiry list scoping, +9 notifications).
+- `apps/api` `npm run build` (`tsc`) clean; `apps/web` `npm run build`
+  (`tsc -b && vite build`) clean — the full production build, not
+  `--noEmit`, per CLAUDE.md.
+- `apps/mobile` `tsc` clean, after the narrowed appointment types forced
+  four real fixes.
+- `packages/shared-types` typecheck clean. Its enum re-derivation caught
+  `NotificationType` drift before it could land, exactly as designed.
+- **Browser gate**, Dev Owner on the worktree's own ports (API 4001, web
+  5174): bell empty state; a task assigned from another account arriving
+  **live with no page interaction**; badge count; deep link to `/tasks`;
+  read state persisting under "Show all"; the conversation-preview fix on
+  both tabs; the appointment detail still showing checkout, `$300` final
+  cost and gift cards for an entitled owner; one API request (not four)
+  for a definitive 404. Zero console errors other than the deliberate 404.
+
+## Database
+
+The notifications migration `20260825180000_notifications` was applied to
+the **DEV database only**. It is purely additive — three tables, one enum,
+and one `NOT NULL DEFAULT true` column on `User`, which Postgres
+materialises without a table rewrite — and needs **no backfill**, so
+`migrate deploy` on the next Railway deploy is all production requires.
+**That has not happened yet.**
+
+## Open items
+
+1. **Production has not received the notifications migration.** It is
+   automatic on the next Railway deploy and needs no separate backfill
+   step, but until that deploy happens, production has none of these
+   tables. Not done.
+2. **`fix/web-task-due-date` is reviewed and correct but NOT merged.** The
+   work order said "review and merge"; the standing verification bar puts
+   merge after the human gate. Held deliberately rather than merged
+   unilaterally — it is ready, and should go in with this branch.
+3. **REPORT.md will conflict on merge.** This branch is cut from `main`,
+   whose REPORT.md ends at "Mobile session T"; sessions AB/AC/AD live on
+   the unmerged `mobile/session-ad` branch. Both append at the tail. The
+   resolution is to keep both, in order — never to drop either.
+4. **`EXPO_ACCESS_TOKEN` is not set anywhere.** Optional: Expo only
+   requires it when a project has enhanced security enabled, which a
+   project on Expo Go does not. Read at call time, so it can be added to
+   the deployment without a rebuild if that ever changes.
+5. **The real-SMS and real-email send paths' notification calls are not
+   covered by a test** — they need a connected Twilio/Gmail integration to
+   reach. The log-only path (which is also the only path a STAFF/GROUP
+   message takes) and both inbound paths are wired identically and the
+   log-only one is tested.
+6. **`GET /appointments`' per-studio permission gap** stays open and
+   re-flagged, for the reason its own comment already gives.
+7. **Mobile integration is a separate session**, as the work order says.
+   Everything it needs is in `packages/shared-types/src/notifications.ts`,
+   including the two-detail-pages routing trap.
