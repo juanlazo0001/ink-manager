@@ -1,4 +1,6 @@
-import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text } from 'react-native';
+
+import { Sheet } from '@/components/Sheet';
 
 import { Eyebrow } from '@/components/ui';
 import { colors, hairline, radius, space, tones, type } from '@/theme';
@@ -35,9 +37,7 @@ export function ClientMoreSheet({
   onToggleArchive: () => void;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+    <Sheet visible={visible} onClose={onClose}>
           <Eyebrow style={styles.eyebrow}>More</Eyebrow>
 
           <Pressable
@@ -74,24 +74,11 @@ export function ClientMoreSheet({
           <Pressable onPress={onClose} style={styles.done}>
             <Text style={styles.doneLabel}>DONE</Text>
           </Pressable>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'flex-end' },
-  sheet: {
-    backgroundColor: colors.surfaceRaised,
-    borderTopLeftRadius: radius.card,
-    borderTopRightRadius: radius.card,
-    borderTopWidth: hairline,
-    borderColor: colors.borderStrong,
-    paddingHorizontal: space.lg,
-    paddingTop: space.lg,
-    paddingBottom: space.xxl,
-  },
   eyebrow: { marginBottom: space.sm },
 
   action: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md },

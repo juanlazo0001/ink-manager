@@ -1,7 +1,8 @@
 import Feather from '@expo/vector-icons/Feather';
 import { useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { Sheet } from '@/components/Sheet';
 import { Eyebrow } from '@/components/ui';
 import { colors, hairline, radius, space, type } from '@/theme';
 
@@ -101,9 +102,7 @@ export function PillMenu<T extends string>({
         )}
       </Pressable>
 
-      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      <Sheet visible={open} onClose={() => setOpen(false)}>
             <Eyebrow>{label}</Eyebrow>
             <ScrollView style={styles.optionScroll}>
               {options.map((option) => {
@@ -133,9 +132,7 @@ export function PillMenu<T extends string>({
             <Pressable onPress={() => setOpen(false)} style={styles.done}>
               <Text style={styles.doneLabel}>DONE</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </Sheet>
     </>
   );
 }
@@ -213,9 +210,7 @@ export function MultiPillMenu<T extends string>({
         <Feather name="chevron-down" size={13} color={colors.fgMuted} />
       </Pressable>
 
-      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      <Sheet visible={open} onClose={() => setOpen(false)}>
             <Eyebrow>{placeholder}</Eyebrow>
             <ScrollView style={styles.optionScroll}>
               {/* Web puts "Clear all" at the top of the panel, and only
@@ -254,9 +249,7 @@ export function MultiPillMenu<T extends string>({
             <Pressable onPress={() => setOpen(false)} style={styles.done}>
               <Text style={styles.doneLabel}>DONE</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </Sheet>
     </>
   );
 }
@@ -322,9 +315,7 @@ export function GroupedPillMenu<T extends string>({
         <Feather name="chevron-down" size={13} color={colors.fgMuted} />
       </Pressable>
 
-      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      <Sheet visible={open} onClose={() => setOpen(false)}>
             <ScrollView style={styles.optionScroll}>
               {groups.map((group) => (
                 <View key={group.title}>
@@ -361,9 +352,7 @@ export function GroupedPillMenu<T extends string>({
             <Pressable onPress={() => setOpen(false)} style={styles.done}>
               <Text style={styles.doneLabel}>DONE</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </Sheet>
     </>
   );
 }
@@ -405,17 +394,6 @@ const styles = StyleSheet.create({
   },
   triggerLabelActive: { color: colors.fg },
 
-  backdrop: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'flex-end' },
-  sheet: {
-    backgroundColor: colors.surfaceRaised,
-    borderTopLeftRadius: radius.card,
-    borderTopRightRadius: radius.card,
-    borderTopWidth: hairline,
-    borderColor: colors.borderStrong,
-    paddingHorizontal: space.lg,
-    paddingTop: space.lg,
-    paddingBottom: space.xxl,
-  },
   optionScroll: { maxHeight: 340 },
   clearAll: { ...type.small, color: colors.fgSecondary },
   option: {

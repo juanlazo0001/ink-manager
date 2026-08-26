@@ -1,5 +1,7 @@
 import Feather from '@expo/vector-icons/Feather';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+
+import { Sheet } from '@/components/Sheet';
 
 import { Eyebrow } from '@/components/ui';
 import { chat, colors, hairline, radius, space, type } from '@/theme';
@@ -52,9 +54,7 @@ export function RetrySheet({
   onClose: () => void;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+    <Sheet visible={visible} onClose={onClose}>
           <Eyebrow style={styles.eyebrow}>Not delivered</Eyebrow>
           <Text style={styles.lead}>
             {providerFailure
@@ -116,24 +116,11 @@ export function RetrySheet({
           <Pressable onPress={onClose} style={styles.done}>
             <Text style={styles.doneLabel}>CANCEL</Text>
           </Pressable>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'flex-end' },
-  sheet: {
-    backgroundColor: colors.surfaceRaised,
-    borderTopLeftRadius: radius.card,
-    borderTopRightRadius: radius.card,
-    borderTopWidth: hairline,
-    borderColor: colors.borderStrong,
-    paddingHorizontal: space.lg,
-    paddingTop: space.lg,
-    paddingBottom: space.xxl,
-  },
   eyebrow: { marginBottom: space.sm },
   lead: { ...type.small, color: colors.fgSecondary, marginBottom: space.sm },
   action: {
