@@ -27100,3 +27100,198 @@ it.
    should be a normal cell, not a tall gold column.
 5. If any screen is at its narrowest and the button sits under the title rather than beside it, that
    is deliberate — web wraps there too.
+
+# Mobile session AD — inquiry rows: the thumbnails were always there
+
+**Base: `mobile/session-ac` at `a75b721`** — the stack head. T2 → AC remain unmerged (`main` is at
+`151c0d8`). Worktree cut from AC; one commit (`96bd38a`), pushed.
+
+---
+
+## 0 — The toggle shipped, and it does not clip
+
+**AC's replacement is on the stack head.** The segments carry no `count`:
+
+```tsx
+segments={INQUIRY_TABS.map((v) => ({ key: v.key, label: v.label.toUpperCase() }))}
+```
+
+Re-measured from a fresh worktree on this head — not quoting AC, measuring again — at 1.0× and at
+1.3×, the largest scale `Pill`'s own `maxFontSizeMultiplier` still permits on a device:
+
+| 320pt screen | ends at | headroom |
+| --- | --- | --- |
+| **shipped (labels only)** @1.0 | 231px | 89px |
+| **shipped** @1.3 | **265px** | **55px** |
+| the badged one it replaced @1.0 | 288px | 32px |
+| the badged one it replaced @1.3 | **327px** | **−7px — past the edge** |
+
+At 375pt the shipped control has 110px of headroom at 1.3×. There is no supported width at which it
+clips.
+
+### So what is in the owner's screenshot
+
+It has to be a build predating AC. The most likely cause is the one AC's own gate note warned about:
+an `expo start` that was already running when the branch changed under it keeps serving the old
+bundle.
+
+**The tell is the button, not the toggle.** AC also replaced the action control:
+
+| | before AC | after AC |
+| --- | --- | --- |
+| Inquiries header action | *(none)* | **`+ NEW INQUIRY`** gold pill |
+| Flash header action | icon-only gold circle | **`+ NEW FLASH`** gold pill |
+
+If the screenshot shows no button on Inquiries, or a bare circle on Flash, it is a pre-AC bundle —
+stop `expo start`, start it again, and the toggle will be the labels-only one. If a screenshot ever
+shows the `+ NEW INQUIRY` pill *and* count badges on the toggle, that would be new information and
+worth sending, because the measurement above says it cannot happen.
+
+### The last badged control, measured rather than assumed
+
+`Team` is the only `SegmentedControl` still passing counts (`Staff 12` / `Artists 18`). Measured in
+the same harness: **273px at 1.3× on a 320pt screen, 47px of headroom.** Safe — its labels are
+short enough that the badges fit. Left as it is, and now that is a measured claim rather than an
+impression.
+
+## 1 — The thumbnails: a bug, and a comment that asserted the opposite
+
+**Root cause.** `fromStaff` in `inquiries.tsx`:
+
+```tsx
+// The staff list projection returns no images at all, so there is
+// nothing to show here and the row falls back to its placeholder.
+thumbnailUrl: null,
+```
+
+That comment is false, and it had been load-bearing:
+
+- `INQUIRY_LIST_SELECT` (`apps/api/src/routes/inquiries.ts:881`) contains **`referenceImages: true`**;
+- `StaffInquiryListItem` declares **`referenceImages: string[]`**;
+- confirmed on the wire — the field is present on every row of `GET /inquiries`.
+
+OWNER and FRONT_DESK read *that* projection. So the people most likely to notice were the only ones
+guaranteed never to see a thumbnail: the URLs arrived on every response and were discarded one line
+later. **No backend ask. No N+1. No seeding needed.**
+
+`InquiryRowData.thumbnailUrl` carried the same false claim in its doc comment; both are corrected,
+and `inquiryThumbnail` is now typed on the field (`{ referenceImages?: string[] | null }`) rather
+than against the artist row alone, which was what quietly implied the staff row had nothing to give
+it.
+
+### Proven end to end on live data
+
+The real screen, the real dev API, a real token — payload, mapper and render together:
+
+| | |
+| --- | --- |
+| dev inquiries carrying reference URLs | **62 of 100** |
+| image elements rendered in the live list | **10** (8 `res.cloudinary.com` + 2 local app assets) |
+| decoded successfully | **10 / 10** |
+| the same number before this fix | **structurally 0** — the field was hard-coded `null` |
+
+### A second defect the live render exposed
+
+**`Thumbnail` had no error fallback.** With a URL present it rendered `<Image>` unconditionally; when
+the fetch failed it left an *empty dark square* — strictly worse than the placeholder, because it
+reads as a broken row rather than as an inquiry with no reference.
+
+Not hypothetical: **47 of those 62 dev URLs point at `example.com`** (seed data), and any real studio
+will eventually have an asset deleted out from under a URL. `Avatar` has always guarded faces this
+way (`failed` state → initials); the thumbnail now does the same → placeholder.
+
+**On the dev data itself:** the brief offered "seed 2–3 inquiries with real photos" as the remedy if
+this turned out to be data. It was not data, so nothing was seeded — but it is worth recording that
+three quarters of the reference URLs on dev are fake, so the dev list will keep showing a majority
+of placeholders no matter what. That is now the *correct* rendering of that data rather than a
+silent void.
+
+## 2, 3, 4 — the row
+
+| | before | after |
+| --- | --- | --- |
+| meta line | chip + CHANNEL word + price range | *(gone)* |
+| chip | on its own line, left | **top-right, left of the date** |
+| date | top-right, after the name | top-right, on a **fixed right edge** |
+| artist | name, as text, bottom-left | **avatar bottom-right**, initials fallback |
+| unassigned | UNASSIGNED, bottom-left | unchanged, and no avatar |
+
+Every row's date now lands at the same x — measured at 320pt, all five cases ended at **304px**.
+
+**The title is the only thing that gives.** `flexShrink: 0` on the chip and the stamp, `flex: 1` +
+`numberOfLines={1}` on the name: neither the chip nor the date can wrap, at any width, which is what
+item 4 asked for. It is the same lesson the toggle took five rounds to teach — pin what must not
+move and let exactly one thing absorb.
+
+`channel` is off `InquiryRowData` entirely. Nothing renders it now, and a field nothing consumes is
+an invitation to render it again.
+
+### The cost of that rule, stated plainly
+
+At 320pt with the longest live status, the name is what pays:
+
+| 320pt, worst case | width |
+| --- | --- |
+| chip `AWAITING CLIENT RESPONSE` | 142px |
+| date `Fri` | ~24px |
+| **name left over** | **21px** — "Konstantina Papadopoulou-Whitfield" renders as **"K."** |
+
+That is the priority the brief chose and it works exactly as specified — but 21px of name is close to
+no name, and `AWAITING_CLIENT_RESPONSE` is a real, common status rather than a contrived one. At
+390pt the same row reads "Konsta…", which is recognisable.
+
+Web has no shorter label to adopt: `describeInquiryStatus` falls through to generic Title Case for
+this status, so web says "Awaiting Client Response" too — it simply has a desktop's width for it.
+
+**If this trade should be revisited**, the two options that keep the chip/date rule intact are: let
+the chip drop to its own line below ~360pt, or abbreviate the longest labels on the chip only. Not
+done here — the brief was explicit about the priority, and changing it unasked would be substituting
+my judgement for a stated decision.
+
+## Verification
+
+Five cases rendered at 320 and 390: photo + assigned, no photo + unassigned, the worst case above,
+initials fallback + guest studio, and the artist's own list (no artist slot at all). Plus the live
+screen against the dev API.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `git status` before building | **clean, 0 entries** |
+| `npm ci` | clean, tree still clean after |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 5.04 MB, **identical bundle hash before and after `npm ci`** |
+| React singleton | only `19.1.0` |
+| Bundle content | new paths present, harness absent, **0 failures** |
+
+## Left open
+
+- The 320pt name-vs-chip trade above, if the owner wants it revisited.
+- The dev database's reference URLs are three-quarters `example.com`; the placeholder is now the
+  honest rendering of those, but a realistic-looking dev list would need real assets.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+**Stop any `expo start` that is already running first.** For this session that is not boilerplate —
+it is the most likely explanation for item 0's screenshot.
+
+1. **Inquiries** — rows should show real reference photos wherever the inquiry has one. This is the
+   thing that has never worked for an owner account.
+2. A row with no photo, or a photo whose URL is dead, shows the **outlined placeholder** — never an
+   empty black square.
+3. **The right edge**: chip then date, aligned identically down the whole list. Scroll and check
+   nothing wanders.
+4. **Assigned rows** show the artist's face bottom-right (initials if they have no photo);
+   **unassigned** rows say UNASSIGNED bottom-left and show no face.
+5. **The toggle**: INQUIRIES / PROJECTS, no badges. Turn iOS text size up and confirm it still fits.
+   If you still see badges, you are on a pre-AC bundle — check whether Flash's button says
+   `+ NEW FLASH` or is a bare circle.
