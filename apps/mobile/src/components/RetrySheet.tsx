@@ -1,6 +1,8 @@
 import Feather from '@expo/vector-icons/Feather';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { hapticSelect } from '@/lib/chatHaptics';
+
 import { Eyebrow } from '@/components/ui';
 import { chat, colors, hairline, radius, space, type } from '@/theme';
 
@@ -82,6 +84,7 @@ export function RetrySheet({
           */}
           {!providerFailure ? (
             <Pressable
+              onPressIn={hapticSelect}
               onPress={onRetry}
               accessibilityRole="button"
               style={({ pressed }) => [styles.action, pressed && styles.pressed]}
@@ -93,6 +96,7 @@ export function RetrySheet({
 
           {canCopy ? (
             <Pressable
+              onPressIn={hapticSelect}
               onPress={onCopy}
               accessibilityRole="button"
               style={({ pressed }) => [styles.action, pressed && styles.pressed]}
@@ -104,6 +108,7 @@ export function RetrySheet({
 
           {!providerFailure ? (
             <Pressable
+              onPressIn={hapticSelect}
               onPress={onDiscard}
               accessibilityRole="button"
               style={({ pressed }) => [styles.action, pressed && styles.pressed]}

@@ -38,6 +38,9 @@ import { MessageActions } from '@/components/MessageActions';
 import { RetrySheet } from '@/components/RetrySheet';
 import { FlyTarget } from '@/components/FlyTarget';
 import { ScrollToBottomPill } from '@/components/ScrollToBottomPill';
+import { TypingRow } from '@/components/TypingRow';
+import { hapticAction, hapticFailed, hapticLift, primeFailureLatch } from '@/lib/chatHaptics';
+import { deliveryState } from '@/lib/deliveryStatus';
 import { SendFly, type Rect } from '@/components/SendFly';
 import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
 import { channelLabel } from '@/components/ConversationRow';
@@ -325,6 +328,7 @@ export default function ConversationScreen() {
 
   /** The pill's tap, and what every "go to newest" path should call. */
   const jumpToNewest = useCallback(() => {
+    hapticAction();
     // Offset 0 on an inverted list is the newest message.
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
     awayFromBottom.current = false;
@@ -653,6 +657,28 @@ export default function ConversationScreen() {
   // Built by a pure helper (src/lib/threadRows.ts) rather than inline, so
   // the inverted-list day-separator and burst rules are verifiable without
   // rendering anything.
+  /*
+   * §10: the FAILED haptic, and nothing else about failure, lives here.
+   *
+   * It fires on a TRANSITION into failure, once per message id ever --
+   * see chatHaptics.ts for why that is the only defensible rule. The
+   * first pass primes the latch instead of firing, so a thread opened on
+   * a week-old failure is silent, and the poll re-delivering the same
+   * failed row is silent for the same reason.
+   */
+  const failuresPrimed = useRef(false);
+  useEffect(() => {
+    const failedIds = messages
+      .filter((m) => deliveryState(m) === 'FAILED')
+      .map((m) => m.id);
+    if (!failuresPrimed.current) {
+      failuresPrimed.current = true;
+      primeFailureLatch(failedIds);
+      return;
+    }
+    for (const id of failedIds) hapticFailed(id);
+  }, [messages]);
+
   const rows = useMemo(
     () => buildThreadRows({ messages, viewerUserId, isClientThread, isGroupThread }),
     [messages, viewerUserId, isClientThread, isGroupThread],
@@ -814,6 +840,7 @@ export default function ConversationScreen() {
                   // a body worth quoting -- web excludes it the same way.
                   item.message.status === 'sent' && !item.message.metadata?.kind
                     ? () => {
+                        hapticLift();
                         setCopiedId(null);
                         setActionFor(item.message);
                       }
@@ -824,6 +851,17 @@ export default function ConversationScreen() {
               </Animated.View>
             )
           }
+          /*
+            §6: a REAL list row, not an overlay -- it has to push the
+            thread the way an arriving message does, or the message that
+            follows it appears to jump. Inverted list, so the header
+            renders at the bottom, below the newest message.
+
+            Dormant: nothing in production sets this toggle, because the
+            investigation found no typing signal anywhere to drive it
+            with, and §6 forbids simulating one.
+          */
+          ListHeaderComponent={devToggles.typing ? <TypingRow reduced={flyReduced} /> : null}
           contentContainerStyle={[styles.listContent, rows.length === 0 && styles.listEmpty]}
           /*
             §4 INTERACTIVE DISMISSAL. This is a native ScrollView
