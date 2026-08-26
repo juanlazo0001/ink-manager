@@ -1,11 +1,10 @@
 import type { ConversationListItem } from '@ink-manager/shared-types';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
 import { ConversationRow } from '@/components/ConversationRow';
-import { FrequentStrip } from '@/components/FrequentStrip';
 import { TopBar } from '@/components/TopBar';
 import { ThreadListControls } from '@/components/ThreadListControls';
 import { SkeletonList } from '@/components/Skeleton';
@@ -20,7 +19,8 @@ import {
   type ThreadSort,
 } from '@/lib/conversationListControls';
 import { screenErrorMessage } from '@/lib/screenError';
-import { colors, space } from '@/theme';
+import { LIST_LABEL_INSET, LIST_SEPARATOR_INSET } from '@/theme/listMetrics';
+import { colors, space, type } from '@/theme';
 
 /**
  * Refresh strategy, decided in this session's investigation: poll, not
@@ -41,6 +41,11 @@ const LIST_POLL_MS = 30_000;
  * list still feels like it is responding to what was typed.
  */
 const SEARCH_DEBOUNCE_MS = 350;
+
+/** A section label or a thread — see `sections` for why they share a list. */
+type ListRow =
+  | { kind: 'label'; label: string }
+  | { kind: 'item'; item: ConversationListItem };
 
 export default function ConversationsScreen() {
   const router = useRouter();
@@ -118,6 +123,37 @@ export default function ConversationsScreen() {
 
   const unread = items?.reduce((n, c) => n + (c.unreadCount > 0 ? 1 : 0), 0) ?? 0;
   const visible = useMemo(() => applyControls(items ?? [], filter, sort), [items, filter, sort]);
+
+  /*
+   * §8: PINNED first under its own label, then CONVERSATIONS.
+   *
+   * The labels are rows in the same list rather than SectionList
+   * sections. A SectionList would give sticky headers, and a header that
+   * sticks is a header that can end up saying PINNED over a run of
+   * unpinned threads while you scroll -- which is worse than no label.
+   *
+   * Pin state comes from `viewerState.isPinned`, the server's per-user
+   * record, so it survives a reinstall. There is no local stand-in: §8 is
+   * explicit that a pin which vanishes is a broken promise.
+   */
+  const sections = useMemo<ListRow[]>(() => {
+    const pinned = visible.filter((t) => t.viewerState.isPinned);
+    const rest = visible.filter((t) => !t.viewerState.isPinned);
+    const rows: ListRow[] = [];
+    // The PINNED label only appears when something is pinned; an empty
+    // section header is an instruction nobody asked for.
+    if (pinned.length > 0) {
+      rows.push({ kind: 'label', label: 'PINNED' });
+      for (const item of pinned) rows.push({ kind: 'item', item });
+    }
+    if (rest.length > 0) {
+      // With nothing pinned the list needs no heading at all -- it is
+      // just the conversations, and saying so would be furniture.
+      if (pinned.length > 0) rows.push({ kind: 'label', label: 'CONVERSATIONS' });
+      for (const item of rest) rows.push({ kind: 'item', item });
+    }
+    return rows;
+  }, [visible]);
   // Typed something worth searching, but the request for it hasn't landed.
   const searching = isSearchable(search) && search.trim() !== activeSearch;
 
@@ -139,37 +175,45 @@ export default function ConversationsScreen() {
         <SkeletonList rows={7} />
       ) : (
         <FlatList
-          data={visible}
-          // The strip scrolls WITH the list rather than pinning above it:
-          // it is a shortcut, not chrome, and a phone screen has no room
-          // to spend five permanent rows on one. Search and the filter
-          // pills stay pinned above, unchanged.
-          ListHeaderComponent={
-            // Hidden while a search or filter is narrowing the list --
-            // "frequent" is about the whole inbox, and showing it beside
-            // filtered results would suggest it had been filtered too.
-            activeSearch || filter !== 'all' ? null : (
-              <FrequentStrip
-                items={items ?? []}
-                onOpen={(id) => router.push({ pathname: '/conversation/[id]', params: { id } })}
+          data={sections}
+          /*
+            §8 ORDER: search -> controls -> PINNED -> CONVERSATIONS.
+
+            The FREQUENT strip is gone. It was five faces of "recently
+            active", which is what the list underneath it already showed,
+            in the same order -- so the top of the screen said the same
+            thing twice and the second saying cost a row of avatars.
+            Pinned threads are this screen's quick access now, and unlike
+            frequency they are a choice someone made.
+          */
+          keyExtractor={(row) => (row.kind === 'label' ? `label:${row.label}` : row.item.id)}
+          renderItem={({ item: row, index }) =>
+            row.kind === 'label' ? (
+              <Text style={styles.sectionLabel}>{row.label}</Text>
+            ) : (
+              <Appear index={index}>
+              <ConversationRow
+                item={row.item}
+                viewerUserId={session?.profile.id}
+                // Object form, not a template string: typed routes describe a
+                // dynamic route by its literal `[id]` pathname plus params,
+                // so an interpolated href is (correctly) rejected.
+                onPress={() =>
+                  router.push({ pathname: '/conversation/[id]', params: { id: row.item.id } })
+                }
               />
+              </Appear>
             )
           }
-          keyExtractor={(item) => item.id}
-          renderItem={({ item, index }) => (
-            <Appear index={index}>
-            <ConversationRow
-              item={item}
-              viewerUserId={session?.profile.id}
-              // Object form, not a template string: typed routes describe a
-              // dynamic route by its literal `[id]` pathname plus params,
-              // so an interpolated href is (correctly) rejected.
-              onPress={() => router.push({ pathname: '/conversation/[id]', params: { id: item.id } })}
-            />
-            </Appear>
-          )}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
-          contentContainerStyle={visible.length === 0 ? styles.emptyContainer : undefined}
+          /*
+            No rule above a section label or below the last row of a
+            section -- the label already separates them, and a hairline
+            plus a label is two dividers doing one job.
+          */
+          ItemSeparatorComponent={({ leadingItem }: { leadingItem?: ListRow }) =>
+            leadingItem?.kind === 'label' ? null : <View style={styles.separator} />
+          }
+          contentContainerStyle={sections.length === 0 ? styles.emptyContainer : undefined}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -217,6 +261,18 @@ export default function ConversationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  separator: { height: 1, backgroundColor: colors.borderSoft, marginLeft: space.lg },
+  /* §8: inset 76 — where the text starts, so the rule divides the content
+     rather than boxing the avatars. */
+  separator: { height: 1, backgroundColor: colors.borderSoft, marginLeft: LIST_SEPARATOR_INSET },
+  /* §8: Jura 10, .2em tracking, 22pt inset. */
+  sectionLabel: {
+    ...type.label,
+    fontSize: 10,
+    letterSpacing: 2,
+    color: colors.fgMuted,
+    paddingHorizontal: LIST_LABEL_INSET,
+    paddingTop: space.lg,
+    paddingBottom: space.sm,
+  },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
 });

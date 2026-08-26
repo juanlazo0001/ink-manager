@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { ChannelSwatch } from '@/components/ChannelSwatch';
+import { LIST_AVATAR, LIST_INSET } from '@/theme/listMetrics';
 import { colors, hairline, radius, space, type } from '@/theme';
 import { relativeStamp } from '@/lib/time';
 
@@ -90,7 +91,10 @@ export function ConversationRow({
       <Avatar
         url={item.counterpart?.avatarUrl}
         initials={initialsOf(name)}
-        size={42}
+        // §8: 44. The separator's 76pt inset is 20 + 44 + 12 -- the rule
+        // starts where the text starts -- so this number and
+        // LIST_SEPARATOR_INSET move together; see theme/listMetrics.ts.
+        size={LIST_AVATAR}
         ring={unread ? colors.accent : undefined}
         style={styles.avatar}
         labelStyle={[styles.avatarLabel, unread && styles.avatarLabelUnread]}
@@ -140,7 +144,9 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     gap: space.md,
-    paddingHorizontal: space.lg,
+    // §8: 20, shared with the controls row above so the two read as one
+    // column. See theme/listMetrics.ts.
+    paddingHorizontal: LIST_INSET,
     paddingVertical: space.md,
     // Transparent, so the background photo reads behind the list the same
     // way it does behind every other screen. The pressed state still
