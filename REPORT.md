@@ -28172,3 +28172,198 @@ the same treatment the scoping correction received.
 notification system it mutes. `session/api-integrity-notifications` must
 land as one unit; there is no way to take the pin/mute half without the
 notification half, or vice versa.
+
+# Mobile session AF — the client row's name, and an inventory of every other one
+
+Base: `main` at `bb157da` (`Merge branch 'chat-ux/02-composer-keyboard'`).
+Session AE is **already merged into main** — `git branch --merged main`
+lists AA through AE, and `main..mobile/session-ae` is empty — so there was
+no stack to merge first and the handoff rule's merge step did not apply.
+Branch `mobile/session-af`, cut from `origin/main` in its own worktree via
+`scripts/new-session.ps1`.
+
+## 1. The change
+
+One line, in `apps/mobile/src/app/(tabs)/clients.tsx:343`. The client name
+that leads each row moves off the display face:
+
+    -  name: { ...type.heading,  color: colors.fg, flexShrink: 1 },   // Fraunces 500, 19/24
+    +  name: { ...type.rowName,  color: colors.fg, flexShrink: 1 },   // Outfit  500, 18/23
+
+`type.rowName` is a **new token** in `apps/mobile/src/theme/typography.ts`,
+deliberately not a change to `type.heading` — `heading` is also a SECTION
+heading (`ui.tsx`'s `stateTitle`, `AccountMenu`'s studio line, sheet
+titles), and the row-name question is one the owner is deciding context by
+context off §2's inventory. Each context that gets ruled on moves from
+`type.heading` to `type.rowName`; nothing moves by accident.
+
+### Web says this is parity, not divergence
+
+The brief asked whether web's client list already uses the body face for
+row names. It does, and so does every other list row it has:
+
+> **Every list-row entity name in `apps/web/src` inherits `font-sans`.
+> Not one carries `font-display`.**
+
+Clients specifically is `apps/web/src/pages/Clients.tsx:566`, whose name
+cell is `className="py-3 text-fg"` — no font utility at all, so the body
+face by inheritance (`--font-sans` → Outfit under `data-theme="editorial-gold"`,
+`index.css:190`). So this is **cited as confirmation**, not recorded as an
+owner-directed divergence.
+
+Two smaller notes, since they are divergences even though the face is not:
+
+- **Weight.** Web's client name carries no weight utility — it is regular.
+  Mobile sets Medium (500). That is the owner's "names still lead the row"
+  instruction and is a real mobile-only divergence: web's name sits in a
+  table with column headers doing the work of saying what the column is,
+  and a phone row has no such scaffolding.
+- Medium is the **heaviest Outfit face this app loads** (300/400/500). No
+  new face was added to reach "semibold" — at 18/500 against a 12/300
+  subtitle the name leads on size and weight both, verified in the shots
+  below.
+
+### Why 18 and not 19 — measured, not guessed
+
+Rendered in a browser at the real loaded faces, then measured:
+
+| face | x-height | cap height | `"Marcus Delacroix"` |
+| --- | --- | --- | --- |
+| Fraunces 500 @19 (before) | 9 | 14 | **159pt** |
+| Outfit 500 @19 | **10** | 14 | 147pt |
+| Outfit 500 @18 (shipped) | 9 | 13 | **139pt** |
+| Outfit 500 @17 | 9 | 12 | 131pt |
+
+x-height is what the eye reads as size, and Outfit @18 matches the
+Fraunces @19 it replaces exactly. Outfit @19 would read a step LARGER
+than what it replaced, not the same.
+
+The width is the payoff, and it lands on a real threshold. **The name box
+on a 320pt phone is 143pt** once a status chip shares the line. `"Marcus
+Delacroix"` is 16 characters — the **median client name length in the dev
+database** (187 rows: p50 16, p90 25, p99 38, max 48). At Fraunces @19 it
+measured 159pt and truncated. So did Outfit @19, at 147pt. **Outfit @18
+fits it at 139pt.** Half the client list stopped truncating.
+
+## 2. Inventory — every other row context, unchanged
+
+No changes were made outside Clients. Mobile's current face per context,
+against web's equivalent spot.
+
+**Still on the display face (Fraunces) — the sweep candidates:**
+
+| # | context | mobile today | web's equivalent |
+| --- | --- | --- | --- |
+| 1 | **Chat thread list**, counterpart name — `ConversationRow.tsx:158` | `type.heading` — Fraunces 500, 19/24 | **`font-sans`**, `truncate text-base font-medium` / `font-bold` when unread (`ConversationsPanel.tsx:1532`) |
+| 2 | **Inquiry rows**, client name — `InquiryRow.tsx:205` | `type.heading` — Fraunces 500, 19/24 | **`font-sans`** (`Inquiries.tsx:591`, td `py-3 text-fg`); kanban card `truncate text-sm font-semibold` (`InquiryKanbanCard.tsx:95`) |
+| 3 | **Appointment rows**, client name — `AppointmentRow.tsx:116` | `type.heading` — Fraunces 500, 19/24 | **`font-sans`** — calendar event title inherits (`Calendar.tsx:613`), preview popover `text-fg` (`Calendar.tsx:1102`) |
+| 4 | **Account menu**, studio name — `AccountMenu.tsx:134` | `type.heading` @16 — Fraunces 500 | n/a (web's studio name is not a row) |
+| 5 | **Nav drawer**, studio name — `NavDrawer.tsx:259` | `type.heading` — Fraunces 500, 19/24 | n/a — chrome, not a row |
+
+**Already on the body face — nothing to sweep:**
+
+| # | context | mobile today | web's equivalent |
+| --- | --- | --- | --- |
+| 6 | **Team rows**, member name — `team.tsx:304` | `type.body` — Outfit 400, 15/21 | `font-sans`, td `py-3 text-fg` (`Team.tsx:1011`/`1027`); artist card `text-sm font-semibold` (`Team.tsx:1232`) |
+| 7 | **Frequent-contacts strip**, contact name — `FrequentStrip.tsx:140` | `type.meta` — Outfit **300 Light**, 12/16 | **does not exist on web** — no frequent/recent-contacts strip anywhere in `apps/web/src` |
+| 8 | **Open chat thread header**, counterpart name — `ThreadHeader.tsx:213` | Outfit 17/600 — chat spec §1.2/§9, *"names are never Fraunces"* | **`font-display`** (`ConversationsPanel.tsx:2719`) — see the inversion below |
+| 9 | **Task rows**, title / counterpart — `TaskRow.tsx:222`/`228` | `type.body` 15 / `type.meta` 12 | `font-sans`, `text-fg` (`Tasks.tsx:508`) |
+| 10 | **Flash grid**, piece title — `flash.tsx:318` | `type.body` @14 — Outfit 400 | `truncate text-sm font-medium` (`FlashGallery.tsx:369`) |
+| 11 | **Client detail sub-rows** (gift cards, waivers, inquiries, appointments) — `client/[id].tsx:1443` | `type.body` — Outfit 400, 15/21 | `font-sans` (`ClientDetail.tsx:2301`); gift card CODE is `font-mono` on both |
+
+**Detail-screen names, listed for completeness — not rows, no claim made:**
+`client/[id].tsx:1356` (client detail header), `profile.tsx:436`,
+`account.tsx:109` — all `type.heading`/`type.display`, all Fraunces. Web's
+own appointment detail header is `text-xl font-bold` `font-sans`
+(`AppointmentDetail.tsx:908`).
+
+### Two things the inventory turned up that the owner should see
+
+**a. Row 8 is an inversion, and both sides are deliberate.** Mobile's OPEN
+THREAD header is the one name mobile already sets in Outfit — the chat-UX
+spec says so in as many words. Web's open thread header is the ONLY name
+anywhere in `apps/web/src` set in `font-display`. They are exactly
+backwards from each other. Neither is drift: both were chosen on purpose,
+by different specs. Flagging it because a "make mobile match web" sweep
+read literally would move mobile's chat header TO Fraunces, which is the
+opposite of what the chat spec ruled.
+
+**b. Row 8 also carries a latent Android bug, not introduced here.**
+`ThreadHeader.tsx:213` is `{ ...type.body, fontSize: 17, fontWeight: '600' }`
+— family plus `fontWeight`, which is precisely what `typography.ts`'s own
+header warns against: React Native resolves no family+weight pair, so this
+renders **Outfit Regular on Android**, not semibold. It is only correct on
+iOS. Not touched this session (chat surface, outside the brief) and worth
+its own line in whatever the owner decides for the sweep — the fix is a
+real face, and Outfit 500 is the heaviest one loaded.
+
+## 3. Verification
+
+Preview harness: the **real** `ClientsScreen` (not a copy) mounted at a
+temporary `src/app/preview.tsx` inside a hand-built `AuthContext`, against
+a scratchpad fixture API on `:4444`, in Chromium at a **320pt viewport**.
+The preview route was deleted before committing; the fixture server lived
+in the scratchpad and never in the repo.
+
+Fixture names were built against the dev database's real distribution,
+measured this session over its 187 client rows (p50 16 / p90 25 / p99 38 /
+max 48 characters) rather than invented.
+
+**Truncation at 320pt, measured off the running screen** — name box 143pt
+once a chip shares the line:
+
+| name | chars | before (Fraunces 19) | after (Outfit 18) |
+| --- | --- | --- | --- |
+| Jo Ng | 5 | 50pt, fits | 46pt, fits |
+| Ana Ruiz | 8 | 81pt, fits | 69pt, fits |
+| **Marcus Delacroix** | **16 (p50)** | **159pt — TRUNCATED** | **139pt — FITS** |
+| Priyanka Venkataraman | 21 | 221pt, truncates | 194pt, truncates |
+| Sebastian Oyelaran-Whitmore | 27 (p90) | 276pt, truncates | 246pt, truncates |
+| Wilhelmina Fitzgerald-Thompson | 30 | 307pt, truncates | 266pt, truncates |
+| Christopher-Alexander Montgomery | 32 | 332pt, truncates | 293pt, truncates |
+| Christopher-Alexander Montgomery-Worthington III | 48 (max) | 484pt, truncates | 420pt, truncates |
+
+Everything past p50 still truncates — it always did, and a name that long
+cannot fit a 143pt box in any face. What changed is that the median name
+crossed from one side of the line to the other.
+
+**Composition at 320pt (item 3), measured on every row:**
+
+- Row height **68pt before and after** — confirmed by re-measuring the
+  before state (stash, reload, measure, restore), not argued from the
+  type. The row is sized by the 44pt message button plus 2×12 padding, and
+  the text column is 41pt after / 42pt before — under the button in both,
+  so the type never drove the height.
+- Status chip renders on **one line on every row**, height 12pt (BOOKED) /
+  16pt (ARCHIVED). Nothing wrapped.
+- Clear gap from chip to the 44×44 message button: **20–24pt** on the
+  tight rows, never negative, never overlapping.
+- **Worst case tested explicitly**: the 48-character name carrying the
+  wider ARCHIVED pill instead of BOOKED — still one line, still 68pt,
+  21pt clear of the icon.
+
+Standard bar, all from the worktree:
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         built in 15.34s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean, matches schema.prisma
+    apps/api      test suite                   233/233 pass
+
+### What this could NOT verify
+
+Per the standing limits of the web preview harness: this is
+`react-native-web` in Chromium, not a device. Font RASTERISATION differs,
+and the one thing that genuinely cannot be checked this way is **whether
+Outfit 500 resolves correctly on Android** — the family-name mechanism
+`typography.ts` documents is exactly what web-preview bypasses. `rowName`
+uses `fonts.bodyMedium` (`Outfit_500Medium`), a real loaded face name, so
+it is built the correct way; but "correct on Android" is a device-gate
+observation, not something this session proved.
+
+## 4. Database
+
+**No database changes, no migration, no backfill.** Nothing in this
+session touches the schema or any row, in dev or in production. The only
+database contact was a READ — counting client name lengths to size the
+fixture — against the **dev** database.

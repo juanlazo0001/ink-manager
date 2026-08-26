@@ -338,7 +338,9 @@ const styles = StyleSheet.create({
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   rowText: { flex: 1 },
   avatarLabel: { ...type.label, fontSize: 13, color: colors.fgMuted },
-  name: { ...type.heading, color: colors.fg, flexShrink: 1 },
+  /* Session AF: the body face, not the display face. See `type.rowName`
+     for the web citation and the measurement that picked 18. */
+  name: { ...type.rowName, color: colors.fg, flexShrink: 1 },
   secondary: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
   archived: {
