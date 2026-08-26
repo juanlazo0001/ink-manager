@@ -27,8 +27,27 @@ function isImageUrl(url: string): boolean {
   return /\.(jpe?g|png|gif|webp|avif|heic|bmp)(\?|$)/i.test(url) || /\/image\/upload\//.test(url);
 }
 
-/** How far the thread slides to reveal timestamps. Also the gutter width. */
-export const REVEAL_WIDTH = 68;
+/**
+ * §2.3: how far the thread slides to reveal timestamps. Also the gutter
+ * width, so the time lands exactly in the space the bubbles vacate.
+ *
+ * AE shipped 68; the spec ratified 84 and that is the number here.
+ *
+ * Not because 68 clipped anything -- measured in this exact type, the
+ * widest time this format produces (`12:04 AM`) is 48.6pt against 68's
+ * 60pt of usable width, so it fit. The extra travel buys the GESTURE,
+ * not the text: with 0.55 resistance, 84 costs ~153pt of drag, which is
+ * a deliberate pull rather than something a thumb does by accident on
+ * the way to scrolling.
+ */
+export const REVEAL_WIDTH = 84;
+
+/**
+ * §2.3: the times fade in over the first 24pt of travel, so a small
+ * accidental drag shows nothing and a deliberate one has already
+ * committed to showing them by the time the bubbles have really moved.
+ */
+export const REVEAL_FADE_IN = 24;
 
 /**
  * Message text, with URLs turned into links.
@@ -251,6 +270,16 @@ export function MessageBubble({
 
   const slide = useAnimatedStyle(() => ({ transform: [{ translateX: revealX.value }] }));
 
+  /*
+   * §2.3: the time fades in over the first REVEAL_FADE_IN points of
+   * travel. Derived from the same shared value that moves the bubbles, so
+   * the two can never disagree -- and it costs no re-render: the whole
+   * thread's timestamps track the finger on the UI thread.
+   */
+  const revealFade = useAnimatedStyle(() => ({
+    opacity: Math.min(1, Math.max(0, -revealX.value / REVEAL_FADE_IN)),
+  }));
+
   return (
     <Animated.View
       style={[
@@ -415,11 +444,11 @@ export function MessageBubble({
         timestamp was visible at rest, mid-thread, which is the opposite
         of the feature. Measured at 281px inside a 390pt frame before this.
       */}
-      <View style={styles.revealGutter} pointerEvents="none">
+      <Animated.View style={[styles.revealGutter, revealFade]} pointerEvents="none">
         <Text style={styles.revealTime} numberOfLines={1}>
           {timeOfDay(message.createdAt)}
         </Text>
-      </View>
+      </Animated.View>
 
       {/*
         §2.4 DELIVERY STATES — SURFACE-ANCHORED, which is the compensating

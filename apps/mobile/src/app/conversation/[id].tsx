@@ -106,6 +106,9 @@ export default function ConversationScreen() {
   const insets = useSafeAreaInsets();
   const devToggles = useChatDevToggles();
   const flyReduced = useReducedMotion();
+  // Same hook, read where the gesture is built: §10 requires the OS
+  // setting to be live, not a value captured once at module load.
+  const revealReduced = flyReduced;
 
   /*
    * §10 SEND-FLY. Three-step, because a bubble cannot be flown to a place
@@ -331,17 +334,33 @@ export default function ConversationScreen() {
   const revealPan = useMemo(
     () =>
       Gesture.Pan()
+        /*
+         * Activation offsets are AE's and stay AE's: horizontal intent has
+         * to win before this moves at all (|dx| > |dy| in the first 10pt,
+         * §2.3), and vertical scroll is never hijacked. Retuning them was
+         * not asked for and every change here is one that has to be
+         * re-earned against a thumb on a real phone.
+         */
         .activeOffsetX([-14, 14])
         .failOffsetY([-12, 12])
         .onUpdate((event) => {
-          revealX.value = Math.max(-REVEAL_WIDTH, Math.min(0, event.translationX));
+          /*
+           * §2.3 RESISTANCE. The thread follows the finger at 0.55, so
+           * REVEAL_WIDTH of travel costs ~153pt of drag. Without it the
+           * gesture hits its stop almost immediately and the last two
+           * thirds of the drag do nothing -- the hand keeps moving and the
+           * screen has stopped, which reads as a bug rather than a limit.
+           */
+          revealX.value = Math.max(-REVEAL_WIDTH, Math.min(0, event.translationX * REVEAL_RESISTANCE));
         })
         .onEnd(() => {
           // Springs home the moment you let go — Messages never latches
           // this open, and a latched state would need a way to close it.
-          revealX.value = withSpring(0, { damping: 22, stiffness: 220, mass: 0.6 });
+          // S2 (§10) is the settle preset every snap-back in this screen
+          // uses; the hand-tuned numbers here predated the preset layer.
+          revealX.value = motion(0, S2, revealReduced);
         }),
-    [revealX],
+    [revealX, revealReduced],
   );
   const [unavailableChannels, setUnavailableChannels] = useState<Set<string>>(new Set());
   const [sendState, setSendState] = useState<ComposerSendState>({ channel: 'SMS', direction: 'OUTBOUND' });
@@ -989,6 +1008,9 @@ export default function ConversationScreen() {
     </ScreenShell>
   );
 }
+
+/** §2.3: the thread follows the finger at this fraction of its travel. */
+const REVEAL_RESISTANCE = 0.55;
 
 /** §5: past this many points from the bottom, an arrival must not move the view. */
 const PILL_THRESHOLD = 200;
