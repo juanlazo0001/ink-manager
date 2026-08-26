@@ -42,6 +42,9 @@ function isImageUrl(url: string): boolean {
  */
 export const REVEAL_WIDTH = 84;
 
+/** §7: more than 8pt of travel is a scroll, not a long press. */
+const LONG_PRESS_SLOP = { top: 8, bottom: 8, left: 8, right: 8 } as const;
+
 /**
  * §2.3: the times fade in over the first 24pt of travel, so a small
  * accidental drag shows nothing and a deliberate one has already
@@ -313,7 +316,20 @@ export function MessageBubble({
 
       <Pressable
           onLongPress={onLongPress}
-          delayLongPress={300}
+          /*
+           * §7: 350ms, and a movement of more than 8pt cancels it.
+           *
+           * The cancel is the important half, and it is NOT hand-rolled:
+           * a Pressable already cancels its long-press when the touch
+           * moves outside the pressable plus `pressRetentionOffset`, so
+           * setting that to 8 IS the 8pt rule, enforced by the same
+           * machinery that decides every other press. Rolling our own
+           * distance check would mean two answers to "is this still a
+           * press", which is exactly how a long-press starts firing in
+           * the middle of a scroll.
+           */
+          delayLongPress={350}
+          pressRetentionOffset={LONG_PRESS_SLOP}
           accessibilityRole={onLongPress ? 'button' : undefined}
           accessibilityHint={onLongPress ? 'Long press for message actions' : undefined}
           style={[

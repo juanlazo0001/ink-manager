@@ -35,13 +35,14 @@ import { useChatDevToggles } from '@/lib/chatDevToggles';
 import { ScreenShell } from '@/components/ScreenShell';
 import { Composer, type ComposerSendState } from '@/components/Composer';
 import { MessageActions } from '@/components/MessageActions';
-import { RetrySheet } from '@/components/RetrySheet';
+import { MessageOverlay } from '@/components/MessageOverlay';
 import { FlyTarget } from '@/components/FlyTarget';
 import { ScrollToBottomPill } from '@/components/ScrollToBottomPill';
 import { TypingRow } from '@/components/TypingRow';
 import { hapticAction, hapticFailed, hapticLift, primeFailureLatch } from '@/lib/chatHaptics';
 import { deliveryState } from '@/lib/deliveryStatus';
 import { SendFly, type Rect } from '@/components/SendFly';
+import { rowScreenRect, type RowBox } from '@/lib/threadGeometry';
 import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
 import { channelLabel } from '@/components/ConversationRow';
 import { MessageBubble, REVEAL_WIDTH, messageImages } from '@/components/MessageBubble';
@@ -140,6 +141,43 @@ export default function ConversationScreen() {
   );
 
   const listBoxRef = useRef<View>(null);
+
+  /*
+   * §7 needs a long-pressed row's screen rect, and the row cannot be
+   * asked for it -- see lib/threadGeometry.ts. These are the two inputs
+   * that arithmetic needs, kept in refs because they change on every
+   * scroll frame and nothing should re-render for them.
+   */
+  const rowBoxes = useRef(new Map<string, RowBox>());
+  const scrollOffset = useRef(0);
+  const [overlayRect, setOverlayRect] = useState<Rect | null>(null);
+  /*
+   * The clone is NOT part of the thread, so it must not slide with the
+   * drag-to-reveal gesture. A separate value, permanently 0, rather than
+   * making revealX optional on MessageBubble -- one caller wanting a
+   * different behaviour is not a reason to make the prop nullable for
+   * every other caller.
+   */
+  const cloneStill = useSharedValue(0);
+
+  /** Resolve the pressed row to screen coordinates, or give up quietly. */
+  const openOverlayFor = useCallback((message: DisplayMessage) => {
+    const box = rowBoxes.current.get(message.id);
+    const node = listBoxRef.current;
+    if (!box || !node) return;
+    node.measureInWindow((x, y, width, height) => {
+      if (width === 0 && height === 0) return;
+      hapticLift();
+      setOverlayRect(rowScreenRect({ x, y, width, height }, box, scrollOffset.current));
+      setCopiedId(null);
+      setActionFor(message);
+    });
+  }, []);
+
+  const closeOverlay = useCallback(() => {
+    setActionFor(null);
+    setOverlayRect(null);
+  }, []);
 
   /*
    * The flight itself is driven from here, not from SendFly: the clone is
@@ -308,6 +346,9 @@ export default function ConversationScreen() {
   const onThreadScroll = useCallback(
     (event: { nativeEvent: { contentOffset: { y: number } } }) => {
       const y = event.nativeEvent.contentOffset.y;
+      // Exact, every event -- the pill's dead-band below is a display
+      // decision, and §7's geometry needs the real number.
+      scrollOffset.current = y;
       const dy = y - lastScrollY.value;
       // A dead-band, so a thumb resting on the list does not flicker it.
       if (Math.abs(dy) > 6) {
@@ -512,7 +553,6 @@ export default function ConversationScreen() {
   /** ITEM 3 — quick-save, from the long-press sheet and the viewer. */
   const [saveNote, setSaveNote] = useState<string | null>(null);
   /** §2.4: tapping a failed message opens a sheet, never a silent resend. */
-  const [retryFor, setRetryFor] = useState<DisplayMessage | null>(null);
   const handleSaveImage = useCallback(async (url: string) => {
     const result = await saveImageToLibrary(url);
     setSaveNote(result.ok ? 'Saved to your photos' : result.message);
@@ -684,6 +724,17 @@ export default function ConversationScreen() {
     [messages, viewerUserId, isClientThread, isGroupThread],
   );
 
+  /** The pressed message's own row entry, so the clone copies its flags. */
+  const overlayRow = useMemo(
+    () =>
+      actionFor
+        ? (rows.find((r) => r.kind === 'message' && r.message.id === actionFor.id) as
+            | Extract<Row, { kind: 'message' }>
+            | undefined)
+        : undefined,
+    [rows, actionFor],
+  );
+
   /**
    * Jump to a quoted message. The list is inverted, so its index in `rows`
    * is already the visual one; a message that has scrolled out of the
@@ -777,6 +828,33 @@ export default function ConversationScreen() {
           inverted
           data={rows}
           keyExtractor={(row) => (row.kind === 'separator' ? row.key : row.message.id)}
+          /*
+            §7 needs a row's position in CONTENT coordinates, and the
+            obvious place to take it -- an onLayout on the row itself --
+            gives the wrong box: `layout` is relative to the immediate
+            parent, and FlatList wraps every row in a cell of its own, so
+            every row reported y ~ 0. The clone then landed at the bottom
+            of the list whatever was pressed (measured: 272.5pt low for a
+            row four up).
+
+            CellRendererComponent is the public hook for exactly this. The
+            cell IS the content container's child, so its `layout.y` is
+            the number the mapping in lib/threadGeometry.ts wants -- and
+            being layout rather than a window position, the inverted
+            list's transform does not touch it.
+          */
+          CellRendererComponent={({ item: cellItem, children, ...rest }) => (
+            <View
+              {...rest}
+              onLayout={(event) => {
+                if (cellItem.kind !== 'message') return;
+                const { y, height } = event.nativeEvent.layout;
+                rowBoxes.current.set(cellItem.message.id, { y, height });
+              }}
+            >
+              {children}
+            </View>
+          )}
           renderItem={({ item }) =>
             item.kind === 'separator' ? (
               /*
@@ -828,23 +906,23 @@ export default function ConversationScreen() {
                 attribution={item.attribution}
                 isLastOutgoing={item.message.id === lastOutgoingId}
                 revealX={revealX}
-                onRetry={() => setRetryFor(item.message)}
+                // The failed-row affordance and the long-press open the
+                // SAME surface now. Two sheets saying the same thing about
+                // the same message is exactly the drift this series has
+                // been undoing; §2.4's items live in one place.
+                onRetry={() => openOverlayFor(item.message)}
                 onOpenImage={(urls, index) =>
                   setLightbox({ images: urls.map((url) => ({ url })), index })
                 }
                 viewerUserId={viewerUserId}
                 onScrollToMessage={scrollToMessage}
                 onLongPress={
-                  // A message that never reached the server has no id to
-                  // act on, and a shared-inquiry card is not a bubble with
-                  // a body worth quoting -- web excludes it the same way.
-                  item.message.status === 'sent' && !item.message.metadata?.kind
-                    ? () => {
-                        hapticLift();
-                        setCopiedId(null);
-                        setActionFor(item.message);
-                      }
-                    : undefined
+                  // A shared-inquiry card is not a bubble with a body
+                  // worth quoting -- web excludes it the same way. A
+                  // FAILED message DOES get the overlay now: §2.4 rev E
+                  // gives it its own class-appropriate items, which is
+                  // what generalising this sheet was for.
+                  item.message.metadata?.kind ? undefined : () => openOverlayFor(item.message)
                 }
               />
               </FlyTarget>
@@ -965,9 +1043,72 @@ export default function ConversationScreen() {
         <SendFly body={fly.body} from={fly.from} to={fly.to} progress={flyProgress} fade={flyFade} />
       ) : null}
 
+      {/*
+        §7. The overlay owns the scrim, the lifted clone and the dismissal;
+        MessageActions is now just the panel that sits under it. That split
+        is what let the FAILED cases join the same surface instead of
+        needing a sheet of their own -- see §2.4 rev E below.
+      */}
+      {actionFor && overlayRect ? (
+        <MessageOverlay
+          rect={overlayRect}
+          reduced={flyReduced}
+          onDismiss={closeOverlay}
+          bubble={
+            <MessageBubble
+              message={actionFor}
+              /*
+                The clone is a COPY, so it is drawn with the row's own
+                flags rather than invented ones. `grouped` in particular
+                decides the leading margin, and a clone that disagreed
+                about it sat 10pt off its own row -- measured, before this.
+              */
+              own={overlayRow?.own ?? false}
+              showMeta={false}
+              showAuthor={overlayRow?.showAuthor ?? false}
+              grouped={overlayRow?.grouped ?? false}
+              lastInGroup={overlayRow?.lastInGroup ?? true}
+              attribution={null}
+              // The clone is a portrait of ONE message, lifted out of the
+              // thread -- the delivery line belongs to the row it came
+              // from, which is still on screen underneath.
+              isLastOutgoing={false}
+              revealX={cloneStill}
+              viewerUserId={viewerUserId}
+            />
+          }
+          below={
       <MessageActions
         visible={!!actionFor}
-        onClose={() => setActionFor(null)}
+        onClose={closeOverlay}
+        failure={
+          actionFor && deliveryState(actionFor) === 'FAILED'
+            ? isProviderFailure(actionFor)
+              ? {
+                  kind: 'provider' as const,
+                  // Accepted by us, refused by the carrier. There is
+                  // nothing local to retry or discard -- the message is
+                  // real and it is on the server.
+                  explanation:
+                    'The carrier could not deliver this. The number may be wrong, disconnected, or blocking texts.',
+                }
+              : {
+                  kind: 'local' as const,
+                  explanation: 'This never left the app, so the text is still here.',
+                  onRetry: () => {
+                    const target = actionFor;
+                    closeOverlay();
+                    doSend(target.body, target.attachments ?? [], target);
+                  },
+                  onDiscard: () => {
+                    const target = actionFor;
+                    closeOverlay();
+                    pendingRef.current.delete(target.id);
+                    setMessages((current) => current.filter((m) => m.id !== target.id));
+                  },
+                }
+            : null
+        }
         myReaction={
           actionFor ? ((actionFor.reactions ?? []).find((r) => r.userId === viewerUserId)?.emoji ?? null) : null
         }
@@ -987,54 +1128,26 @@ export default function ConversationScreen() {
         }
         images={actionFor ? messageImages(actionFor) : []}
         onSaveImage={(url) => {
-          setActionFor(null);
+          closeOverlay();
           void handleSaveImage(url);
         }}
         onReact={(emoji) => actionFor && handleReact(actionFor, emoji)}
         onReply={() => {
           setReplyTo(actionFor);
           setEditing(null);
-          setActionFor(null);
+          closeOverlay();
         }}
         onCopy={() => actionFor && handleCopy(actionFor)}
         onEdit={() => {
           setEditing(actionFor);
           setReplyTo(null);
-          setActionFor(null);
+          closeOverlay();
         }}
       />
-
-      {/*
-        §2.4 / §7 retry sheet. Retry is wired to the real resend path —
-        `doSend(body, attachments, retryOf)` already existed and reuses the
-        failed row's own id, so a retry replaces the bubble in place rather
-        than stacking a second one. Discard drops it from the local list:
-        a failed message never reached the server, so there is nothing to
-        delete there.
-      */}
-      <RetrySheet
-        visible={!!retryFor}
-        onClose={() => setRetryFor(null)}
-        onRetry={() => {
-          const target = retryFor;
-          setRetryFor(null);
-          if (target) doSend(target.body, target.attachments ?? [], target);
-        }}
-        onCopy={() => {
-          if (retryFor?.body) void Clipboard.setStringAsync(retryFor.body);
-          setRetryFor(null);
-        }}
-        canCopy={!!retryFor?.body}
-        providerFailure={!!retryFor && isProviderFailure(retryFor)}
-        onDiscard={() => {
-          const target = retryFor;
-          setRetryFor(null);
-          if (target) {
-            pendingRef.current.delete(target.id);
-            setMessages((current) => current.filter((m) => m.id !== target.id));
           }
-        }}
-      />
+        />
+      ) : null}
+
 
       <PhotoViewer
         images={lightbox?.images ?? []}
