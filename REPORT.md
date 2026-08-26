@@ -27295,3 +27295,214 @@ it is the most likely explanation for item 0's screenshot.
 5. **The toggle**: INQUIRIES / PROJECTS, no badges. Turn iOS text size up and confirm it still fits.
    If you still see badges, you are on a pre-AC bundle — check whether Flash's button says
    `+ NEW FLASH` or is a bare circle.
+
+# Mobile session AE — the chat thread, at Messages' density
+
+**Base: `mobile/session-ad` at `10c1b3b`** — the stack head. T2 → AD remain unmerged (`main` is at
+`151c0d8`). Worktree cut from AD; one commit (`94e1ebf`), pushed.
+
+---
+
+## 5 — What the ❤️ actually is, answered before anything was built
+
+**A real stored reaction model. Not parsed SMS tapback text.**
+
+| | |
+| --- | --- |
+| Routes | `PUT` / `DELETE /conversations/:id/messages/:messageId/reaction` |
+| Allowed set | `❤️ 👍 👎 😂 ‼️ ❓` — anything else is a 400 |
+| Cardinality | **upsert, one per (message, user)** — a different emoji replaces, never stacks |
+| Delivery | **internal annotation only.** Never sent over SMS or email |
+| Already wired? | **yes** — `setReaction` / `clearReaction` and a long-press menu shipped previously |
+
+So the brief's condition — *"only build reaction-SENDING if the API supports it"* — resolves to: it
+does, and it was already there. **Nothing goes on the backend list for reactions.** Item 5 was
+therefore presentation, and that is what changed: the chip is now a Messages-style badge overlapping
+the bubble's corner, absolutely positioned so it costs the row no height and cannot push the next
+bubble down.
+
+## 3 — expo-media-library, confirmed before the dependency was added
+
+`expo/bundledNativeModules.json` for SDK 54 lists **`expo-media-library: ~18.2.1`**, and
+`expo-web-browser: ~15.0.11` for item 4. Both are bundled, so both work inside the App Store build
+of Expo Go — checked first, because a module that is *not* bundled produces an app the owner's phone
+cannot open at all.
+
+Installed at exactly those versions.
+
+**Saving is two steps, not one.** `saveToLibraryAsync` takes a *local* path and chat images live on
+Cloudinary, so the bytes come down first through the same `File.downloadFileAsync` the deposit and
+waiver PDFs use — and for the same reason: it rejects on a non-2xx and writes nothing, so a dead URL
+cannot land in someone's camera roll as a broken file. The cache copy is deleted afterwards.
+
+**Write-only permission** (`requestPermissionsAsync(true)`). Adding one photo should not ask to read
+someone's entire library; iOS shows a smaller prompt for it.
+
+**Where the affordance lives:** the long-press sheet and the full-screen viewer — not a badge on
+every thumbnail. A permanent button on each image is exactly the clutter this session removes, and
+by the time someone wants to keep a photo they have opened it.
+
+## 1 — Density and grouping
+
+| | before | after |
+| --- | --- | --- |
+| body line-height | 23 | **21** (same 16px) |
+| bubble padding | 12 / 10 | **12 / 7** |
+| gap, consecutive same sender | 4 | **2** |
+| gap, speaker changes | 4 | **12** |
+
+The old layout used one gap for everything, so a thread read as a list of items. **The contrast
+between the two numbers is the grouping cue** — which is why both had to move, not just the small
+one.
+
+A run breaks on a different sender, a different day, or a five-minute pause. That is a *different*
+question from the existing `showMeta` "same burst", which is same-**minute** and governs the
+timestamp; a visual run can span several minutes, a burst cannot. Both now live in `buildThreadRows`,
+which stays a pure function and stays testable without rendering.
+
+## 2 — Timestamps became a gesture
+
+The per-message meta line is gone from the default render. What was on it:
+
+- **time** → revealed by dragging the thread left;
+- **channel** and **"Edited"** → the long-press sheet;
+- **"Sending…"** → **kept in place.** It is about this moment rather than about the record, and a
+  bubble in flight has to say so without being asked.
+- day separators → **unchanged and stationary**, as Messages keeps them.
+
+One shared value drives the whole list rather than one per row — every bubble slides by the same
+number, so per-row state would be N copies of it and N updates per frame.
+
+**The gesture has to lose to the FlatList, not fight it:** `activeOffsetX([-14, 14])` so it only
+claims a touch after clear horizontal intent, `failOffsetY([-12, 12])` so it hands back the moment
+the finger goes vertical. Left-only, clamped to the gutter width, spring home on release — it never
+latches, because a latched state would need a way to close it.
+
+## 4 — Links
+
+Hand-rolled and deliberately narrow: an explicit `http(s)://` or a bare `www.` host. A linkify
+dependency brings TLD tables and email/phone/hashtag detection this app has no use for, and each of
+those is another way a client's message renders as something it is not.
+
+**Trailing punctuation is not part of the URL**, and a closing bracket belongs to the link only if an
+opening one did. Nine cases exercised, all passing — including the two that matter most:
+
+```
+"see you at 5.30 for $40.00"                   -> no links     (a greedy matcher makes two)
+"look at https://x.com/a."                     -> .../a        (not ".../a.")
+"wiki https://en.wikipedia.org/wiki/Foo_(bar)" -> keeps the bracket
+```
+
+Text runs reassemble to the original input, so no character is ever eaten.
+
+Long URLs truncate from the **middle** — the host says where you are going and the tail is often the
+only thing distinguishing two links; an end-ellipsis keeps the first and throws away the second.
+
+## 6 — Composer: styles only, and here is the proof
+
+The brief's requirement was that behaviour must not regress now that sends are real. It did not
+change at all:
+
+| Check | Result |
+| --- | --- |
+| `lib/conversations.ts` (holds `sendMessage`) | **no diff whatsoever** |
+| the `sendMessage(...)` call in the thread | **byte-identical** — same four spread conditions |
+| `wouldSendLive` + `submit()` in the composer | **`diff` reports identical** |
+| the composer's whole diff | style declarations and comments only |
+
+What changed visually: the field is a capsule (`radius.pill`) rather than a form rectangle, the send
+button matches the field's resting height instead of hanging below it, and "nothing to send" reads as
+a quiet outline rather than a grey slab.
+
+**"Sends for real over SMS" stays**, styled quietly on purpose: it is a standing fact about the
+current mode, not a warning to re-read on every keystroke, and the channel dot beside it already
+carries the colour.
+
+### No SMS was sent during this session
+
+Nothing here required one. The send path was not refactored, so the honest verification is the diff
+above rather than a live dispatch — and with production now reaching real phones and costing money,
+a live send would have been a cost and a risk bought for no additional information.
+
+## Two defects found by looking at the render
+
+Both were invisible in a diff and obvious in a screenshot:
+
+1. **Every timestamp was visible at rest.** The reveal gutter was anchored with `left: '100%'` on a
+   wrapper that was only as wide as *the bubble*, so it began a few pixels past whatever that
+   bubble's width happened to be — measured at **281px inside a 390pt frame**, mid-thread. It now
+   hangs off the full-width row, so all eight sit at **398px against a 390pt edge**: hidden at rest,
+   and at 330px under a full drag.
+2. **The tiled image grid collapsed to a single column.** Making the bubble a flex child let it be
+   shrunk to one tile's width before the row could claim two. The grid now takes an explicit
+   `104 × 2 + 2` width, so it wraps at exactly two per row.
+
+## Verification
+
+Rendered at 390 and 320: grouped bubbles, the bare-image bubble, the 2-up collage, linkified and
+middle-truncated text, the reaction badge on the corner, the long-press sheet with its new detail
+line (`SMS · Aug 26, 2026, 10:13 AM · Edited`) and Save image, and the revealed state.
+
+**What the harness cannot prove, stated plainly:** the *feel* of the drag. Synthetic pointer events
+do not drive gesture-handler under react-native-web, so the revealed state is captured by parking the
+shared value at its full extent — which shows the geometry exactly, and leaves the spring, the
+hand-off with vertical scroll, and the rubber-banding as **device-gate items**. That was expected;
+the brief flagged it too.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `git status` before building | **clean, 0 entries** |
+| `npm ci` | clean, tree still clean after |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 5.07 MB, **identical bundle hash before and after `npm ci`** |
+| React singleton | only `19.1.0` |
+| linkify | **9/9 cases, 0 failures** |
+
+### Bundle content
+
+**Two markers read as failures and both were mine** — I checked for the package names
+`'expo-media-library'` and `'expo-web-browser'`, which Metro resolves at build time and which
+therefore never reach the bytecode. Re-checked against what the modules actually leave behind —
+`ExpoMediaLibrary`, `saveToLibraryAsync`, `ExpoWebBrowser`, `openBrowserAsync` — plus this app's own
+call-site strings (`Photos access is off for this app`, `That image could not be saved`): **all
+present.** A module name is not a bundle marker; the symbols it registers are.
+
+Everything else present, harness absent, and all three composer mode strings still in the bundle.
+
+## Left open
+
+- The gesture's feel, per above — the first thing to try on the gate.
+- Saving is unexercised on hardware: the permission prompt, the write, and the success haptic are all
+  Expo Go questions.
+- Reactions remain **render-and-send but not push-updated** — someone else's reaction appears on the
+  next fetch, as before. Unchanged by this session, noted because the badge is now prominent enough
+  that the lag is more visible.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Stop any `expo start` already running first.
+
+1. **Open a client thread and drag it left.** Timestamps ride in from the right; let go and they
+   spring back. Then **scroll normally** — the thread must not wobble sideways. That hand-off is the
+   thing to feel.
+2. **Density**: consecutive messages from one person should sit almost touching, with a real gap
+   when the speaker changes.
+3. **An image-only message** should be a photo with rounded corners and no bubble around it. Two
+   images should sit side by side.
+4. **Long-press a bubble**: the sheet now carries the channel, exact time and Edited at the bottom,
+   plus Save image when there is one. **Save one** — expect a permission prompt the first time, then
+   a haptic and "Saved to your photos". Check it is really in Photos.
+5. **Tap a link** in a message; it should open in-app, not throw you to Safari.
+6. **The composer**: send a message on a dev thread. The mode strip must still say what it always
+   said — "Sends for real over SMS" when it would, "Logged to the thread as…" when it would not.
+   Nothing about sending changed, and this step is to confirm that.
