@@ -85,6 +85,73 @@ export interface ConversationListItem {
   lastMessage: ConversationLastMessage | null;
   /** This viewer's own unread count. Never anyone else's — unread-ness is per-user. */
   unreadCount: number;
+  /** This viewer's own pin/mute state. See `ConversationViewerState`. */
+  viewerState: ConversationViewerState;
+}
+
+/**
+ * The REQUESTER's own per-thread preferences — never anyone else's. The
+ * field is named `viewerState` rather than `state` for exactly that
+ * reason.
+ *
+ * Distinct from `archivedAt`, which is deliberately **studio-wide**: one
+ * shared record, not a personal mailbox. Archiving hides a thread from
+ * everyone; pinning reorders it for one person. Both are correct, and they
+ * answer different questions.
+ *
+ * **Always present, never null.** A viewer with no stored row and a viewer
+ * who has explicitly unpinned are in the same state, and the API returns
+ * the same object for both, so there is no "not set yet" case to handle.
+ */
+export interface ConversationViewerState {
+  isPinned: boolean;
+  /**
+   * When this viewer pinned it. Refreshed on every pin, so re-pinning
+   * moves a thread back to the top of the pinned group. Null when
+   * unpinned.
+   */
+  pinnedAt: string | null;
+  /**
+   * A real INSTANT (not a calendar date), or null.
+   *
+   * Compared against `now` at read time — there is no cleanup job — so a
+   * value in the past means exactly the same thing as null. Do not treat a
+   * non-null `mutedUntil` as "muted" without comparing it to the current
+   * time.
+   *
+   * While in the future, the API suppresses this viewer's MESSAGE_CREATED
+   * notification for this thread entirely: no bell entry, no unread badge,
+   * no push. It does NOT suppress `unreadCount` above — the thread still
+   * shows it has something new, you are just not interrupted about it.
+   */
+  mutedUntil: string | null;
+}
+
+/**
+ * `PATCH /conversations/:id/viewer-state` — the only writer for the above.
+ *
+ * Send either field or both; omitting one leaves it untouched. Upserts on
+ * (viewer, conversation), so there is no "create state first" step.
+ *
+ * `mutedUntil: null` CLEARS a mute — it is a meaningful value, not an
+ * omission.
+ *
+ * Responds `{ viewerState }`. **`409 { code: "PIN_LIMIT" }`** when pinning
+ * would exceed three pinned threads; the cap is enforced server-side
+ * inside the write transaction, so clients cannot drift from it. Match on
+ * `code`, never on the message. A non-member or cross-studio request gets
+ * `404`, never `403` — the same convention every other single-thread route
+ * uses, so a non-member cannot tell "exists but not yours" from "does not
+ * exist".
+ */
+export interface UpdateConversationViewerStateRequest {
+  isPinned?: boolean;
+  /** ISO instant, or null to clear. */
+  mutedUntil?: string | null;
+}
+
+export interface UpdateConversationViewerStateResponse {
+  viewerState: ConversationViewerState;
 }
 
 /**

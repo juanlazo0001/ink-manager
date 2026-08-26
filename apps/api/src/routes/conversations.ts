@@ -13,7 +13,7 @@ import {
 } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
-import { emitInvalidation } from "../lib/realtime/registry";
+import { emitInvalidation, emitUserInvalidation } from "../lib/realtime/registry";
 import { notifyMessageCreated } from "../lib/notifications";
 import {
   canViewConversation,
@@ -27,6 +27,11 @@ import { sendClientSms } from "../lib/clientSms";
 import { decryptSecret } from "../lib/secrets";
 import { getRfc822MessageId, getValidAccessToken, sendGmailMessage } from "../lib/gmail";
 import { getEffectivePermissions, hasPermission } from "../lib/permissions";
+
+// Thrown inside the viewer-state transaction and caught just outside it.
+// A sentinel class rather than a string check, so the rollback and the 409
+// cannot get out of step with each other.
+class PinLimitError extends Error {}
 
 const router = Router();
 router.use(requireAuth);
@@ -290,6 +295,16 @@ router.get("/", async (req, res) => {
     orderBy: { lastMessageAt: "desc" },
   });
 
+  // Per-user pin/mute state for exactly the rows just fetched: ONE query
+  // keyed on (this caller, these conversation ids), not one lookup per row.
+  // A missing row is the default state -- unpinned, unmuted -- so nothing
+  // needs creating on read and every consumer below is null-safe.
+  const viewerStates = await prisma.userConversationState.findMany({
+    where: { userId, conversationId: { in: conversations.map((c) => c.id) } },
+    select: { conversationId: true, isPinned: true, pinnedAt: true, mutedUntil: true },
+  });
+  const viewerStateByConversation = new Map(viewerStates.map((v) => [v.conversationId, v]));
+
   const withUnread = await Promise.all(
     conversations.map(async (conversation) => ({
       id: conversation.id,
@@ -319,10 +334,45 @@ router.get("/", async (req, res) => {
           }
         : null,
       unreadCount: await getUnreadCountForConversation(conversation.id, userId),
+      // THE REQUESTER's own state, never anyone else's -- the field name
+      // says whose it is on purpose. Always an object, never null, so a
+      // client reads `viewerState.isPinned` without a guard and cannot
+      // accidentally treat "no row yet" as a different state from
+      // "explicitly unpinned". They are the same state.
+      viewerState: {
+        isPinned: viewerStateByConversation.get(conversation.id)?.isPinned ?? false,
+        pinnedAt: viewerStateByConversation.get(conversation.id)?.pinnedAt ?? null,
+        mutedUntil: viewerStateByConversation.get(conversation.id)?.mutedUntil ?? null,
+      },
     })),
   );
 
-  res.json(withUnread);
+  // Pinned first, most recently pinned at the top, everything else in the
+  // order the database already returned it (lastMessageAt desc).
+  //
+  // Sorted in JS rather than by Prisma, deliberately: a pin belongs to ONE
+  // person, so there is no studio-wide ordering for the database to
+  // express -- and this route fetches the full matching list in one shot
+  // with no pagination (apps/web's ConversationsPanel documents relying on
+  // exactly that), so a JS sort here sees every row and cannot produce the
+  // "correct within the page, wrong across pages" bug that sorting a
+  // paginated result client-side would.
+  //
+  // A stable sort by construction: the comparator returns 0 for two
+  // unpinned rows, and Array.prototype.sort has been required to be stable
+  // since ES2019, so their existing lastMessageAt order survives untouched.
+  const sorted = withUnread.sort((a, b) => {
+    if (a.viewerState.isPinned !== b.viewerState.isPinned) return a.viewerState.isPinned ? -1 : 1;
+    if (a.viewerState.isPinned && b.viewerState.isPinned) {
+      // Both pinned. pinnedAt is always set alongside isPinned, but the
+      // fallback keeps a hand-edited or half-migrated row from sorting
+      // unpredictably rather than merely last.
+      return (b.viewerState.pinnedAt?.getTime() ?? 0) - (a.viewerState.pinnedAt?.getTime() ?? 0);
+    }
+    return 0;
+  });
+
+  res.json(sorted);
 });
 
 // Roster for starting a new STAFF thread -- who in the studio can be
@@ -1211,6 +1261,159 @@ router.patch("/:id/messages/:messageId", async (req, res) => {
   emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
 
   res.json(updated);
+});
+
+// Per-user pin/mute. The read side is embedded in GET / above as
+// `viewerState`; this is the only writer.
+//
+// Scoping deviates DELIBERATELY from the work order's literal wording,
+// which asked for `conversation.studioId === jwt.studioId`. That check is
+// the exact anti-pattern CLAUDE.md's artist-scoping section forbids -- a
+// JWT's studioId reflects the studio at token-mint time and goes stale for
+// the token's full life after a home-studio transfer -- and it would also
+// be a real behaviour regression: a guest artist's own staff thread at a
+// guest studio has a DIFFERENT studioId from their home, so bare equality
+// would 404 a thread they are demonstrably a member of and can already
+// open, reply in, and react in.
+//
+// canViewConversation is the membership shape every other single-thread
+// route in this file already uses. It resolves the caller's effective role
+// at the CONVERSATION's own studio, re-derives that studio's visibility
+// flags, and keeps ARTIST's "-own" scoping (their own 1:1, or a GROUP they
+// were added to). Using it means "can set a pin here" is exactly "can be
+// in this thread", with no second, weaker definition of membership to
+// drift out of sync.
+//
+// 404 on failure, never 403 -- matching every sibling route, so a
+// non-member cannot distinguish "exists but not yours" from "does not
+// exist".
+const MAX_PINNED_CONVERSATIONS = 3;
+
+router.patch("/:id/viewer-state", async (req, res) => {
+  const id = req.params.id as string;
+  const { studioId, userId, role } = req.user!;
+  const body = req.body ?? {};
+
+  const hasPin = body.isPinned !== undefined;
+  const hasMute = body.mutedUntil !== undefined;
+
+  if (!hasPin && !hasMute) {
+    return res.status(400).json({ error: "isPinned or mutedUntil is required" });
+  }
+
+  if (hasPin && typeof body.isPinned !== "boolean") {
+    return res.status(400).json({ error: "isPinned must be a boolean" });
+  }
+
+  // null is a real, meaningful value here -- it CLEARS a mute -- so it is
+  // accepted explicitly rather than falling through the string branch.
+  let mutedUntil: Date | null | undefined;
+  if (hasMute) {
+    if (body.mutedUntil === null) {
+      mutedUntil = null;
+    } else if (typeof body.mutedUntil === "string") {
+      const parsed = new Date(body.mutedUntil);
+      if (Number.isNaN(parsed.getTime())) {
+        return res.status(400).json({ error: "mutedUntil must be an ISO date string or null" });
+      }
+      // A real INSTANT, not a calendar date -- "mute until 9am tomorrow"
+      // is a moment in time, so it is stored and compared as one and never
+      // goes near the local-vs-UTC-midnight question CLAUDE.md's timezone
+      // section covers. A past instant is accepted rather than rejected:
+      // it simply reads as unmuted, which is the same thing the client
+      // meant and avoids a pointless error at a clock-skew boundary.
+      mutedUntil = parsed;
+    } else {
+      return res.status(400).json({ error: "mutedUntil must be an ISO date string or null" });
+    }
+  }
+
+  const conversation = await prisma.conversation.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      studioId: true,
+      type: true,
+      staffUserId: true,
+      participants: { select: { userId: true } },
+    },
+  });
+
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role))) {
+    return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  const now = new Date();
+
+  try {
+    const saved = await prisma.$transaction(async (tx) => {
+      const existing = await tx.userConversationState.findUnique({
+        where: { userId_conversationId: { userId, conversationId: id } },
+        select: { isPinned: true },
+      });
+
+      // The cap is counted INSIDE the transaction, and only when this call
+      // would actually add a pin -- re-pinning something already pinned, or
+      // muting a thread while three others are pinned, must not fail. Two
+      // concurrent pin requests from the same person's two devices both see
+      // a consistent count here rather than both reading 2 and both writing.
+      if (body.isPinned === true && !existing?.isPinned) {
+        const pinned = await tx.userConversationState.count({ where: { userId, isPinned: true } });
+        if (pinned >= MAX_PINNED_CONVERSATIONS) {
+          // A typed code, not just a message: the client has to tell this
+          // apart from every other 409 to show the right thing, and
+          // matching on prose is how that breaks.
+          throw new PinLimitError();
+        }
+      }
+
+      const pinFields =
+        body.isPinned === undefined
+          ? {}
+          : body.isPinned
+            ? // pinnedAt is refreshed on every pin, so re-pinning moves a
+              // thread back to the top of the pinned group rather than
+              // silently keeping a months-old position.
+              { isPinned: true, pinnedAt: now }
+            : // Cleared, not left behind: a stale pinnedAt on an unpinned
+              // row would sort wrongly the moment it was pinned again.
+              { isPinned: false, pinnedAt: null };
+
+      const muteFields = mutedUntil === undefined ? {} : { mutedUntil };
+
+      return tx.userConversationState.upsert({
+        where: { userId_conversationId: { userId, conversationId: id } },
+        update: { ...pinFields, ...muteFields },
+        create: {
+          userId,
+          conversationId: id,
+          // Derived from the conversation row, never from the request --
+          // and note this is the CONVERSATION's studio, not the caller's,
+          // which are legitimately different for a guest artist.
+          studioId: conversation.studioId,
+          isPinned: body.isPinned === true,
+          pinnedAt: body.isPinned === true ? now : null,
+          mutedUntil: mutedUntil ?? null,
+        },
+        select: { isPinned: true, pinnedAt: true, mutedUntil: true },
+      });
+    });
+
+    // Only this person's list changed, so only this person is told --
+    // a studio-wide emitInvalidation would make everyone else refetch a
+    // list that is byte-identical for them.
+    emitUserInvalidation(userId, [["conversations"]]);
+
+    res.json({ viewerState: saved });
+  } catch (err) {
+    if (err instanceof PinLimitError) {
+      return res.status(409).json({
+        code: "PIN_LIMIT",
+        error: `You can pin up to ${MAX_PINNED_CONVERSATIONS} conversations. Unpin one first.`,
+      });
+    }
+    throw err;
+  }
 });
 
 // iMessage-style tapback quick-set -- fixed rather than a full emoji

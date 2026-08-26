@@ -226,6 +226,35 @@ export async function notifyMessageCreated(params: {
   // rather than "Someone" is the honest rendering there.
   const from = params.authorUserId ? displayName(author) : threadLabel;
 
+  // Mute, applied here rather than inside notify(): muting is a property
+  // of a CONVERSATION, and MESSAGE_CREATED is the only type that has one.
+  // Putting the filter in the one emitter that can be muted keeps notify()
+  // from needing to know what a conversation is.
+  //
+  // What a mute suppresses, exactly: the Notification row -- and therefore
+  // the bell feed entry, the unread badge and the push, all three at once,
+  // because all three are that row. What it does NOT suppress is the
+  // conversation's own unread count in the thread list
+  // (getUnreadCountForConversation, a separate and older mechanism reading
+  // ConversationRead). That is the behaviour every messaging app has and
+  // the one people expect: the thread still shows it has something new,
+  // you just are not interrupted about it. Suppressing that too would make
+  // a muted thread indistinguishable from a silent one.
+  //
+  // Compared at read time against `now`, with no cleanup job: an expired
+  // mute simply stops matching, so there is no window in which a lapsed
+  // mute still suppresses anything.
+  const now = new Date();
+  const mutedStates = await prisma.userConversationState.findMany({
+    where: { conversationId: conversation.id, userId: { in: recipients }, mutedUntil: { gt: now } },
+    select: { userId: true },
+  });
+  if (mutedStates.length > 0) {
+    const muted = new Set(mutedStates.map((m) => m.userId));
+    recipients = recipients.filter((id) => !muted.has(id));
+    if (recipients.length === 0) return;
+  }
+
   await notify({
     studioId: params.studioId,
     userIds: recipients,

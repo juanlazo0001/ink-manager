@@ -25590,3 +25590,201 @@ materialises without a table rewrite — and needs **no backfill**, so
 7. **Mobile integration is a separate session**, as the work order says.
    Everything it needs is in `packages/shared-types/src/notifications.ts`,
    including the two-detail-pages routing trap.
+
+# Backend addendum — `UserConversationState` (per-user pin and mute)
+
+Addendum to the same work order as items 1–6, added to
+`session/api-integrity-notifications` rather than its own branch: the mute
+half has to modify `lib/notifications.ts`, which exists only on that
+branch. Unblocks mobile chat Part 4b.
+
+## Why the model exists
+
+Everything adjacent to this on `Conversation` is deliberately
+**studio-wide**. `archivedAt` says so in its own schema comment — "one
+shared record, not a personal mailbox" — and that is right for archiving:
+hiding a resolved thread should hide it for the studio. It is exactly
+wrong for a pin, which must reorder **one person's** list and nobody
+else's. So per-user conversation preferences genuinely had no home, and
+this is it. The two are not in tension; they answer different questions,
+and both now have somewhere honest to live.
+
+`lastReadAt` is declared and **deliberately not wired**, per the order.
+Unread today is answered by `ConversationRead`
+(`getUnreadCountForConversation`). Declaring the column now means the
+eventual consolidation is a data move rather than a schema change on a hot
+table — but nothing reads or writes it, and a null means "not yet
+consolidated", never "never read".
+
+## One deliberate deviation from the order
+
+The order specified scoping as `conversation.studioId === jwt.studioId`.
+**That check is not implemented, on purpose**, and the reason is not
+stylistic:
+
+- It is the precise anti-pattern CLAUDE.md's artist-scoping section
+  forbids. A JWT's `studioId` reflects the studio at token-mint time and
+  goes stale for the token's full 7-day life after a home-studio transfer.
+- It would be a real regression. A guest artist's own staff thread at a
+  guest studio has a **different** `studioId` from their home, so bare
+  equality would 404 a thread they are demonstrably a member of and can
+  already open, reply in, and react in today.
+
+Used instead: `canViewConversation`, the membership shape every other
+single-thread route in `conversations.ts` already goes through (this is
+what the order's Q12 pointed at). It resolves the caller's effective role
+at the **conversation's** studio, re-derives that studio's visibility
+flags, and preserves ARTIST's "-own" scoping — their own 1:1 thread plus
+any GROUP they were added to. So "can set a pin here" is exactly "can be
+in this thread", with no second, weaker definition of membership to drift
+out of sync with the first.
+
+404 on failure, never 403, matching every sibling route: a non-member
+cannot distinguish "exists but not yours" from "does not exist".
+
+## Read side
+
+No new endpoint. `GET /conversations` embeds `viewerState:
+{ isPinned, pinnedAt, mutedUntil }` per row — **one** query keyed on
+`(this caller, these conversation ids)`, not one lookup per row. A missing
+row is the default state, so the response is always an object and never
+null: a viewer with no stored row and a viewer who has explicitly unpinned
+are the same state, and there is no "not set yet" case for a client to
+handle.
+
+Sorting is pinned-first, `pinnedAt` desc, **for the requester only**, done
+in JS rather than Prisma. A pin belongs to one person, so there is no
+studio-wide ordering for the database to express — and this route fetches
+the full matching list in one shot with no pagination (apps/web's
+`ConversationsPanel` documents relying on exactly that), so a JS sort sees
+every row and cannot produce the "correct within the page, wrong across
+pages" bug that sorting a paginated result would. The comparator returns 0
+for two unpinned rows and `Array.prototype.sort` has been stable since
+ES2019, so the existing `lastMessageAt` order survives untouched beneath
+the pins.
+
+## Write side
+
+`PATCH /conversations/:id/viewer-state`, upserting on
+`(userId, conversationId)`. Send either field or both; omitting one leaves
+it alone. `mutedUntil: null` clears a mute — a meaningful value, not an
+omission. `studioId` comes from the conversation row and `userId` from the
+JWT; both are ignored if present in the body, and that is asserted rather
+than assumed.
+
+**Pin cap 3, counted inside the write transaction**, and only when the
+call would actually *add* a pin. Two consequences that matter and are both
+tested: re-pinning something already pinned returns 200 (it adds nothing),
+and muting a thread while three others are pinned returns 200 (a mute is
+not a pin). Two concurrent pin requests from one person's two devices see
+a consistent count rather than both reading 2 and both writing. Exceeding
+it returns `409 { code: "PIN_LIMIT" }` — a typed code, because a client
+that has to match on prose will break the first time the prose changes —
+and the transaction rolls back leaving no row behind.
+
+`pinnedAt` is refreshed on every pin, so re-pinning moves a thread back to
+the top of the pinned group instead of silently keeping a months-old
+position, and it is **cleared** on unpin, so a stale value cannot sort
+wrongly the next time it is pinned.
+
+Only the requester is told the list changed
+(`emitUserInvalidation`), not the studio — a studio-wide invalidation
+would make every colleague refetch a list that is byte-identical for them.
+
+## What a mute actually suppresses
+
+Applied in `notifyMessageCreated`, not inside `notify()`: muting is a
+property of a *conversation*, and `MESSAGE_CREATED` is the only
+notification type that has one, so putting the filter in the one emitter
+that can be muted keeps `notify()` from needing to know what a
+conversation is.
+
+A live mute suppresses the **Notification row** — and therefore the bell
+entry, the unread badge and the push, all three at once, because all three
+*are* that row. It does **not** suppress the conversation's own
+`unreadCount` in the thread list, which is a separate and older mechanism
+reading `ConversationRead`. That is the behaviour every messaging app has
+and the one people expect: the thread still shows it has something new,
+you are simply not interrupted about it. Suppressing that too would make a
+muted thread indistinguishable from a silent one.
+
+Compared against `now` at read time, with no cleanup job, so an expired
+mute simply stops matching and there is no window in which a lapsed mute
+is still suppressing something.
+
+## A test that was passing vacuously
+
+Worth recording because it nearly shipped. The first version of the mute
+tests set up two staff users and asserted the muted one received no
+notification. It passed — but so would a completely broken mute, because
+neither user was actually a *recipient* of that thread: a CLIENT thread's
+recipients are the artists assigned to that client's live projects plus
+anyone who has already written in the thread, and these two were neither.
+With an empty recipient list, "the muted user got no notification" is
+trivially true.
+
+The **expired-mute** test is what exposed it — it asserted a strict `+1`
+and failed at 0. Fixed by seeding both users as prior authors in the
+thread, and by tightening the unmuted colleague's assertion from `>=` to a
+strict `+1` so neither test can pass that way again.
+
+## Verification
+
+`conversationViewerState.test.ts`, 11 real-HTTP tests. The failure mode
+this model introduces is *leakage* — one person's pin reordering a
+colleague's list, one person's mute silencing a colleague — so every test
+asserts the second user is unaffected, not merely that the first got what
+they asked for.
+
+Plus the live transcript the acceptance criteria asked for, against **two
+users in the same studio and one outsider** (a real OWNER of a real,
+unrelated studio), on a running server:
+
+| # | check | result |
+| --- | --- | --- |
+| 1 | `viewerState` with no stored row | `{isPinned:false, pinnedAt:null, mutedUntil:null}` on every one of 84 rows |
+| 2 | owner pins a thread sitting at index 3 | 200, `pinnedAt` set, thread moves to index 0 |
+| 3 | same thread, front desk's view | `isPinned:false`, and their list head is unchanged |
+| 4 | pins 2 and 3, then a 4th | 200, 200, **409** |
+| 5 | re-pin an already-pinned thread while at the cap | 200 |
+| 6 | mute a thread while at the cap | 200 |
+| 7 | `mutedUntil: null` | 200, cleared |
+| 8 | outsider PATCHes the same thread | **404** `{"error":"Conversation not found"}`, nothing written, thread absent from their list (0 conversations) |
+| 9 | empty body / `isPinned:"yes"` / bad date | 400, 400, 400 |
+| 10 | 409 body | `{"code":"PIN_LIMIT","error":"You can pin up to 3 conversations. Unpin one first."}` |
+| 11 | three pinned rows returned | ordered `pinnedAt` desc — and the step-5 re-pin correctly moved that thread back to the top |
+
+And the mute, end to end on real data:
+
+    A. UNMUTED: front desk writes  -> owner notification unread 0 -> 1  (delta 1)
+    B. owner mutes for 2h          -> 200, mutedUntil set
+    C. MUTED: front desk writes    -> owner unread 1 -> 1  (delta 0)  SUPPRESSED
+    D. same moment, same thread    -> the THREAD's own unreadCount = 2
+
+Step D is the point: the badge stayed at 1 while the thread's own unread
+went to 2. The mute suppressed the interruption, not the indicator.
+
+Everything the transcript wrote into the dev database was removed
+afterwards — 2 probe messages, 3 notifications, 5 viewer-state rows, and
+the throwaway outsider studio and user.
+
+Full suite **232/232**. `apps/api` `tsc` build clean; `apps/web` `tsc -b`
+clean; `apps/mobile` `tsc` clean; `packages/shared-types` typecheck clean.
+
+## Database
+
+`20260826120000_user_conversation_state` applied to the **DEV database
+only**. Purely additive — one new table, no column added to and no row
+touched on any existing one — and needs **no backfill**, since an absent
+row *is* the default state (unpinned, unmuted) and every read is null-safe
+for that reason. Production gets it on the next Railway deploy, which
+**has not happened yet**.
+
+## Out of scope, as specified
+
+`lastReadAt` wiring / unread consolidation; any internal-note message
+type; and all client UI. Mobile ships Part 4b against
+`packages/shared-types/src/conversations.ts`, which documents
+`viewerState`, the `PIN_LIMIT` code, and the one trap worth naming: a
+non-null `mutedUntil` does **not** mean muted — it has to be compared to
+the current time, because nothing sweeps expired rows.

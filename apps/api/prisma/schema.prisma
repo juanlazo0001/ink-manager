@@ -536,6 +536,9 @@ model User {
   // in, which is the behaviour they get today from nothing at all.
   pushEnabled   Boolean        @default(true)
   notifications Notification[] @relation("NotificationRecipient")
+  // Per-user, per-thread preferences -- pin and mute. Distinct from
+  // Conversation.archivedAt, which is deliberately studio-wide.
+  conversationStates UserConversationState[]
   // The other side: things this person DID that notified someone else.
   // Kept so "who assigned this to me" survives on the row rather than
   // only in the rendered sentence.
@@ -2853,6 +2856,7 @@ model Conversation {
   tags          ConversationTag[]
   prefillDrafts PrefillDraft[]
   participants  ConversationParticipant[]
+  viewerStates  UserConversationState[]
 
   @@index([studioId, type, lastMessageAt])
   @@index([studioId, archivedAt])
@@ -3337,4 +3341,61 @@ model PushReceipt {
   // Receipts are not ready immediately -- the checker only picks up rows
   // that have had time to settle, so it queries on this.
   @@index([createdAt])
+}
+
+// Per-user, per-conversation preferences: pin and mute.
+//
+// These had no home before this model. Conversation.archivedAt is
+// deliberately STUDIO-WIDE (see its own comment: "one shared record, not a
+// personal mailbox"), which is right for archiving and wrong for a pin --
+// pinning a thread to the top of YOUR list must not reorder anyone else's.
+// So this is the per-user half of conversation state, and the archive stays
+// the shared half. The two are not in tension; they answer different
+// questions.
+//
+// lastReadAt is declared and deliberately NOT wired in this work order.
+// Unread today is answered by ConversationRead (see
+// getUnreadCountForConversation), and consolidating the two is its own
+// decision with its own migration of existing rows. Declaring the column
+// now means that consolidation is a data move rather than a schema change
+// on a hot table -- but nothing reads or writes it yet, and a null here
+// means "not yet consolidated", never "never read".
+model UserConversationState {
+  id String @id @default(cuid())
+
+  userId         String
+  conversationId String
+
+  // Denormalized for studio-scoped queries and cleanup. ALWAYS derived
+  // server-side from the conversation row -- never read from a request
+  // body, same standing rule every other studioId write in this codebase
+  // follows.
+  studioId String
+
+  isPinned Boolean   @default(false)
+  // Set alongside isPinned, and what the per-requester sort orders by --
+  // most recently pinned first. Cleared when unpinned, so a re-pin goes
+  // back to the top rather than silently keeping its old position.
+  pinnedAt DateTime?
+
+  // A future instant, or null. Compared at READ time rather than swept by
+  // a job: an expired mute simply stops matching, so there is no window in
+  // which a lapsed mute is still suppressing anything and no cleanup job
+  // to fall behind.
+  mutedUntil DateTime?
+
+  // Reserved -- see this model's own comment. Not read or written yet.
+  lastReadAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id])
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+
+  // One row per person per thread -- the upsert target.
+  @@unique([userId, conversationId])
+  @@index([conversationId])
+  // Serves the pin-cap count (userId + isPinned) directly.
+  @@index([userId, isPinned])
 }
