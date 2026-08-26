@@ -39,14 +39,30 @@ Concise operating rules, not a project history — see REPORT.md for history.
   date/time-touching code as a candidate sighting, not a one-off.
 - Two different, non-interchangeable conventions are both legitimate in this codebase — know which
   one a given field uses before touching it:
-  - **A pure calendar date with no real time** (gift card `expiresAt`, waiver `dateOfBirth`, guest
-    residency start/end) is stored as **UTC midnight**. Write with `parseDateString`
-    (`apps/web/src/components/DateAndTimeRangeFields.tsx`) → `.toISOString()`, or the API's own
-    direct `new Date("YYYY-MM-DD")` on a bare date-only string (equivalent for this one write
-    case). **Read it back with `timeZone: 'UTC'` forced** (`formatCalendarDateOnly` in
-    `apps/web/src/lib/format.ts`, or `.slice(0, 10)` on the raw ISO string) — never a bare
-    `toLocaleDateString()`/`toLocaleString()`, which re-interprets that UTC midnight in the
-    viewer's own zone and can show the wrong day.
+  - **A pure calendar date with no real time.** There are **two** writers in this repo and they
+    are **NOT equivalent** — an earlier version of this note called them equivalent, which was
+    wrong and is exactly the bug `fix/web-task-due-date` had to undo. What matters is that the
+    READ matches the WRITE; either convention is fine on its own, mixing them is the bug.
+    - **UTC midnight** — produced by single-arg `new Date("YYYY-MM-DD")` on a bare date-only
+      string, wherever it runs. This is what gift card `expiresAt`
+      (`ClientDetail.tsx` → `new Date(form.expiresAt).toISOString()`), waiver `dateOfBirth`
+      (`WaiverSign.tsx`, same shape) and guest residency start/end
+      (`routes/residencies.ts`'s `parseDateOrNull`) all use. **Read these back with
+      `timeZone: 'UTC'` forced** — `formatCalendarDateOnly` in `apps/web/src/lib/format.ts`, or
+      `.slice(0, 10)` on the raw ISO string — never a bare
+      `toLocaleDateString()`/`toLocaleString()` and never local `Date` getters, which
+      re-interpret that UTC midnight in the viewer's own zone and show the wrong day west of UTC.
+    - **LOCAL midnight** — produced by `parseDateString`
+      (`apps/web/src/components/DateAndTimeRangeFields.tsx`), which is `new Date(y, m - 1, d)`.
+      `.toISOString()` on that is the local midnight EXPRESSED in UTC (`2026-08-25T04:00:00Z` in
+      EDT), **not** UTC midnight. `PersonalTask.dueAt` is written this way. **Read these back
+      with the matching local-zone helper** — `toDateString` from that same file, which is
+      `getFullYear`/`getMonth`/`getDate` and so round-trips `parseDateString` exactly. Forcing
+      `timeZone: 'UTC'` on one of these shows the wrong day EAST of UTC.
+    - Zero-padded `YYYY-MM-DD` strings compare correctly with `<`/`>`, so a calendar-day
+      comparison is `toDateString(a) < toDateString(b)` — never `new Date(dueAt) < new Date()`,
+      which compares instants and fires at 00:00 on the day something is due
+      (`Tasks.tsx`'s `isOverdue`, fixed on `fix/web-task-due-date`).
   - **A real instant that needs to be judged against a studio's business hours, "today," or wall
     clock** (scheduling, reminders, dashboard date ranges) must resolve `StudioSettings.timezone`
     explicitly and go through `apps/api/src/lib/studioTime.ts`'s `civilDateKey`/
