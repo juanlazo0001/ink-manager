@@ -210,6 +210,65 @@ export async function sendSms(
   return { sid: message.sid, status: message.status };
 }
 
+// Twilio's own statuses that mean "this message is finished, nothing more
+// will change." Everything else (accepted / scheduled / queued / sending /
+// sent) is still in flight and worth re-checking.
+//
+// `sent` is deliberately NOT treated as terminal: it only means the carrier
+// accepted hand-off, and a delivery receipt may still upgrade it to
+// `delivered`. It can also legitimately stay `sent` forever where a carrier
+// returns no receipt at all -- which is why the reconciler bounds itself by
+// message age rather than retrying such a message indefinitely.
+const TERMINAL_SMS_STATUSES = new Set(["delivered", "undelivered", "failed", "canceled", "read"]);
+
+export function isTerminalSmsStatus(status: string | null | undefined): boolean {
+  return typeof status === "string" && TERMINAL_SMS_STATUSES.has(status);
+}
+
+export interface TwilioMessageStatus {
+  status: string;
+  errorCode: number | null;
+  errorMessage: string | null;
+}
+
+// Asks Twilio what a message's status ACTUALLY is, rather than waiting to
+// be told. Exists because delivery-status callbacks proved lossy in
+// production: on 2026-08-25, 5 of 9 real sends sat at "queued" in this
+// database while Twilio reported every one of them delivered -- with no
+// 11200 alerts, so Twilio never saw an error from us either. Whatever the
+// mechanism, a thread that says "Queued" forever for a message the client
+// already received is worse than the problem the status column solves.
+//
+// Pulling the truth on a timer is robust to the cause: it self-heals
+// whether a callback was never sent, arrived before the Message row
+// existed, or was lost in between. The callback path stays exactly as it
+// is -- this is a backstop, not a replacement, so the common case is still
+// updated within seconds rather than on the next tick.
+//
+// Returns null when Twilio has no such message (a 404), which is not an
+// error worth throwing over -- a sid that Twilio has aged out or never had
+// is simply unreconcilable.
+export async function fetchMessageStatus(
+  { accountSid, authToken }: TwilioCredentials,
+  messageSid: string,
+): Promise<TwilioMessageStatus | null> {
+  const client = Twilio(accountSid, authToken);
+
+  try {
+    const message = await client.messages(messageSid).fetch();
+    return {
+      status: message.status,
+      errorCode: message.errorCode ?? null,
+      errorMessage: message.errorMessage ?? null,
+    };
+  } catch (err) {
+    if (err && typeof err === "object" && "status" in err && (err as { status?: number }).status === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
 // Signature validation is what makes the multi-tenant webhook safe: the
 // caller resolves WHICH studio a request claims to be for first (by the
 // To number), THEN validates the signature against that specific studio's

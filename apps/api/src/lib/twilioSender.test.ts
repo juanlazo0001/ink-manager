@@ -14,7 +14,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveTwilioSender, twilioOwnsKeywordReplies } from "./twilio";
+import { isTerminalSmsStatus, resolveTwilioSender, twilioOwnsKeywordReplies } from "./twilio";
 
 test("a configured Messaging Service wins over the raw From number", () => {
   const sender = resolveTwilioSender({
@@ -109,4 +109,37 @@ test("missing metadata never suppresses", () => {
   assert.equal(twilioOwnsKeywordReplies(null), false);
   assert.equal(twilioOwnsKeywordReplies(undefined), false);
   assert.equal(twilioOwnsKeywordReplies({}), false);
+});
+
+// --- Delivery-status reconciliation ------------------------------------
+//
+// Drives which messages smsDeliveryStatusReconcile re-checks. Getting this
+// wrong is expensive in both directions: treating a live status as terminal
+// leaves a message stuck showing the wrong thing forever (the exact bug the
+// job exists to fix), while treating a finished one as live re-fetches it
+// from Twilio on every tick for three days.
+
+test("Twilio's finished statuses are terminal", () => {
+  for (const s of ["delivered", "undelivered", "failed", "canceled", "read"]) {
+    assert.equal(isTerminalSmsStatus(s), true, `${s} should be terminal`);
+  }
+});
+
+test("in-flight statuses are NOT terminal and stay eligible for reconciliation", () => {
+  for (const s of ["accepted", "scheduled", "queued", "sending"]) {
+    assert.equal(isTerminalSmsStatus(s), false, `${s} should not be terminal`);
+  }
+});
+
+test("'sent' is deliberately NOT terminal -- a receipt can still upgrade it to delivered", () => {
+  // This is the one that actually bit: every message stuck in production
+  // was sitting at a non-terminal status while Twilio already knew better.
+  assert.equal(isTerminalSmsStatus("sent"), false);
+});
+
+test("a missing or unknown status is not terminal, so it gets re-checked rather than trusted", () => {
+  assert.equal(isTerminalSmsStatus(undefined), false);
+  assert.equal(isTerminalSmsStatus(null), false);
+  assert.equal(isTerminalSmsStatus(""), false);
+  assert.equal(isTerminalSmsStatus("Delivered"), false); // case-sensitive: Twilio sends lowercase
 });

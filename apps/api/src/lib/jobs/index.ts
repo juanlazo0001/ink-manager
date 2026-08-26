@@ -7,5 +7,6 @@ import "./giftCardExpirationSweep";
 import "./coldLeadSweep";
 import "./reminderTicker";
 import "./emailPoller";
+import "./smsDeliveryStatusReconcile";
 
 export { startScheduler, runJob, getJob, listJobs } from "./registry";
