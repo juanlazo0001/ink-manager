@@ -164,8 +164,14 @@ interface Appointment {
   startTime: string
   endTime: string
   status: string
-  finalCostCents: number | null
-  closeoutNotes: string | null
+  // Optional as of the appointments response projection: GET /appointments
+  // withholds both unless the caller holds appointments.checkout at the
+  // row's OWN studio. This page is behind clients.view, which is a
+  // different permission -- an artist granted clients.view but not
+  // checkout reaches this table and must see "—" rather than a figure.
+  finalCostCents?: number | null
+  closeoutNotes?: string | null
+  // Ungated -- operational status, and what describeAppointmentStatus reads.
   checkedOutAt: string | null
   liabilityWaiver: { status: string } | null
   // Matches GET /appointments's response shape (Phase UI-5) -- a display

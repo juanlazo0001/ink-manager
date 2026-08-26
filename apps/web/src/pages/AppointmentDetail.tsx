@@ -73,25 +73,40 @@ interface Appointment {
   appointmentType: 'TATTOO_SESSION' | 'CONSULTATION'
   notes: string | null
   archivedAt: string | null
-  finalCostCents: number | null
+  // Optional as of the appointments response projection: GET
+  // /appointments/:id no longer returns the whole row to anyone holding
+  // appointments.view. Every `?` below marks a field the API WITHHOLDS
+  // (deletes the key -- absent, never null) unless the caller passes the
+  // matching check at this appointment's own studio. The gates this page
+  // already applied client-side are unchanged and are still what decides
+  // what renders; the optionality just makes the wire shape honest.
+  //
+  //   appointments.checkout -> the money block + who closed it out
+  //   giftCards.view        -> giftCards
+  //   staff standing        -> the client's real contact details
+  finalCostCents?: number | null
   // Tipping: null until the tip step has run (pre-tipping appointments, or
   // embeddedPaymentsEnabled off); 0 once the client explicitly chose no tip.
-  tipCents: number | null
-  closeoutNotes: string | null
+  tipCents?: number | null
+  closeoutNotes?: string | null
+  // Ungated: operational status ("this session is closed out"), not a
+  // financial figure -- unlike checkedOutBy right below it.
   checkedOutAt: string | null
-  checkedOutBy: { id: string; name: string | null; email: string } | null
-  paidVia: 'STRIPE' | 'MANUAL' | null
+  checkedOutBy?: { id: string; name: string | null; email: string } | null
+  paidVia?: 'STRIPE' | 'MANUAL' | null
   client: {
     id: string
     firstName: string
     lastName: string
-    referralCode: string
-    phone: string | null
-    email: string | null
-    phones: { id: string }[]
-    emails: { id: string }[]
-    smsConsentGivenAt: string | null
-    smsOptedOutAt: string | null
+    // Travels with appointments.checkout, not with the contact details --
+    // it only ever renders inside the checkout-complete panel.
+    referralCode?: string
+    phone?: string | null
+    email?: string | null
+    phones?: { id: string }[]
+    emails?: { id: string }[]
+    smsConsentGivenAt?: string | null
+    smsOptedOutAt?: string | null
   }
   // Default true elsewhere -- matches every studio's always-on behavior
   // before this flag existed. Not defaulted here since `appointment` is
@@ -126,7 +141,11 @@ interface Appointment {
   // Multi-session planning: null for every appointment on a project with
   // no session plan at all, or one booked outside the plan.
   plannedSession: { sessionNumber: number; estimatedHoursMin: number; estimatedHoursMax: number; totalSessions: number } | null
-  giftCards: GiftCardSummary[]
+  // Withheld entirely without giftCards.view -- which is a DIFFERENT
+  // permission from the appointments.checkout that gates the checkout
+  // widget below, so the two can genuinely disagree for a custom role
+  // matrix. Read through the `giftCards` local, never directly.
+  giftCards?: GiftCardSummary[]
   liabilityWaiver: WaiverSummary | null
   photos: AppointmentPhoto[]
 }
@@ -357,7 +376,9 @@ export default function AppointmentDetail() {
   if (appointment && appointment.id !== seededDecisionsForId) {
     setSeededDecisionsForId(appointment.id)
     setCardDecisions(
-      Object.fromEntries(appointment.giftCards.filter((c) => c.status !== 'EXEMPT').map((c) => [c.id, 'REDEEM'])),
+      Object.fromEntries(
+        (appointment.giftCards ?? []).filter((c) => c.status !== 'EXEMPT').map((c) => [c.id, 'REDEEM']),
+      ),
     )
   }
 
@@ -843,7 +864,16 @@ export default function AppointmentDetail() {
   // later fetch IS exactly the redeemed set. Simpler than trying to
   // reconstruct "what was decided" from a value this page doesn't
   // separately persist.
-  const checkoutRedeemedCards = appointment?.checkedOutAt ? (appointment.giftCards ?? []) : []
+  // One place the withheld-vs-empty distinction is resolved. The API
+  // deletes `giftCards` outright for a caller without giftCards.view
+  // rather than sending `[]` -- an empty array would claim this session
+  // has no cards attached, which is a different (and possibly false)
+  // statement. Every read below goes through this local, because the
+  // checkout widget is gated on appointments.checkout, a DIFFERENT
+  // permission that a custom role matrix can grant without the other.
+  const giftCards = appointment?.giftCards ?? []
+
+  const checkoutRedeemedCards = appointment?.checkedOutAt ? giftCards : []
   const checkoutRedeemedTotalCents = checkoutRedeemedCards.reduce((sum, c) => sum + c.amountCents, 0)
 
   const checkoutAmountDue =
@@ -1077,13 +1107,13 @@ export default function AppointmentDetail() {
                     page is separately gated on giftCards.view -- so this block
                     (not just the link) is hidden for a role lacking it, rather
                     than showing the figures with a dead link underneath. */}
-                {canViewGiftCards && appointment.giftCards.length > 0 && (
+                {canViewGiftCards && giftCards.length > 0 && (
                   <div className="mt-4 border-t border-border pt-4 text-sm">
                     <span className="text-fg-muted">
-                      Gift card{appointment.giftCards.length === 1 ? '' : `s (${appointment.giftCards.length})`}:{' '}
+                      Gift card{giftCards.length === 1 ? '' : `s (${giftCards.length})`}:{' '}
                     </span>
                     <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
-                      {appointment.giftCards.map((card, i) => {
+                      {giftCards.map((card, i) => {
                         const label =
                           card.status === 'EXEMPT'
                             ? `Deposit Exemption${card.exemptionReason ? ` (${card.exemptionReason})` : ''}`
@@ -1093,7 +1123,7 @@ export default function AppointmentDetail() {
                             <Link to={`/gift-cards/${card.id}`} className="text-fg hover:underline">
                               {label}
                             </Link>
-                            {i < appointment.giftCards.length - 1 ? ',' : ''}
+                            {i < giftCards.length - 1 ? ',' : ''}
                           </span>
                         )
                       })}
@@ -1153,8 +1183,8 @@ export default function AppointmentDetail() {
                     <div className="mt-3">
                       <SendChannelButton
                         label="Create & Send Waiver"
-                        hasPhone={appointment.client.phones.length > 0}
-                        hasEmail={appointment.client.emails.length > 0}
+                        hasPhone={(appointment.client.phones ?? []).length > 0}
+                        hasEmail={(appointment.client.emails ?? []).length > 0}
                         smsConsentGivenAt={appointment.client.smsConsentGivenAt}
                         smsOptedOutAt={appointment.client.smsOptedOutAt}
                         sending={creatingWaiver}
@@ -1441,13 +1471,13 @@ export default function AppointmentDetail() {
               {canCheckout && appointment.appointmentType === 'TATTOO_SESSION' && (
                 <Widget key="checkout" id="checkout" title="Checkout">
 
-                  {!appointment.checkedOutAt && appointment.giftCards.length === 0 && (
+                  {!appointment.checkedOutAt && giftCards.length === 0 && (
                     <p className="mt-4 text-sm text-fg-secondary">
                       This appointment has no attached gift card — checkout is unavailable until that's resolved.
                     </p>
                   )}
 
-                  {!appointment.checkedOutAt && appointment.giftCards.length > 0 && (
+                  {!appointment.checkedOutAt && giftCards.length > 0 && (
                     <form onSubmit={handleCheckout} className="mt-4 space-y-4">
                       <div>
                         <label className="mb-1 block text-sm font-medium text-fg-secondary">Final cost ($)</label>

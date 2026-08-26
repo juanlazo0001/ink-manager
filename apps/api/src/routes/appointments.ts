@@ -24,6 +24,12 @@ import {
   hasPermissionAt,
   hasPermissionOrSoloArtistAt,
 } from "../lib/artistAccess";
+import {
+  resolveAppointmentVisibility,
+  resolveAppointmentVisibilityForStudios,
+  applyAppointmentVisibility,
+} from "../lib/appointmentVisibility";
+import { normalizeArtistFieldVisibility } from "../lib/artistFieldVisibility";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
@@ -387,7 +393,30 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
     }
   }
 
-  res.json(combined.map(shapeListAppointment));
+  // Response projection (see lib/appointmentVisibility.ts): this route's
+  // include -- not select -- means every scalar column on Appointment rode
+  // along, finalCostCents/tipCents/closeoutNotes/paidVia and both Stripe
+  // ids included, to anyone holding appointments.view. packages/
+  // shared-types' own AppointmentListItem asserted the opposite ("the list
+  // route does not return money fields, notes, Stripe ids, or reminder
+  // timestamps"); it was describing an intent, not the behaviour.
+  //
+  // Not fixed by narrowing the include to a `select`: web's ClientDetail
+  // legitimately reads finalCostCents off THIS route for its session-
+  // history table (ClientDetail.tsx's own Appointment interface), so the
+  // fields must still reach a caller entitled to them. Batched per
+  // distinct studioId because an ARTIST's results span home + every
+  // active guest studio in one response.
+  const visibilityByStudio = await resolveAppointmentVisibilityForStudios(
+    req.user!,
+    combined.map((a) => a.studioId),
+  );
+
+  res.json(
+    combined.map((appointment) =>
+      applyAppointmentVisibility(shapeListAppointment(appointment), visibilityByStudio.get(appointment.studioId)!),
+    ),
+  );
 });
 
 const APPOINTMENT_DETAIL_INCLUDE = {
@@ -489,10 +518,16 @@ router.get("/:id", async (req, res) => {
   // studio's always-on behavior before this flag existed. Reads the
   // APPOINTMENT's own studio settings, not req.user!.studioId -- those
   // differ for a guest artist viewing an appointment at their guest studio.
+  // artistFieldVisibility read alongside referralProgramEnabled rather
+  // than as a second round trip -- see the pricing strip below.
   const studioSettings = await prisma.studioSettings.findUnique({
     where: { studioId: appointment.studioId },
-    select: { referralProgramEnabled: true },
+    select: { referralProgramEnabled: true, artistFieldVisibility: true },
   });
+
+  // Response projection -- see lib/appointmentVisibility.ts for the full
+  // contract and why each rule is what the two clients already gate on.
+  const visibility = await resolveAppointmentVisibility(req.user!, appointment.studioId);
 
   const { inquiryProject, plannedSession, studio, ...rest } = appointment;
   const { plannedSessions: projectPlannedSessions, ...inquiryProjectRest } = inquiryProject ?? {};
@@ -501,8 +536,28 @@ router.get("/:id", async (req, res) => {
     referenceImagesDetail: await resolveImageMeta(inquiryProject.referenceImages, inquiryProject.referenceImagesMeta),
     placementImagesDetail: await resolveImageMeta(inquiryProject.placementImages, inquiryProject.placementImagesMeta),
   };
+
+  // Beyond the three permission-driven rules: this route's embedded
+  // project context (budget, priceEstimateLow/High) is the SAME data
+  // StudioSettings.artistFieldVisibility.pricingDetail already lets a
+  // studio hide from its artists on every inquiries.ts route
+  // (lib/artistFieldVisibility.ts's applyArtistFieldVisibility deletes
+  // exactly these keys). A studio that had switched that off was still
+  // handing an artist the estimate through here -- a way around a setting
+  // they had deliberately set, not a separate decision. Applies only to an
+  // effective ARTIST, same as the setting itself.
+  if (
+    inquiry &&
+    visibility.role === Role.ARTIST &&
+    !normalizeArtistFieldVisibility(studioSettings?.artistFieldVisibility).pricingDetail
+  ) {
+    delete (inquiry as Record<string, unknown>).budget;
+    delete (inquiry as Record<string, unknown>).priceEstimateLow;
+    delete (inquiry as Record<string, unknown>).priceEstimateHigh;
+  }
+
   res.json({
-    ...rest,
+    ...applyAppointmentVisibility(rest, visibility),
     inquiry,
     studio,
     // Same fromGuestStudio convention as inquiries.ts's GET /assigned-to-me/:id

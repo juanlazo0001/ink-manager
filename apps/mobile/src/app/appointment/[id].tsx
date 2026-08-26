@@ -123,9 +123,20 @@ export default function AppointmentDetailScreen() {
   const minutes = durationMinutes(appointment.startTime, appointment.endTime);
   const dateKey = timeZoneReady ? civilDateKey(new Date(appointment.startTime), timeZone) : null;
   const showZone = timeZoneReady && timeZone !== deviceTimeZone();
+  // `?? null`, not `!`: the API withholds these entirely when this studio
+  // has switched artistFieldVisibility.pricingDetail off, so undefined is
+  // a real state here, not a type-system formality.
   const estimate = appointment.inquiry
-    ? formatPriceEstimate(appointment.inquiry.priceEstimateLow, appointment.inquiry.priceEstimateHigh)
+    ? formatPriceEstimate(
+        appointment.inquiry.priceEstimateLow ?? null,
+        appointment.inquiry.priceEstimateHigh ?? null,
+      )
     : null;
+  // Absent (not empty) when the caller lacks giftCards.view -- the API
+  // deletes the key rather than sending an empty array, since `[]` would
+  // claim this session has no cards attached rather than that this caller
+  // may not see them.
+  const giftCards = appointment.giftCards ?? [];
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -297,9 +308,9 @@ export default function AppointmentDetailScreen() {
         {/* Gift card amounts are their own permission on web, separate
             from the checkout gate above, for the same financial-detail
             reason. Hidden entirely rather than shown without figures. */}
-        {visibility.canSeeGiftCards && appointment.giftCards.length > 0 ? (
-          <DetailSection title={appointment.giftCards.length === 1 ? 'Gift card' : 'Gift cards'}>
-            {appointment.giftCards.map((card, i) => (
+        {visibility.canSeeGiftCards && giftCards.length > 0 ? (
+          <DetailSection title={giftCards.length === 1 ? 'Gift card' : 'Gift cards'}>
+            {giftCards.map((card, i) => (
               <View key={card.id}>
                 {i > 0 ? <FieldDivider /> : null}
                 <DetailField

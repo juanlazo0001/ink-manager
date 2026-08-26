@@ -24,9 +24,17 @@ export interface AppointmentInquiryRef {
  *
  * Scalars come straight off the `Appointment` model; `artist`, `client`,
  * `inquiry` and `liabilityWaiver` are the shaped relations the list route
- * returns (`shapeListAppointment`). Deliberately narrower than the full
- * model — the list route does not return money fields, notes, Stripe ids,
- * or reminder timestamps.
+ * returns (`shapeListAppointment`).
+ *
+ * Narrower than the full model — but note this interface once claimed the
+ * route "does not return money fields, notes, Stripe ids, or reminder
+ * timestamps" while the route used a Prisma `include`, so every one of
+ * those scalars was in fact on the wire. It is true now because the route
+ * projects the response per caller (`lib/appointmentVisibility.ts`), not
+ * because the query was ever narrow. `finalCostCents` and `closeoutNotes`
+ * DO still reach a caller holding `appointments.checkout` at the row's own
+ * studio — web's ClientDetail session-history table depends on that — so
+ * they are declared, optionally, below.
  */
 export interface AppointmentListItem {
   id: string;
@@ -36,7 +44,17 @@ export interface AppointmentListItem {
   status: AppointmentStatus;
   appointmentType: AppointmentType;
   depositPaid: boolean;
+  /**
+   * Operational status, NOT a financial field — deliberately ungated, and
+   * the same value `ARTIST_INQUIRY_SELECT` already hands artists on their
+   * own projects. It is what tells "Session Complete" apart from
+   * "Scheduled" in the project-stage derivation.
+   */
   checkedOutAt: string | null;
+  /** Present only with `appointments.checkout` at this row's own studio. */
+  finalCostCents?: number | null;
+  /** Present only with `appointments.checkout` at this row's own studio. */
+  closeoutNotes?: string | null;
   archivedAt: string | null;
   studioId: string;
   clientId: string | null;
@@ -113,24 +131,38 @@ export interface BusinessHoursEntry {
 // GET /appointments/:id — the detail response
 // ---------------------------------------------------------------------
 //
-// Considerably richer than a list row, and returned in full to anyone
-// with `appointments.view` at the appointment's own studio — including an
-// ARTIST, for whom that permission is on by default. The API does NOT
-// project this response per-role, so **deciding what a role should
-// actually SEE is the client's job**, and getting it wrong leaks.
+// Considerably richer than a list row. **The API now projects this
+// response per caller** (`apps/api/src/lib/appointmentVisibility.ts`) —
+// it did not always, and the difference matters to how you read the types
+// below.
 //
-// `apps/web`'s own AppointmentDetail is the precedent worth matching
-// rather than re-deciding:
-//   - final cost / tip / closeout notes sit behind `appointments.checkout`
-//   - gift card amounts sit behind `giftCards.view` (its comment: the same
-//     financial detail `reports.viewFinancial` keeps off an artist's
-//     dashboard by default)
-//   - client phone/email are never rendered at all — only their presence,
-//     and only inside a staff-gated send-channel picker
-//   - staff management UI additionally requires the record to be at the
-//     caller's HOME studio, i.e. `fromGuestStudio === null`
+// Previously the whole row was returned to anyone with `appointments.view`
+// (which an ARTIST has by DEFAULT) and every rule below was enforced
+// client-side, independently, in this repo's two clients. Both agreed;
+// neither bound `curl`. The server now enforces the same three rules, each
+// evaluated at the APPOINTMENT's own studio and against the caller's
+// EFFECTIVE role there — so a solo owner-artist reaching a host studio's
+// appointment through a guest membership is judged as the ARTIST they are
+// there, not the OWNER they are at home:
+//   - final cost / tip / closeout notes / payment plumbing / who closed it
+//     out sit behind `appointments.checkout`
+//   - the gift-card stack sits behind `giftCards.view` (the same financial
+//     detail `reports.viewFinancial` keeps off an artist's dashboard)
+//   - client phone / email / SMS-consent state sit behind staff standing:
+//     a real OWNER/FRONT_DESK role AND `fromGuestStudio === null`
+//   - the embedded project's `budget` / `priceEstimateLow` / `High` are
+//     additionally subject to the studio's own
+//     `artistFieldVisibility.pricingDetail` setting for an ARTIST, the
+//     same way every `inquiries` route already applies it
 // None of `appointments.checkout`, `giftCards.view` or `clients.view` is
 // in an ARTIST's default permission set.
+//
+// Withheld fields are ABSENT from the JSON, never null — `null` would be a
+// claim ("closed out at no charge"), absence is not. That is why every
+// gated field below is `?`-optional: reaching for one without first
+// checking the matching permission is a type error, which is the point.
+// Clients should still gate their UI on the same permissions rather than
+// on `undefined`; the optionality is a backstop, not the design.
 
 export interface AppointmentDetailArtist {
   id: string;
@@ -139,21 +171,25 @@ export interface AppointmentDetailArtist {
 }
 
 /**
- * Contact fields are present on the wire but should not be displayed —
+ * Contact fields reach only a caller with staff standing on this record —
  * see the note above. `phones`/`emails` are presence-only (ids), which is
- * all the web uses them for.
+ * all the web uses them for, inside its staff-gated send-channel picker.
  */
 export interface AppointmentDetailClient {
   id: string;
   firstName: string;
   lastName: string;
-  referralCode: string | null;
-  phone: string | null;
-  email: string | null;
-  smsConsentGivenAt: string | null;
-  smsOptedOutAt: string | null;
-  phones: { id: string }[];
-  emails: { id: string }[];
+  /**
+   * Rendered only inside the checkout-complete panel, so it travels with
+   * `appointments.checkout` rather than with the contact fields below.
+   */
+  referralCode?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  smsConsentGivenAt?: string | null;
+  smsOptedOutAt?: string | null;
+  phones?: { id: string }[];
+  emails?: { id: string }[];
 }
 
 /** The project this session belongs to. Null for a session booked outside one. */
@@ -163,9 +199,14 @@ export interface AppointmentDetailInquiry {
   clientId: string;
   colorOrBlackGrey: string | null;
   placement: string | null;
-  budget: string | null;
-  priceEstimateLow: number | null;
-  priceEstimateHigh: number | null;
+  /**
+   * Withheld from an ARTIST whose studio has switched
+   * `artistFieldVisibility.pricingDetail` off — the same setting, and the
+   * same three fields, every `inquiries` route already honours.
+   */
+  budget?: string | null;
+  priceEstimateLow?: number | null;
+  priceEstimateHigh?: number | null;
   referenceImages: string[];
   placementImages: string[];
 }
@@ -221,20 +262,22 @@ export interface AppointmentDetail {
   clientId: string | null;
   artistId: string;
 
-  /** Financial — gate on `appointments.checkout` before displaying. */
-  finalCostCents: number | null;
-  tipCents: number | null;
-  closeoutNotes: string | null;
+  /** Financial — present only with `appointments.checkout` at this row's own studio. */
+  finalCostCents?: number | null;
+  tipCents?: number | null;
+  closeoutNotes?: string | null;
+  /** Operational status, not a financial figure — always present. See `AppointmentListItem`. */
   checkedOutAt: string | null;
-  checkedOutBy: { id: string; name: string | null; email: string } | null;
+  /** WHO closed it out travels with the money, not with `checkedOutAt`. */
+  checkedOutBy?: { id: string; name: string | null; email: string } | null;
 
   artist: AppointmentDetailArtist;
   client: AppointmentDetailClient | null;
   inquiry: AppointmentDetailInquiry | null;
   plannedSession: AppointmentPlannedSession | null;
   liabilityWaiver: AppointmentWaiverSummary | null;
-  /** Gate on `giftCards.view` before displaying amounts. */
-  giftCards: AppointmentGiftCard[];
+  /** Present only with `giftCards.view` at this row's own studio. */
+  giftCards?: AppointmentGiftCard[];
   photos: AppointmentPhoto[];
 
   studio: { id: string; name: string };
