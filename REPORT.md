@@ -26851,3 +26851,252 @@ it.
 6. **The download icon on a signed deposit form or waiver** — this is the one that has never run on
    hardware. Expect a spinner, then the iOS share sheet. Save it to Files and open it: it should be
    a real, readable PDF, not an error page.
+
+# Mobile session AC — the pill, Flash's filters, and the toggle settled by measurement
+
+**Base: `mobile/session-ab` at `50d8000`** — the stack head. T2 → AB remain unmerged (`main` is at
+`151c0d8`). Worktree cut from AB; one commit (`f8af371`), pushed.
+
+---
+
+## 3 — The toggle. Fifth report, and the first one with a measurement that could fail
+
+**The brief's premise is not true, and checking it is what produced the fix.**
+
+> "adopt the segmented-tab pattern that Tasks (AA item 3) now uses — QUEUE/MINE/OTHERS style
+> segments render labels + counts without collision because they size from a different anatomy"
+
+Tasks renders `SegmentedControl`. Inquiries renders `SegmentedControl`. It renders `Pill`. **They
+are the same three components.** The single difference is one line:
+
+```tsx
+// tasks.tsx          { key: 'mine', label: 'Mine' }                       <- no count
+// inquiries.tsx      { key: v.key, label: …, count: counts[v.key] }       <- a count
+```
+
+Tasks does not collide because Tasks has no badges. The badge was the entire delta.
+
+### Why four fixes "passed" and the phone still lost
+
+`Pill` already carries `flexShrink: 0` on the pill, on the badge and on the label, plus
+`maxFontSizeMultiplier: 1.3`. Its comment records a measurement — *"both pills end at 291px, so this
+fits a 320pt screen with 29px to spare"* — and that measurement is correct. It is also taken in a
+browser, and **react-native-web implements no iOS Dynamic Type at all**. Every previous check tested
+the one condition in which the cause cannot occur.
+
+So this session emulated it: scale the text and not the padding, which is what Dynamic Type does,
+up to 1.3× — the largest the shipped control still permits. Jura confirmed loaded
+(`Jura_500Medium`), two-digit counts, both variants, four widths:
+
+| width | A: with badges @1.0 | A @1.3 | B: labels only @1.0 | B @1.3 |
+| --- | --- | --- | --- | --- |
+| **320** | ends 288px | **ends 327px — 7px past the screen** | ends 231px | ends 265px (55px spare) |
+| 375 | 288px | 327px (48 spare) | 231px | 265px (110 spare) |
+| 390 | 288px | 327px (63 spare) | 231px | 265px (125 spare) |
+| 430 | 288px | 327px (103 spare) | 231px | 265px (165 spare) |
+
+**327 > 320 is the bug.** And because two earlier fixes pinned `flexShrink: 0`, it does not
+ellipsis — it overflows into the horizontal scroll, which on a phone reads exactly as *"PROJECTS is
+cut off"*. The pinning was right; it just moved the symptom from truncation to overflow.
+
+### The decision
+
+**Variant B: labels alone, counts in the sub-header** — the brief's stated fallback, and the
+evidence supports it rather than merely permitting it:
+
+- it is the only variant that fits the narrowest supported width at the largest permitted text;
+- the counts were **already** on screen — AB put "24 inquiries · 18 projects" in the title's
+  sub-header. The badges were a second copy of the same two numbers, 40px below the first, and they
+  were the copy that could not fit;
+- it makes Inquiries and Tasks the same control with the same inputs, which is what "one system"
+  should mean.
+
+Both renders are in the exhibits, at 320pt with the screen edge drawn in red.
+
+## 1 — The action slot is web's pill
+
+Extracted, not eyeballed. `FlashGallery.tsx`'s own button plus `.editorial-btn-primary`
+(`index.css:1948`):
+
+| | web | mobile |
+| --- | --- | --- |
+| shape | `rounded-full` | `radius.pill` |
+| padding | `px-4 py-2` | 16 / 8 |
+| fill | `bg-accent` **#c99a5b** | `colors.accent` |
+| label colour | `text-bg` **#0e0b08** | `colors.bg` |
+| font | `var(--font-jura)` 400, 11.5px | `fonts.label`, 11.5 |
+| tracking | `0.14em` | 1.61 |
+| case | `uppercase` | uppercase |
+| glyph / gap | `h-4 w-4` / `gap-2` | 16 / 8 |
+
+**The label colour is `bg`, not `accentFg`** (#0e0b08 vs #171208). Two different tokens, close
+enough to look identical — guessing would have been a guess. It replaced an icon-only circle in
+`accentButton` (#d5a05c), a *third* gold, that made the reader work out what "+" meant per screen.
+
+## 2 — Flash's two dropdowns
+
+**Multi-select, verified from source rather than assumed.** `FlashGallery` renders two
+`MultiSelectFilter`s and filters with `selected.includes(...)` over a `string[]`. (Worth noting the
+method cuts both ways: `PillMenu`'s own comment records that web's *task* filters are single-select,
+so mobile made those single. Same method, opposite answer.)
+
+New `MultiPillMenu` reuses the existing trigger and sheet, and carries web's trigger-label rule
+verbatim — placeholder → that option's label → "N selected" — plus "Clear all" at the top only when
+something is selected, and a tap that never dismisses the sheet.
+
+The artist filter is conditional exactly as web gates it: `canManageOthers && !isSoloStudio`. An
+ARTIST caller is narrowed server-side to their own pieces, so the control would offer one option.
+
+### The one-artist gallery link — investigated, and NOT built
+
+What web renders: filter to exactly one artist and a **"Copy public gallery link"** button appears
+(an ARTIST or solo studio gets it unconditionally). It copies
+`${origin}/flash/${studioSlug}/${artistId}`.
+
+**It cannot come over, and the blocker is not effort.** Mobile can get both ids — `GET /studios/:id`
+returns `slug`, the artist id is in the profile — but the **origin** is `PUBLIC_APP_URL`, which
+exists only on the server. `apps/api/src/lib/publicUrl.ts` is explicit that it is a different domain
+from the API's own, so deriving it from `API_URL` would be wrong, and hardcoding it is inventing
+API surface.
+
+The one route that already builds this URL is `GET /clients/:id/shareable-links` — but it is
+per-client and only lists artists with AVAILABLE pieces, so it cannot answer "my own gallery link".
+
+**The smallest unblock**, if wanted later: have `GET /artists` (or `/users/me`'s artist block) return
+the built `publicGalleryUrl`, the way gift cards already return `publicUrl`. Then mobile copies a
+string the server owns, which is the pattern this codebase already uses everywhere else.
+
+## 4 — New Inquiry is live
+
+AB deferred this. AC builds it, and the deferral turned out to be about length rather than
+difficulty.
+
+**One route, two callers.** `POST /inquiries` is mounted with `optionalAuth` and branches on
+`req.user`, not on the path: no token → the public form, `studioSlug` required; a token → staff, the
+studio comes from the token, and `inquiries.create` is checked **inline** (there is no
+`requirePermission` middleware to hang off a dual-purpose route). So mobile sends no `studioSlug` —
+sending one would be inventing a parameter the staff branch never reads.
+
+Web's fourteen fields, its rules to the digit: the nine required ones, phone optional but ten digits
+if given, a referral code when the channel is REFERRAL, at least one reference image and one
+placement photo. The channel list is web's deliberate subset — five of `Channel`'s six, since
+FLASH_GALLERY is set only by the public flash-request flow and staff cannot pick it.
+
+**Deliberately not ported:** web's client-search box, which locks contact fields to a matched record
+via `existingClientId`. It is a second search surface with its own matched/locked states, and
+omitting it changes nothing about what gets created — the server matches on email either way.
+
+Built as a pushed `FormScreen`, not a sheet: this app has one idiom for "a long form you can leave"
+and it already carries the unsaved-changes guard.
+
+## 5 — Schedule takes the title
+
+"Schedule", with a live line derived from `sections` — the exact rows about to render, so it cannot
+disagree with the list under it. Day mode says "N sessions today" only when the selected day *is*
+the studio's today; Upcoming says "N sessions upcoming". Day/Upcoming and TODAY stay in their row
+below. **No action slot** — appointment creation is backend-gated, and a button that only apologises
+is worse than no button.
+
+It also gave a homeless string a home: `subtitle` (the "Times in …" / "Studio timezone unavailable"
+note) was **computed and never rendered**, dead since some earlier refactor. It matters on this
+screen specifically — "today" here means the *studio's* today, and a viewer in another zone had no
+way to know.
+
+## Two defects found while verifying
+
+Neither was in the brief; both were visible the moment a screen was actually looked at.
+
+1. **The count line truncated mid-word.** Once the action became a labelled pill it took real width,
+   and Flash's own line was cut to "…1 b…" at 390pt. It wraps to two lines now. A summary should
+   wrap; chrome should not.
+2. **`DayStrip` was missing `flexGrow: 0`.** On a day with nothing booked the selected date rendered
+   as a ~300px tall gold column. **This is the third place in this app to need that exact line** —
+   `Pill`'s row and `SegmentedControl` both carry the same note, both learned the hard way.
+   Pre-existing, not introduced here; it shows on any empty day.
+
+And one caught during implementation: at 320pt, "Inquiries" wanted 131px and had 130 — **short by
+one pixel**, which character-wrapped the word into "Inquirie / s". A one-pixel miss is not a
+one-pixel problem, so the fix is structural and is web's own: its header is `flex flex-wrap`, so the
+row wraps and the action drops to its own line when the title cannot have its minimum. Verified: it
+wraps at 320 and sits beside the title at 375, 390 and 430.
+
+## The write-path evidence — dev database only
+
+Confirmed the database before writing: session AB's own fixtures are present, 100 clients. Every
+call went to `127.0.0.1:4011`. **Production untouched.** (Port 4011, not 4001 — another session's
+API held 4001 and killing it was not mine to do.)
+
+| Step | Result |
+| --- | --- |
+| create, exactly the body mobile sends | **201** — `cmt9dkmf40003nwi2pdht49l5`, status NEW |
+| missing required fields | **400**, and the server names them in its own words: *Describe the tattoo you want, Color or Black & Grey?, Placement, Estimated size, Have you been tattooed before?, Reference images, Placement photos* — which is exactly mobile's required set, including both photo types |
+| `hasBeenTattooedBefore: "yes"` | **400** `must be a boolean` — hence the yes/no radio mapping to a real boolean |
+| `referenceImages: "nope"` | **400** `must be an array of strings` |
+| REFERRAL with no code | **400** `A friend's referral code is required for this option` — mobile's own rule, confirmed |
+| the inquiry in `GET /inquiries` | present, with its client and its stored reference image |
+| the client record | created, phone normalised |
+| **no token, same body** | **400** `Missing required field(s): studioSlug` — the public branch, proving the 201 above took the staff branch |
+
+Fixture left on dev, labelled: `ZZ-Inquiry 20260826-AC`.
+
+## Verification
+
+Previews at 320 / 375 / 390 / 430 for the toggle (both variants, with the 1.3× emulation), plus
+Flash, Inquiries, Schedule and the New Inquiry form rendered from the real screens.
+
+**What the harness cannot do, stated plainly:** it cannot reproduce Dynamic Type, which is why the
+1.3× emulation exists and why the toggle's numbers are the honest form of the check rather than the
+comfortable one. The image *upload* path in the new form is also unproven on hardware — the picker
+and the signature endpoint are session-B machinery reused unchanged, but this is the first screen to
+use them for inquiry photos.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `git status` before building | **clean, 0 entries** |
+| `npm ci` | clean, lockfile stable, tree still clean after |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 5.04 MB, **identical bundle hash before and after `npm ci`** |
+| React singleton | only `19.1.0`; the root's 19.2.7 absent |
+
+### Bundle content
+
+Every new path present; the harness absent. **One marker read as a failure and was mine, not the
+code's** — `'sessions upcoming'` never exists as a literal because the line is a template string.
+The trap AA and AB both recorded. Re-checked against its constant fragments (`' upcoming'`,
+`' today'`, `'Times in '`, `'Studio timezone unavailable'`): all present.
+
+## Left open
+
+- The gallery link, above — blocked on a value only the server has, with the smallest unblock named.
+- Image upload from the new inquiry form is unexercised on a device.
+- New Inquiry always offers the REFERRAL channel; web hides it unless the studio runs a referral
+  programme (`GET /studio-settings`). Mobile does not read that setting yet. Offering it when the
+  studio does not run one is the safer direction — the server refuses an unknown code — but it is a
+  known divergence, not an oversight.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under
+it.
+
+1. **Inquiries** — the toggle is the point. INQUIRIES / PROJECTS, no badges, counts on the line
+   under the title. **Turn iOS text size up** (Settings → Display & Brightness → Text Size) and look
+   again: that is the setting every previous fix was never tested against.
+2. **Tap "+ NEW INQUIRY"** and file one. It needs a reference image and a placement photo — that is
+   web's rule, not a mobile invention. It should land on the new inquiry's own page.
+3. **Flash** — "+ NEW FLASH" is the gold pill with the word on it now. The two dropdowns replace the
+   status pills; pick two statuses at once and confirm the grid narrows to both.
+4. **Schedule** — a title and a live count. Scroll to a day with nothing booked: the selected date
+   should be a normal cell, not a tall gold column.
+5. If any screen is at its narrowest and the button sits under the title rather than beside it, that
+   is deliberate — web wraps there too.
