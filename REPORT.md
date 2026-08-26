@@ -28797,3 +28797,283 @@ cleanly.
 (the `updatedAt` recency measurements), plus one temporary write against
 **dev** — a single client archived and restored to `archivedAt = null`
 within the same script, confirmed by re-reading the row.
+
+# Mobile session AI — the sheet animation, root-caused; and the client row's `⋯`
+
+Base: **`mobile/session-ah` at `a98e28c`**, the stack head. AF, AG and AH
+are all still at the owner's gate and unmerged (`origin/main` is
+`bb157da`). Branch `mobile/session-ai`, own worktree, reset onto AH.
+
+**Merge order: AF → AG → AH → AI.** AI contains all three.
+
+## 1. The sheet animation — the scrim was a CHILD of the thing that slid
+
+### Root cause
+
+Every sheet in the app was built this way:
+
+    <Modal animationType="slide">        <- RN translates this whole view
+      <Pressable style={backdrop}>       <- the scrim, INSIDE it
+        <Pressable style={sheet}>        <- the panel
+
+`animationType="slide"` translates the modal's **entire content view**.
+The scrim was part of that content, so the dark wash slid up from the
+bottom edge along with the panel — the display arriving as one moving
+block instead of a panel rising into a room that had dimmed.
+
+So this was not a timing tweak. The scrim had to stop being a descendant
+of the thing that translates.
+
+### The fix — a real shared component, which did not exist before
+
+The brief said "fix in the shared sheet component". There wasn't one:
+**thirteen files each had their own `<Modal>` + backdrop + panel and their
+own copies of the same two style blocks.** So the fix is a new
+`components/Sheet.tsx` that owns the anatomy, plus a migration of all
+thirteen onto it.
+
+`animationType="none"`, RN animates nothing, and the two layers are
+**siblings** driven by **two separate shared values**:
+
+| layer | property | from → to | duration | easing |
+| --- | --- | --- | --- | --- |
+| scrim | `opacity` | 0 → 1 | `duration.base` **200ms** | `easing.standard` |
+| panel | `translateY` | height → 0 | `duration.slow` **300ms** | `easing.out` (in) / `standard` (out) |
+
+Both are the motion canon's own tokens (`theme/motion.ts`), and 200ms sits
+inside the brief's 180–250ms window for the scrim.
+
+Two details carried over from `NavDrawer` — this repo's only previously
+correct sheet, and the model for this one:
+
+- **The Modal outlives `visible`.** RN unmounts a `<Modal>` the instant
+  `visible` goes false, which would cut every dismissal off at frame zero.
+  `visible` starts the animation; only when it LANDS does the Modal go.
+- **The travel distance is measured**, not a constant. These sheets size
+  to their content; animating from a fixed large value would put most of
+  the travel below the screen edge and the visible part would happen in
+  the last third of the duration, reading as a late pop.
+
+One deliberate divergence from `NavDrawer`: it computes its scrim opacity
+**from** its panel position, which couples them into a single motion.
+That is right for a drawer a finger is dragging, and wrong here — the
+brief asked for two independent animations.
+
+### Proof: frame-by-frame, both directions
+
+Sampled per `requestAnimationFrame` on the running screen.
+
+**Opening** — scrim reaches full opacity at ~232ms while the panel is
+still travelling for another ~100ms:
+
+| t (ms) | scrim opacity | panel top |
+| --- | --- | --- |
+| 65 | 0.056 | 740 |
+| 99 | 0.386 | 698 |
+| 132 | 0.741 | 660 |
+| 165 | 0.905 | 629 |
+| 199 | 0.977 | 603 |
+| **232** | **1.000** | 582 |
+| 266 | 1.000 | 567 |
+| 299 | 1.000 | 558 |
+| 332 | 1.000 | **554 (settled)** |
+
+**Dismissing** — the reverse, and the decisive column is the scrim's
+GEOMETRY:
+
+| t (ms) | scrim opacity | scrim top / height | panel top |
+| --- | --- | --- | --- |
+| 30 | 1.000 | **0 / 780** | 554 |
+| 99 | 0.709 | **0 / 780** | 576 |
+| 166 | 0.120 | **0 / 780** | 693 |
+| 232 | 0.002 | **0 / 780** | 756 |
+| 265 | **0** | **0 / 780** | 769 |
+| 332 | 0 | **0 / 780** | **780 (off)** |
+| 365 | *unmounted* | — | — |
+
+**The scrim's top and height never change — it fades in place while the
+panel moves.** That is the bug, gone. And the unmount at ~365ms, after the
+motion lands, is the mount-outlives-`visible` guard working.
+
+Frame images: `design-refs/session-ai/sheet-open-t{040,090,140,200,320}ms.png`.
+At t=40ms the list is barely dimmed (scrim 0.13) with the panel still
+mostly off-screen; at t=90ms the screen is fully dimmed while the panel is
+still 16pt short of resting. Those two frames could not both exist under
+the old behaviour.
+
+### Call-site inventory — 13 migrated, all inherit the fix
+
+| file | sheet | confirmed |
+| --- | --- | --- |
+| `PillMenu.tsx` ×3 | `PillMenu`, `MultiPillMenu`, `GroupedPillMenu` | **yes — sampled mid-open**: scrim 0.92 while panel still at 635, scrim top 0 |
+| `ClientMoreSheet.tsx` | client detail `⋯` | yes (renders, same component) |
+| `ContactAddSheet.tsx` | add phone/email | yes |
+| `MergeClientSheet.tsx` | merge | yes |
+| `AttachSessionSheet.tsx` | gift-card session | yes |
+| `MessageActions.tsx` | message long-press | yes |
+| `RetrySheet.tsx` | failed-send retry | yes |
+| `InquiryRespondSheet.tsx` | accept/decline | yes (keeps its `KeyboardAvoidingView`) |
+| `Composer.tsx` ×3 | attach source, insert link, channel picker | yes |
+| **new** `ClientRowActionsSheet.tsx` | the row `⋯` (§2) | **yes — the frame series above IS this sheet** |
+
+The two sheets that were already correct are untouched: `NavDrawer`
+(`animationType="none"`, its own animation) and `AccountMenu` /
+`PhotoViewer` (`animationType="fade"`, no slide to decouple).
+
+Net effect on the codebase: **−31 lines**. The shared component removed
+more duplicated backdrop/panel styling than it added.
+
+## 2. The row `⋯` menu
+
+The per-row Message icon becomes `⋯` (new `MoreIcon`, drawn on the same
+`0 0 20 20` grid as every other icon in `icons.tsx`; the client DETAIL
+header already used Feather's `more-horizontal` for the same glyph). Same
+44pt button, same right edge. Message did not go away — it is the first
+item inside, still navigating to an existing thread and still saying so
+when there isn't one. What changed is that the row now has room for a
+SECOND action.
+
+### Share — omitted, and that was the investigation's answer
+
+The brief's fallback chain ended "else omit Share and report". Both
+earlier branches came back empty:
+
+**Web has no client share.** `ClientDetail.tsx`'s own `⋯` holds exactly
+Archive/Unarchive and Delete. The Clients TABLE has no per-row menu at
+all. `navigator.share` appears nowhere in the repo.
+
+**There is no client-scoped public link.** Every public token in
+`schema.prisma` hangs off an Inquiry, a DepositForm, a LiabilityWaiver, a
+GiftCard or a PrefillDraft. The Client model's only token is
+`smsConsentToken` — single-use, expiring, and it grants nothing but
+ticking a consent box.
+
+The near-miss worth naming: `GET /clients/:id/shareable-links` exists and
+mobile already consumes it (`lib/shareableLinks.ts`, in the Composer's
+link menu). But its own header comment says it "deliberately does NOT
+generate/rotate any token" — it is a read-only aggregator, and every link
+it returns belongs to **another entity**. Its `intakeFormUrl` is
+`/inquiry/{studio.slug}`: the STUDIO's form, byte-identical for every
+client in the studio. Sharing that from a row headed by one person's name
+would imply it is that person's link. It isn't.
+
+**What a real Share would need** — a client-scoped token on `Client`
+following the repo's established convention (random token + expiry,
+verified server-side), which is exactly the shape `smsConsentToken`
+already uses. That is a backend change, not a mobile one.
+
+### Archive — live, optimistic, revert on failure
+
+`POST /clients/:id/archive` and `/unarchive` are the same pair the client
+detail header already calls, so no new write surface — an existing one
+moved where the list can reach it.
+
+**No undo toast, because the pattern does not exist.** The brief allowed
+one "if the pattern exists". The only toast in this app is
+`conversation/[id].tsx`'s save note, which is `pointerEvents="none"` — a
+passive message with nothing to tap. An undo toast is interactive, timed
+and queued; inventing one here would be a new pattern, not a reused one.
+So the safety net is the honest cheap one: the row leaves immediately and
+comes back exactly where it was if the server refuses.
+
+**The confirm is a second state of the sheet, not `Alert.alert`.** Two
+reasons, and the second is why it earns its extra state: an alert over a
+sheet is two stacked modals on iOS, and `react-native-web` stubs
+`Alert.alert` to a no-op — so a confirm built that way would be invisible
+to the harness this app is verified with. It could be claimed, never
+shown. This one renders (`design-refs/session-ai/menu-confirm-320.png`).
+
+## 3. Two real bugs the verification caught in my own work
+
+Both were found by testing, not by reading, and both are worth recording
+because in each case the code looked right.
+
+**a. The exit animation was being destroyed by the PARENT.** I first wrote
+the call site as `{actionsFor ? <ClientRowActionsSheet/> : null}`, which
+unmounts the sheet the instant the selection clears — killing the
+dismissal at frame zero, the exact failure `Sheet` guards against
+internally. Its `mounted`-outlives-`visible` logic cannot help if the
+parent removes it first. Frame-sampling the dismissal returned
+`unmounted` on every frame, which is how it surfaced. Fixed by keeping the
+sheet mounted and holding the last non-null row so the panel still has a
+name to draw while it slides away. Checked the other 13 call sites for the
+same trap: all render unconditionally with a `visible` prop.
+
+**b. A failed archive was replacing the entire client list.** The catch
+called `setError`, and `error` is the state the screen renders a full-page
+"The client list didn't load" for — so a refused write destroyed the very
+rows the revert had just restored. Now a passive toast over an intact
+list. Related: `screenErrorMessage` takes a SUBJECT NOUN and builds
+load-failure sentences around it, so handing it a finished sentence
+produced "Your role does not have access to Could not archive Ana Ruiz..".
+Replaced with a write-specific message that prefers the server's own
+sentence.
+
+## 4. Verification
+
+Preview: the real `ClientsScreen` at a temporary route against the
+scratchpad fixture, deleted before committing. The fixture was taught to
+handle `POST /clients/:id/archive|unarchive` against its own in-memory
+rows, **plus a deliberate 403 on one client id**, so the failure path runs
+on a genuinely rejected request rather than being argued about.
+
+**Archive round-trip, driven through the real UI:**
+
+    1. sheet open on Ana Ruiz     Message · Archive · DONE      6 rows, "6 clients"
+    2. tap Archive                Yes, archive · Cancel · DONE  6 rows (confirm state)
+    3. confirm                    Ana Ruiz gone                 5 rows, "5 clients"
+    fixture log: POST /clients/c1/archive -> archive c1; archivedAt=2026-08-26T23:04:22.504Z
+    fixture read-back: c1 archivedAt = 2026-08-26T23:04:22.504Z
+
+The write really landed — checked by reading the row back off the fixture,
+not by trusting the 200.
+
+**Revert on failure, on the 403 probe:**
+
+    before      5 rows, Sebastian present, no toast
+    confirm     -> optimistic removal
+    after 403   5 rows, Sebastian PRESENT, list intact
+                toast: "You do not have permission to archive clients."   <- the server's own sentence
+
+**Item 3, Unarchive:** an archived client's menu reads `Message Jo Ng` /
+**`Unarchive Jo Ng`** — not Archive.
+
+**Item 4, 320pt** (true 320 content width):
+
+| | measured |
+| --- | --- |
+| content width | 320 |
+| row height | **68** — unchanged |
+| avatar | 40 at x=16 |
+| text inset / divider inset | **68 / 68** — AG's rule still holds |
+| name box | **106** — identical to AG; the `⋯` is the same 44pt as the icon it replaced |
+| status chip | one line, every row |
+| `⋯` button | 44×44, x=260, right edge 304 |
+| chip → `⋯` clearance | 12pt |
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         built in 14.11s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean, matches schema.prisma
+    apps/api      test suite                   233/233 pass
+
+### What this could NOT verify
+
+`react-native-web` in Chromium, not a device. Specifically: RN's native
+Modal presentation differs from the web shim, so **the animation numbers
+above are the shared values' own timings, which are platform-independent,
+but the perceived smoothness on-device is not something this proves.**
+Worth watching at the gate on a real phone.
+
+Also: **AH's row-overlap bug is still present and got in the way.** After
+the filter grows the list, rows paint on top of each other (measured this
+session: three rows at y=272, 273, 275), which made one menu tap land on
+the wrong client until I targeted a row clear of the cluster. Still not
+this session's doing — AH proved it reproduces on pre-AH code — but it is
+now interfering with a second feature and is worth its own fix.
+
+## 5. Database
+
+**No schema change, no migration, no backfill.** No database contact at
+all this session — the archive round-trip ran against the scratchpad
+fixture, not against dev.
