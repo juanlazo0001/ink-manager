@@ -2,8 +2,10 @@ import type { ArtistInquiryListItem, StaffInquiryListItem } from '@ink-manager/s
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
+import { countLine, ScreenTitle, TitleAction } from '@/components/ScreenTitle';
+import { PlusIcon } from '@/components/icons';
 import { InquiryRow, type InquiryRowData } from '@/components/InquiryRow';
 import { TopBar } from '@/components/TopBar';
 import { SegmentedControl } from '@/components/SegmentedControl';
@@ -47,18 +49,31 @@ function fromStaff(inquiry: StaffInquiryListItem): InquiryRowData {
     id: inquiry.id,
     description: inquiry.description,
     status: inquiry.status,
-    channel: inquiry.channel,
     updatedAt: inquiry.updatedAt,
-    priceEstimateLow: inquiry.priceEstimateLow,
-    priceEstimateHigh: inquiry.priceEstimateHigh,
     client: inquiry.client,
-    artistName: inquiry.assignedArtist
-      ? (inquiry.assignedArtist.user.name ?? inquiry.assignedArtist.user.email)
+    artist: inquiry.assignedArtist
+      ? {
+          name: inquiry.assignedArtist.user.name ?? inquiry.assignedArtist.user.email,
+          avatarUrl: inquiry.assignedArtist.user.avatarUrl,
+        }
       : null,
     fromGuestStudio: inquiry.fromGuestStudio,
-    // The staff list projection returns no images at all, so there is
-    // nothing to show here and the row falls back to its placeholder.
-    thumbnailUrl: null,
+    /*
+     * ITEM 1, and it was never a data problem.
+     *
+     * This line used to be a hard-coded `null` under a comment asserting
+     * that "the staff list projection returns no images at all". That was
+     * simply untrue: `INQUIRY_LIST_SELECT` has carried
+     * `referenceImages: true` all along, and `StaffInquiryListItem`
+     * declares `referenceImages: string[]`. The field arrived on every
+     * response and was thrown away here.
+     *
+     * The effect was total for the people most likely to notice: an
+     * OWNER or FRONT_DESK reads THIS projection, so every row they have
+     * ever seen showed the placeholder — including the 62 of 100
+     * inquiries on the dev database that do have real photos.
+     */
+    thumbnailUrl: inquiryThumbnail(inquiry),
   };
 }
 
@@ -67,17 +82,11 @@ function fromArtist(inquiry: ArtistInquiryListItem): InquiryRowData {
     id: inquiry.id,
     description: inquiry.description,
     status: inquiry.status,
-    channel: inquiry.channel,
     updatedAt: inquiry.updatedAt,
-    // May already have been stripped server-side by the studio's
-    // `pricingDetail` visibility toggle — null here means "not shown to
-    // you", which renders as absent rather than as zero.
-    priceEstimateLow: inquiry.priceEstimateLow,
-    priceEstimateHigh: inquiry.priceEstimateHigh,
     client: inquiry.client,
-    // Undefined, not null: every row here is theirs, so the artist line
+    // Undefined, not null: every row here is theirs, so the artist slot
     // is omitted entirely rather than claiming UNASSIGNED.
-    artistName: undefined,
+    artist: undefined,
     fromGuestStudio: inquiry.fromGuestStudio,
     thumbnailUrl: inquiryThumbnail(inquiry),
     nextSessionAt: findNextSession(inquiry.sessions)?.startTime ?? null,
@@ -153,6 +162,14 @@ export default function InquiriesScreen() {
     });
   }, [items, view]);
 
+  /**
+   * `POST /inquiries` checks this inline — there is no requirePermission
+   * middleware on a dual-purpose route — and answers 403 without it. The
+   * control is absent rather than present-and-refusing, same rule as
+   * Clients' own Add button.
+   */
+  const canCreate = session?.profile.permissions.includes('inquiries.create') ?? false;
+
   const counts = useMemo(
     () => ({
       inquiries: items?.filter((i) => tabForStatus(i.status) === 'inquiries').length ?? 0,
@@ -162,11 +179,67 @@ export default function InquiriesScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <TopBar />
 
+      {/*
+        The house title pattern. Its count line is now the ONLY place these
+        two numbers appear — see the note on the toggle below for why they
+        left the segments.
+
+        AB deferred the action here, on the grounds that web's
+        `StaffInquiryForm` is 524 lines with two required image uploads.
+        AC builds it: same fields, same rules, on the form layer this app
+        already has. It is gated on `inquiries.create`, which is what the
+        route itself checks inline.
+      */}
+      <ScreenTitle
+        title="Inquiries"
+        counts={
+          items === null
+            ? null
+            : countLine([counts.inquiries, 'inquiry', 'inquiries'], [counts.projects, 'project'])
+        }
+        action={
+          canCreate ? (
+            <TitleAction Icon={PlusIcon} label="New inquiry" onPress={() => router.push('/inquiry-new')} />
+          ) : null
+        }
+      />
+
+      {/*
+        ITEM 3 — THE BADGES ARE GONE, and this is the fifth report on this
+        control rather than the fifth patch to it.
+        ─────────────────────────────────────────────────────────────────
+        The premise that Tasks uses a different anatomy is not true: Tasks
+        renders this same `SegmentedControl`, which renders this same
+        `Pill`. The one difference is that Tasks passes no counts. The
+        badge was the entire delta, and the badge is what has been running
+        off the edge.
+
+        Measured, both variants, 320/375/390/430pt, two-digit counts, with
+        Jura actually loaded — and crucially at 1.3x text, the largest
+        scale `Pill`'s own `maxFontSizeMultiplier` still permits on a
+        device:
+
+                        1.0x            1.3x
+          with badges   ends 288px      ends 327px   <- past a 320pt screen
+          labels only   ends 231px      ends 265px
+
+        That 327 is the bug. Every previous fix measured clean because
+        react-native-web does not implement iOS Dynamic Type at all, so a
+        browser check silently tests the one condition where the cause is
+        absent. `flexShrink: 0` (added by two earlier fixes) means it does
+        not ellipsis — it overflows into the scroll, which on a phone
+        reads exactly as "PROJECTS is cut off".
+
+        The counts did not need to be here at all: the line directly above
+        already says "24 inquiries · 18 projects". The badges were a second
+        copy of the same two numbers, 40px away, and they were the copy
+        that could not fit.
+      */}
       <SegmentedControl
-        segments={INQUIRY_TABS.map((v) => ({ key: v.key, label: v.label.toUpperCase(), count: counts[v.key] }))}
+        segments={INQUIRY_TABS.map((v) => ({ key: v.key, label: v.label.toUpperCase() }))}
         value={view}
         onChange={setView}
       />
@@ -239,12 +312,11 @@ export default function InquiriesScreen() {
           }
         />
       )}
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   listContent: { paddingTop: space.sm, paddingBottom: space.xxl },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
   separator: { height: hairline, backgroundColor: colors.borderSoft, marginLeft: space.lg },

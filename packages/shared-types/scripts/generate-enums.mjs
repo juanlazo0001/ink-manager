@@ -46,6 +46,13 @@ const WANTED = [
   { prisma: 'LiabilityWaiverStatus', as: 'WaiverStatus' },
   { prisma: 'FlashReviewMode' },
   { prisma: 'FlashPieceStatus' },
+  // Added in mobile session V. Its absence was a real defect, not an
+  // oversight of convenience: apps/mobile hand-rolled a three-branch
+  // gift-card tone function because there was no enum to be exhaustive
+  // against, and it silently mis-toned EXPIRED, PENDING and EXEMPT --
+  // the same failure mode as the InquiryStatus bug this package exists
+  // to prevent.
+  { prisma: 'GiftCardStatus' },
 ];
 
 function parseEnum(schema, name) {

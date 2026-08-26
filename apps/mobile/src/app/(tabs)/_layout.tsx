@@ -1,8 +1,6 @@
 import { Tabs } from 'expo-router';
-import { View } from 'react-native';
 
-import { AppointmentsIcon, DashboardIcon, DocumentIcon, TasksIcon } from '@/components/icons';
-import { Badge } from '@/components/TopBar';
+import { AppointmentsIcon, DashboardIcon, DocumentIcon, PhotoIcon } from '@/components/icons';
 import { CHAT_BUTTON_LIFT, ChatTabButton } from '@/components/ChatTabButton';
 import { useBadgeCounts } from '@/hooks/useBadgeCounts';
 import { colors, hairline, space, type } from '@/theme';
@@ -10,8 +8,13 @@ import { colors, hairline, space, type } from '@/theme';
 /**
  * Five tabs, with CHAT raised in the centre.
  *
- * Order is Home, Inquiries, CHAT, Schedule, Tasks -- the owner's, with
+ * Order is Home, Inquiries, CHAT, Schedule, FLASH -- the owner's, with
  * the chat button third of five so it is genuinely centred.
+ *
+ * Tasks used to hold the fifth slot and now lives in the top bar with its
+ * badge, which is where apps/web has always kept it (`TopBar.tsx`, a
+ * `TasksIcon` link left of the bell). Flash Gallery took the slot and left
+ * the drawer, so nothing is reachable from two places at once.
  *
  * The glyphs are apps/web's own, path-for-path (see components/icons.tsx):
  * Home uses its sidebar Dashboard icon, Inquiries its My Inquiries
@@ -23,13 +26,12 @@ import { colors, hairline, space, type } from '@/theme';
  * on; it simply now sits in the middle and is titled Chat, matching web,
  * where the same surface is reached from a button labelled "Chat".
  *
- * Both badge counts are web's own definitions -- see `useBadgeCounts`.
- * Neither gates on the studio's `showSidebarBadges` toggle, because web's
- * own top-bar and FAB badges do not either; that toggle governs its
- * sidebar alone.
+ * The chat badge is web's own definition -- see `useBadgeCounts`. It does
+ * not gate on the studio's `showSidebarBadges` toggle, because web's own
+ * FAB badge does not either; that toggle governs its sidebar alone.
  */
 export default function TabsLayout() {
-  const { conversations, tasks } = useBadgeCounts();
+  const { conversations } = useBadgeCounts();
 
   return (
     <Tabs
@@ -91,21 +93,26 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="tasks"
+        name="flash"
         options={{
-          title: 'TASKS',
-          tabBarIcon: ({ color, size }) => (
-            <View>
-              <TasksIcon size={size - 2} color={color} />
-              {/* Web puts this count on a top-bar tasks icon. There is no
-                  tasks icon in mobile's bar by decision, so the badge
-                  rides the tab that navigates there -- same count, same
-                  treatment. */}
-              {tasks > 0 ? <Badge count={tasks} /> : null}
-            </View>
-          ),
+          title: 'FLASH',
+          tabBarIcon: ({ color, size }) => <PhotoIcon size={size - 2} color={color} />,
         }}
       />
+
+      {/*
+        ITEM 2: Clients lives INSIDE this navigator but has no tab button.
+        `href: null` is expo-router's own way to say that — the screen gets
+        the navigator's chrome (the footer bar stays visible, the shared
+        photo ground shows through) while the bar still shows five tabs.
+        A route outside this group cannot render the tab bar at all, which
+        is why it moved rather than being restyled in place. It is still
+        reached from the drawer.
+      */}
+      <Tabs.Screen name="clients" options={{ href: null }} />
+      {/* Same treatment as Clients: in the navigator for its chrome, no
+          tab button of its own. Reached from the drawer. */}
+      <Tabs.Screen name="team" options={{ href: null }} />
     </Tabs>
   );
 }

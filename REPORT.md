@@ -25188,3 +25188,2321 @@ Restart any `expo start` already running from the primary checkout first — the
 4. **The remove buttons** should be red, and still red while disabled.
 5. **If you have a 320pt-class phone**: a long email address should stay whole, with the tag and bin
    dropping to their own line beneath it.
+
+# Mobile session T2 — contact info refinements
+
+**Base: `main` at `151c0d8`** (S and T merged). Worktree, two commits, pushed.
+
+---
+
+## 1 — Phone formatting
+
+### What web has, and the trap in it
+
+Web has **no display formatter**. `apps/web/src/lib/format.ts` exports `formatPhoneInput`, an
+**as-you-type** formatter, and `ClientDetail.tsx` reuses it for display. Its rules:
+
+- strip every non-digit;
+- treat a leading `1` on an eleven-digit run as the country code — the same convention
+  `apps/api/src/lib/phone.ts`'s `normalizePhone` uses server-side;
+- lay ten digits out as `(AAA) NNN-NNNN`;
+- render partial input progressively (`(305`, `(305) 299`);
+- **`.slice(0, 10)` anything longer.**
+
+Those last two are correct for a field being typed into and wrong for a value being displayed. Hand
+web a UK number and it does this:
+
+```
++44 20 7946 0958   ->   (442) 079-4609
+```
+
+A plausible-looking number that **is not the client's**, with nothing to indicate digits were
+dropped. That is web's live behaviour today, not a hypothetical.
+
+### What mobile does
+
+`apps/mobile/src/lib/format.ts` — the mobile counterpart to web's, and the one place a phone number
+becomes something a person reads. Web's NANP rules mirrored exactly, **plus the fallback the brief
+asked for**: anything not NANP-shaped is returned **exactly as stored**. Formatting is a
+presentation nicety; showing someone a different number from the one on file is a defect.
+
+Two conditions gate the formatting — length, and an explicit non-`+1` international prefix:
+
+| Input | Output | Why |
+| --- | --- | --- |
+| `3052997957` | `(305) 299-7957` | NANP, bare |
+| `305-299-7957` | `(305) 299-7957` | NANP, punctuated |
+| `(305) 299-7957` | `(305) 299-7957` | idempotent |
+| `13052997957` | `(305) 299-7957` | 11 digits, leading 1 |
+| `+1 305 299 7957` | `(305) 299-7957` | +1 country code |
+| `+1 (305) 299-7957` | `(305) 299-7957` | fully punctuated |
+| **`+44 20 7946 0958`** | **`+44 20 7946 0958`** | UK, 12 digits — untouched |
+| **`+33 6 12 34 56 78`** | **`+33 6 12 34 56 78`** | France, 11 digits — untouched |
+| **`+52 55 1234 5678`** | **`+52 55 1234 5678`** | **ten digits behind `+52`** |
+| `12345` | `12345` | too short |
+| `abc` | `abc` | no digits |
+| `305-299-7957 ext 12` | `305-299-7957 ext 12` | extension |
+| `""` / `null` / `undefined` | `""` | empty |
+
+The Mexico row is the one worth keeping: it is **ten digits**, so length alone would have let it
+through and produced `(525) 512-3456`. The `+`-prefix guard is what catches it.
+
+### Every render site
+
+| Site | Now |
+| --- | --- |
+| Client detail — header line | formatted |
+| Client detail — contact rows | formatted (phones only; emails pass through) |
+| Clients list — row secondary line | formatted |
+| Artist profile | formatted |
+| **`buildCustomerDetailsText`** — the Copy payload | **formatted** |
+| Profile **editor** field | **deliberately raw** |
+
+`buildCustomerDetailsText` carried a comment from session P saying numbers were copied raw because
+"mobile has no equivalent helper". That gap is closed and the comment replaced.
+
+The profile editor is the one exclusion: display formatting inside a text field fights the person
+typing (that is what web's *input* formatter is for, and mobile's editor has no equivalent yet).
+
+One thing fixed on the way past: the remove button's spoken label was built from the **raw** value,
+so a screen reader announced "Remove 3052997957" while the screen read "(305) 299-7957". It now
+speaks what is shown.
+
+## 2 — Primary tag placement
+
+The tag sits **immediately after the value**, one `space.sm` gap, and the row **no longer wraps**.
+
+Session T wrapped this row to keep a long address whole; that put the tag on its own line, away from
+the value it marks. The owner's rule reverses it, and the implementation is one line: **the value is
+the only shrinkable thing in the row**. It truncates first, so the tag can never wrap away from its
+number or collide with it. The remove button holds the right edge via `marginLeft: 'auto'`.
+
+Verified at 320pt with the 31-character address: the value truncates (`yoanliz.guzman.…`), the tag
+stays put beside it, and the row stays one line.
+
+## 3 — Icon geometry
+
+**One size token, and the variant is gone rather than defaulted** — so a per-card size cannot come
+back by accident.
+
+Web draws row-level actions at `h-8 w-8` in `fg-secondary` and section actions at `h-11 w-11`;
+mobile mirrored that split from session S until this round. Two reasons it goes:
+
+1. Inside one card, two button sizes read as two unrelated controls — which is what the owner saw.
+2. **32pt is under the 44pt iOS minimum tap target.** The split was costing accessibility as well as
+   consistency.
+
+Measured after, at 320pt — every icon button on the entire screen:
+
+| Button | Size | Right edge |
+| --- | --- | --- |
+| Add phone | 44 × 44 | 302 |
+| Add email | 44 × 44 | 302 |
+| Remove (each of four rows) | 44 × 44 | 302 |
+| New inquiry | 44 × 44 | 302 |
+| Issue gift card | 44 × 44 | 302 |
+| Download deposit form | 44 × 44 | 302 |
+
+**One consistent right-aligned column at x = 302**, across every card on the screen. The only two
+that sit elsewhere are correct: "Send inquiry via email" (the first of two side-by-side icons, so
+the second holds the edge) and the waiver download (followed by its status chip, as web orders it).
+
+Alignment is by baseline as asked — each add button centres on its group eyebrow, each remove on its
+entry row — with no vertical stacking anywhere.
+
+**Consequence worth flagging:** this also enlarged the **deposit-form and waiver download buttons**
+from 32 to 44. That follows from "one shared size token, not per-card sizes" but is a change outside
+the Contact Info card, so it is called out rather than buried — `t2-02` shows those rows.
+
+## Verification
+
+`apps/mobile/parity-audit/`:
+
+- **`t2-01-contact-refinements.png`** — the card before (session T) and after, both at 320pt.
+- `t2-02-full-scroll-320-390.png` — the whole screen at both widths, including the resized downloads.
+- `t2-03-contact-rows-320.png` — the rows close up: formatted number, UK number untouched, tag
+  beside the value, one icon column.
+
+The formatter's fifteen cases were run directly against the shipped module, not retyped — the table
+above is that run's output.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 15.57s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4,844,833 bytes (4.84 MB), unchanged |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | `Add phone`, `Add email`, `Remove `, `Merge with another client`, the remove note, `formatPhone` all present; harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **A client → Contact Info.** Numbers should read `(305) 299-7957`, not raw digits — on the header
+   line, in the rows, in the clients list, and in **Copy → Copy customer details** (paste it
+   somewhere).
+2. **The Primary tag** should sit right beside the number or address it marks, not out at the edge.
+3. **The icons** — add and remove should be the same size as the Inquiries card's buttons, all on
+   one right-hand column down the whole screen.
+4. **Deposit forms / waivers** — those download buttons are bigger now too. Worth a look, since that
+   is the part of the change that reaches beyond this card.
+5. **If any client has a non-US number**, it should appear exactly as stored rather than reshaped.
+
+# Mobile session T3 — Contact Info, unified header actions
+
+**Base: `mobile/session-t2` at `5be88f3`**, not `main` — T2 is still unmerged (`main` is at
+`151c0d8`, carrying S and T). Worktree cut from T2; two commits, pushed.
+
+---
+
+## 1 — The header
+
+`[chevron] CONTACT INFO ....... [+] [search]` — the Inquiries card's anatomy exactly: same
+`CardIconButton`, same `CardActionRow`, same 44pt size, same `space.sm` gap, same right-hand column.
+`t3-01` shows the two cards stacked at 390pt for comparison.
+
+- **`+`** opens the add sheet.
+- **`search`** is merge, carrying the magnifier from the pill that used to sit at the card's foot.
+
+**Divergence from web, owner-directed and now larger than before.** Web's `Widget` gives this
+section *no* header action at all and scatters its controls through the body — a text link per group
+plus a merge pill. Both are gone.
+
+## 2 — The body, slimmed
+
+SMS consent line → PHONES group → EMAILS group → the read-only facts. Nothing else. Trash stays per
+row, right-aligned, unchanged from T2.
+
+`GroupHead` collapses back to a plain `SubHead` (the eyebrow and nothing else), and `MergeButton`
+and its styles are deleted rather than left orphaned.
+
+## 3 — The sheet
+
+**It is not a new component pattern.** `ContactAddSheet` is the bottom sheet this app already uses
+for message actions, the channel picker and attach, matched piece for piece:
+
+| | Shared value |
+| --- | --- |
+| shell | transparent `Modal`, `animationType="slide"` |
+| backdrop | `#000000aa`, `justifyContent: 'flex-end'`, closes on tap |
+| panel | `surfaceRaised`, top corners at `radius.card`, hairline `borderStrong` top |
+| padding | `lg` sides, `lg` top, `xxl` bottom |
+| title | accent `Eyebrow` |
+| rows | `flexDirection: row`, `gap: space.md`, `paddingVertical: space.md`, 16px glyph, `type.body` |
+| footer | centred `DONE` in `type.button`, accent |
+
+**T2's glyphs moved rather than died.** The handset-plus and envelope-plus drawn last session for
+the per-group buttons are this sheet's row icons. They are still the only thing distinguishing the
+two choices — one level in.
+
+**Opening is free; writing is gated.** The sheet opens, both rows read clearly, and each answers in
+the app's voice about where the write lives until M2. The merge action behaves the same way from the
+header.
+
+## 4 — The 320pt check, and it fails
+
+**`CONTACT INFO` does not fit beside two icons at 320pt.** This is the exact row session S's
+worst-case table flagged, now reached for real.
+
+At 320pt the card gives its header **236pt**, and two 44pt buttons plus the chevron and three gaps
+leave the title **109pt**:
+
+| Width | Card inner | Title budget | `CONTACT INFO` needs | Result |
+| --- | --- | --- | --- | --- |
+| **320** | 236 | **109** | **145** | **truncates — over by 36pt** |
+| 375 | 291 | 164 | 145 | fits |
+| 390 | 306 | 179 | 145 | fits |
+
+`INQUIRIES` (103pt) fits at 320 with room, which is why that card has never shown this.
+
+**A measurement trap worth recording.** My first pass reported `INQUIRIES` truncating at 320 too.
+That was wrong: the preview frame was short enough for the list to overflow, and
+`react-native-web` then paints a **real scrollbar** that steals ~15pt of width — a thing iOS does
+not do. Re-measured with tall frames, the card inner comes back to a clean 236 and `INQUIRIES`
+fits. **Any width measurement in this harness must use a frame taller than its content.**
+
+### What I shipped, and the alternatives
+
+Shipped: **the title truncates at 320**, which is web's own rule for this exact case (`min-w-0
+truncate` on the `h2`, `shrink-0` on every action). It is clean at 375 and 390 — every phone Apple
+currently sells.
+
+The alternatives, and why not:
+
+1. **Shrink the icons at 320.** This is what session S's brief pre-authorised, but T2 has since
+   removed the size variant deliberately: 32pt is under the 44pt iOS tap-target floor, and the whole
+   point of that round was one shared token. Reintroducing a smaller button here would undo it.
+2. **Rename the section to `CONTACT`** — 93pt, fits the 109pt budget with 16 to spare, at every
+   width. One line. But it renames a section web calls "Contact Info", so it is the owner's call,
+   not mine.
+
+**My recommendation is (2) if you care about 320-class devices** (SE 1st gen, 5s), and leaving it as
+shipped if you don't — the truncation costs nothing on any phone from the SE 2nd gen onward.
+
+## Verification
+
+`apps/mobile/parity-audit/`:
+
+- **`t3-01-header-anatomy.png`** — Contact Info directly above Inquiries at 390pt. The anatomy match.
+- **`t3-02-add-sheet.png`** — the sheet open, with T2's glyphs on its rows.
+- `t3-03-widths.png` — 320 / 375 / 390, showing the truncation and the slimmed body.
+
+The sheet spans the full preview width rather than one phone frame, because a `Modal` is a separate
+root and fills the viewport — on a phone that *is* the screen. Not a defect.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 23.12s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4,847,748 bytes (4.85 MB) |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | `Add contact info`, `Add phone`, `Add email`, `Merge with another client` and all three notes present (`Merging is destructive` as UTF-16LE, per T's note); harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **A client → Contact Info.** The header should look like the Inquiries card's: title, then two
+   circles on the right, same size.
+2. **Tap `+`.** The sheet should slide up looking exactly like the message-actions sheet, with the
+   handset-plus and envelope-plus on its two rows. Tap one — it should say where the write lives.
+   Tap DONE or the dimmed area to close.
+3. **Tap the magnifier** — same treatment for merge.
+4. **The body** should have no add buttons and no merge pill left in it.
+5. **The title** — on your phone it should read in full. It only truncates at 320pt, which is item 4
+   above and the one thing needing your decision.
+
+# Mobile session U — client page final pass, and the gift card page
+
+**Base: `mobile/session-t3` at `4b221c4`**, not `main` — T2 and T3 are both still unmerged (`main` is
+at `151c0d8`, carrying S and T). Worktree cut from T3; two commits, pushed.
+
+**No screenshots reached this session.** Everything below is extracted from web's source and from
+`q-web-client-reference.png`, the web render already committed to `parity-audit/` — which is the
+stronger ground truth anyway, since it carries the real class names rather than a picture of them.
+
+---
+
+## Part 1 — the extracted values
+
+| # | Item | Web | Mobile before | Now |
+| --- | --- | --- | --- | --- |
+| 8 | Gap between cards | `gap-6` = **24** (`ReorderableWidgetList`) | 12 | **24** |
+| 5 | Header widget surface | `card-surface … bg-surface` | **no fill at all** — a bare border | the same `Card` every section uses |
+| 1 | Client code chip | — | under the contact lines | **card's top right**, across from the avatar |
+| 2 | Name in the nav row | — | repeated there and in the card | nav row carries the back button only |
+| 6 | Project block | `py-3 first:pt-0 last:pb-0`, `divide-y` | `paddingVertical: 4`, no divider | **12**, divided |
+| 6 | Title → first session | `mt-2` = **8** | **0** | **8** |
+| 6 | Between sessions | `space-y-1.5` = **6** | 8 below each | **6** |
+| 3 | Inquiry row padding | `py-3` = **12** | **12 — already matched** | 16, *owner-directed* |
+| 4 | Meta line colour | `text-fg-secondary` — **brighter than mobile's** | `fgMuted` | new `fgFaint`, *owner-directed* |
+
+**Two of these disagreed with the brief, and I did not smooth it over.**
+
+*Item 3.* The brief said to extract web's row padding and match it. Web's `<td>` is `py-3` — 12px —
+which is exactly what mobile already had. There was nothing to import. The scrunch is real, but its
+cause is that a mobile row is **two lines** (description, then the meta line) where web's is one, so
+the same 12px has twice as much to separate. Raised to 16 because that is what was asked for, and
+labelled in the code as a deliberate step *away* from web's number rather than dressed up as parity.
+
+*Item 4.* Mobile was **already dimmer than web**: web renders that column in `fg-secondary`, one
+step *brighter* than the `fgMuted` mobile was using. `fg-muted` is the dimmest text token either
+palette defines, so "one step down" had nothing to extract. `fgFaint` is derived, and the token's
+own comment says exactly that.
+
+### The booking badge was never blocked
+
+Sessions P, Q and R each recorded the projects booking chip ("Scheduled" / "Not yet booked" /
+"Completed") as waiting on API surface that did not exist. **That was wrong.**
+`apps/api/src/routes/clients.ts` has always selected
+
+```
+plannedSessions: { select: { id, sessionNumber, estimatedHoursMin, estimatedHoursMax,
+                             estimatedPriceLow, estimatedPriceHigh, appointmentId,
+                             depositForm: { paidAt }, appointment: { checkedOutAt } } }
+```
+
+and mobile's own `ClientInquiry` type declared `plannedSessions: { id, sessionNumber? }[]`, throwing
+the rest away at the type boundary. Three reports called an API gap what was a mobile type bug.
+
+So the session line now carries **both** of web's badges and web's full label —
+`Session 1 — estimated 4-6 hrs ($800-$1200)` — from data that was in the payload the whole time.
+Web's two helpers are ported label for label, which also caught a wording drift: web says
+**"Deposit pending"**, mobile had been saying "Deposit sent".
+
+One substitution to note: web's Scheduled badge is `text-accent`, the brand gold, which is not one
+of the eight status tones. `highlight` is the closest warm tone in this palette and is what it uses;
+recorded rather than passed off as exact.
+
+## Part 2 — the gift card page
+
+### The QR, and how web makes one
+
+Web's `QrCode.tsx` calls `QRCode.toDataURL(value)` from the **`qrcode`** package and renders the
+result as an `<img>`. **It encodes `card.publicUrl`** — the API's own public link for the card, not
+the bare code — at `size 140, margin 1`, on `bg-white p-2`, and it is hidden entirely when
+`status === 'EXEMPT'`.
+
+Mobile uses **the same encoder**, not a lookalike: `qrcode/lib/core/qrcode`'s `create()`, painted
+through `react-native-svg`. Verified byte for byte — the matrix from `create()` is identical to the
+one the package's public API produces for the same string, so mobile and web draw the same code.
+
+Why that over `react-native-qrcode-svg`: it would have been a new dependency whose job is exactly
+this, wrapping a fork of an encoder already in this repo. The core entry is **pure JavaScript** — no
+canvas, no Node `Buffer`, no `fs` — so it bundles under Metro and runs in **Expo Go**, which is the
+binding constraint (a native QR module would need a custom dev client this project has no Apple
+account for). Declared in `apps/mobile/package.json` rather than leaned on as a hoisted root
+dependency. Bundle cost: **4.85 → 4.91 MB**.
+
+Two implementation notes worth keeping:
+
+- **One `<Path>`, not one `<Rect>` per module.** A 33×33 code is 1,089 nodes the naive way; as a
+  single path with one `M h v h z` subpath per dark module it is one.
+- **`create` is a NAMED export** on a CommonJS object with no `__esModule` flag. A default import
+  binds the module object, not the function, and fails only at runtime — my own first ambient
+  declaration said `export default` and would have hidden it from the compiler. Caught before
+  shipping by checking the real export shape; the `.d.ts` now records why it is declared named.
+
+### The action inventory — the brief said four, web has seven
+
+| Action | Icon | Web's gate | Built |
+| --- | --- | --- | --- |
+| Copy link | `CopyIcon` | `status !== 'EXEMPT'` | **yes — and it really copies** |
+| Edit expiration | `CalendarIcon` | `canEditExpiry && status !== 'VOID'` | yes, disabled |
+| Transfer to Client | `TransferIcon` | `canReassignHolder && status !== 'VOID'` | yes, disabled |
+| Void card | `BanIcon`, danger | `canVoid && status !== 'VOID'` | yes, disabled |
+| Redeem card | `ScanIcon` | `canVoid && status === 'ACTIVE'` | **no** |
+| Send Receipt | `SendChannelButton` | `canTextReceipt && status === 'ACTIVE'` | **no** |
+| Attach to Session | `AttachmentIcon` | `canAttachToSession && (ACTIVE ǀ EXEMPT)` | **no** |
+
+The brief's "calendar/attach" turns out to be **two separate buttons** on web — Edit expiration and
+Attach to Session. I built the four the brief named and left the other three out rather than
+widening the row unasked; their gates are recorded above so any of them is a few lines.
+
+**Redeem is worth a decision.** It is web's only *filled* action (`bg-accent text-bg`) — the page's
+primary — so the mobile page currently has no primary. It is also the action a scanned card most
+likely wants.
+
+The row wraps, as web's does (`flex flex-wrap … gap-3` under a `border-t`): four 44pt buttons is
+200pt against a 236pt card at 320.
+
+### Activity history is real
+
+`GET /audit?entityType=GiftCard&entityId=…`, web's own endpoint and query. **Sessions P and Q
+recorded "no audit trail on this endpoint" as an API gap** — that was a claim about
+`GET /clients/:id`, and the trail was never on it; it is its own endpoint and always has been. The
+same correction unblocks the **client page's** Activity History card, which is still showing an
+empty state — not built this round, but no longer blocked.
+
+Web's anatomy is ported: grouped by calendar day newest-first, day heading, bordered entry rows with
+actor + humanized action + timestamp, then `Field: from → to` detail lines. **Not ported:** the two
+multi-select filters web shows past five entries, and its merge-summary formatter — a gift card
+raises neither.
+
+One fix the render caught: a diff that changes a timestamp stores it raw, and the feed was printing
+`2026-05-01T15:05:00.000Z`. Formatted now, as web's own `formatValue` does.
+
+### Item f — the scan route
+
+Verified, already correct: `src/app/scan.tsx:53` pushes
+`{ pathname: '/gift-card/[id]', params: { id: result.giftCardId } }`. Scanning a card lands on this
+screen; nothing needed changing.
+
+## Flagged, not changed
+
+1. **The header card is tight at 320pt.** With the code chip now in the top row, the name wraps to
+   two lines and the email truncates harder than before. It is clean at 390. The chip placement was
+   the instruction, so it stands — but that is the cost.
+2. **The client page's Activity History** is now unblocked (see above) and still empty.
+3. `packages/shared-types` has no gift-card interface, so `GiftCard` is still hand-typed in two
+   places — unchanged from when session K logged it.
+
+## Verification
+
+`apps/mobile/parity-audit/`:
+
+- **`u-01-client-page.png`** — the page before (T3) and after, both at 320pt.
+- **`u-02-projects.png`** — the Projects card: web's spacing, both badges, the full session label.
+- **`u-03-gift-card.png`** — the gift card page at 320 and 390.
+- **`u-04-qr.png`** — the QR at scale, generated from the real `publicUrl`.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 17.84s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — **4.91 MB** (was 4.85; the QR encoder) |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | every new string present, plus the encoder itself (`ReedSolomonEncoder`, `errorCorrectionLevel`); harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **A client.** The header box should now match the section cards below it, the code chip should sit
+   top-right, and the nav row should no longer repeat the name. Cards should breathe more.
+2. **The Projects card** — each session should read `Session 1 — estimated 4-6 hrs ($800-$1200)` with
+   **two** chips: deposit and booking. The booking one is new and was wrongly reported as impossible
+   three times.
+3. **Scan a gift card**, or open one from a client. You should get the new page: amount as the title,
+   the fact grid, and **a QR that your phone camera can actually read** — point another phone at it
+   and it should resolve to the card's public link.
+4. **The action row** — tap the copy button, it genuinely copies. The other three say where they live.
+5. **Activity history** at the bottom — real events, grouped by day.
+
+# Mobile session V — client sections polish round 3
+
+**Base: `mobile/session-u` at `2288488`.** T2, T3, U are all unmerged (`main` is at `151c0d8`, with
+S and T). Worktree cut from U; two commits, pushed. **No writes wired — M2 stayed out of scope.**
+
+No screenshots reached this session either; everything below is from web's source.
+
+---
+
+## Item 3 — the gift card chips, root cause
+
+The chips were not "missing the shared component" — they were using it. The bug was in the **tone
+function**, and its cause was upstream of the colours.
+
+`GiftCardStatus` **was not in `packages/shared-types`**. With no enum to be exhaustive against, both
+the client card and the gift card screen had independently hand-rolled the same three-branch
+function:
+
+```ts
+if (s === 'ACTIVE') return 'success';
+if (s === 'VOID' || s === 'EXPIRED') return 'danger';
+return 'neutral';
+```
+
+Against web's `STATUS_TONE`, three of six values were wrong:
+
+| Status | Was | Web | Why |
+| --- | --- | --- | --- |
+| ACTIVE | success | success | ✓ |
+| REDEEMED | neutral | neutral | ✓ |
+| VOID | danger | danger | ✓ |
+| **EXPIRED** | **danger** | **warning** | stale, not destroyed |
+| **PENDING** | **neutral** | **warning** | a Stripe link issued, not yet paid |
+| **EXEMPT** | **neutral** | **info** | a deposit exemption, not a dead card |
+
+**PENDING and EXEMPT had no branch at all** and fell through to grey. That is exactly what was
+reported.
+
+The fix is at the root, per CLAUDE.md: `GiftCardStatus` is added to the generator's `WANTED` list
+and **derived from `schema.prisma`** (six values), and the tone map is a total
+`Record<GiftCardStatus, ChipTone>` in one shared module both screens use. A seventh status is now a
+compile error rather than another silent grey chip.
+
+That package's README already records this exact failure mode for `InquiryStatus`, which shipped to
+mobile with 11 of its 15 values. Same shape, second occurrence.
+
+## Item 5 — the appointments card, root cause
+
+**Not an API gap, and never was.** Web's client detail fires a **second request** beside the client
+one:
+
+```ts
+apiFetch<Client>(`/clients/${id}`),
+apiFetch<Appointment[]>(`/appointments?clientId=${id}`),
+```
+
+`clientId` has always been a supported query param on `GET /appointments`
+(`apps/api/src/routes/appointments.ts`) — **mobile's own `fetchAppointments` simply never exposed
+it.** Mobile makes the same call now and renders web's row: date and time, artist, status chip.
+
+Earlier reports said "appointments aren't part of this client's payload", which was *true* and
+beside the point: they were never on web's payload either.
+
+**That is the third such correction in three sessions** — the projects booking badge (U), the audit
+trail (U), and now this. All three were mobile-side gaps recorded in REPORT.md as missing API
+surface. Worth treating "the API can't do this" as a claim to re-verify rather than inherit.
+
+## Item 6 — sentence case, and the tracking
+
+**One token change, as hoped.** The uppercasing lived in a single place — `SectionHeader`'s
+`String(children).toUpperCase()`. Every call site already passed sentence case ("Contact info",
+"Gift cards"), so nothing was hardcoded in caps and removing the transform moved all nine cards at
+once.
+
+**Tracking: 1.02 → 0.34.** `1.02px` at 17px is **0.06em**, and letterspacing at that strength exists
+for one reason: uppercase has no ascenders or descenders, so without it caps set solid. Mixed case
+already has that separation built in, and the same tracking on it reads as a gap between every
+letter rather than as air. `0.34px` is 0.02em — a trace of the editorial looseness without spelling
+the word out.
+
+Four candidates were rendered side by side rather than argued about (`v-05`): **1.02** (the
+uppercase value, visibly gappy), **0.68**, **0.34** (chosen), **0**.
+
+Owner-directed divergence: web sets these headers in caps.
+
+## Items 1, 2, 4
+
+| # | Change |
+| --- | --- |
+| 1 | Session chips move **below** the session line, left-aligned. Blocks get 10px between them and 4px inside, so the inner gap stays visibly smaller than the outer — which is what makes them read as blocks. Web's `space-y-1.5` was spacing single lines and no longer applies. |
+| 2 | Gift card subtitle is **the code alone**. Expiry and attachment live on the card's own screen, one tap away. |
+| 4 | Deposit rows: `Session N — $X` title, dates in the meta, **payment state as a chip below-left** (Paid / Signed, not paid / Not signed). Gift card code dropped — it identified a different record than the row is about. |
+
+## A bug this session introduced, caught in the render
+
+The appointments chip initially rendered **grey for every status**. `appointmentBadge` speaks the
+Schedule tab's **three-value** vocabulary — `accent | neutral | alert` — built for dot-and-label
+badges, not `ChipTone`'s eight. My first pass cast one to the other; `tones` has no `accent` or
+`alert` key, so every lookup fell through its neutral default.
+
+Now an explicit `Record<AppointmentTone, ChipTone>` following web's reading of the same states:
+`accent` (Requested / Needs checkout / Waiver pending) → **warning**, matching web's
+`WAIVER_PENDING` and `CHECKOUT_PENDING`; `alert` → **danger**, matching `NO_SHOW`.
+
+**A measurement trap worth recording** with it: my first colour check queried the whole document and
+matched the **Projects** card's `CONFIRMED` chip, which comes first in DOM order — reporting green
+for what was actually a grey appointment chip. Scope a colour probe to the section under test.
+
+## Verification
+
+`apps/mobile/parity-audit/`: `v-01-projects.png`, `v-02-gift-cards.png` (all six tones, including
+the three that were wrong), `v-03-deposit-forms.png`, `v-04-appointments.png` (real fetched rows),
+`v-05-tracking.png` (the four candidates).
+
+Chip colours were read from computed style, not eyeballed: `CHECKED OUT` and `CONFIRMED` at
+`#9b927f` (neutral), `CANCELLED` at `#e08272` (danger).
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — **enums re-derived and match `schema.prisma`, now including `GiftCardStatus`** |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 12.99s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.91 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | sentence-case titles, the new deposit states, both appointment states present; harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **A client.** Every section title should read in sentence case with tighter letterspacing.
+2. **Projects** — chips sit under each session, left-aligned; sessions read as separate blocks.
+3. **Gift cards** — code only under the amount, and the chips should be **coloured**: a PENDING card
+   amber, an EXEMPT one blue, an EXPIRED one amber rather than red.
+4. **Deposit forms** — each row ends with a state chip; no gift card code in the meta.
+5. **Appointments** — **this card has rows now.** Date, artist, status. It was never an API gap.
+
+# Mobile session W — structure + polish round 4
+
+**Base: `mobile/session-v` at `cf4ce3f`.** T2, T3, U, V are all unmerged (`main` is at `151c0d8`,
+carrying S and T). Worktree cut from V; two commits, pushed. **No writes wired — see item 6b.**
+
+---
+
+## 3 — Section reorder: the persistence findings
+
+**What persists it:** `GET`/`PUT /widget-layouts/:pageKey`, returning
+`{ widgetOrder, collapsedWidgetIds }`. **Per-user**, not per-studio — web's `useWidgetLayout` keys
+its cache on the user id. The client page's key is **`client-detail`**, and web's write is optimistic
+and best-effort: the cache updates immediately and a failed `PUT` only means the change does not
+survive a refresh.
+
+**Mobile already had both halves.** Session B built `fetchWidgetLayout` and `saveWidgetLayout` in
+`lib/artists.ts` for the artist profile editor, hitting this exact endpoint. Nothing new was needed
+on either side.
+
+**Because the pageKey matches web's, the order syncs between the two clients for the same person.**
+That was not a goal of the brief and is worth knowing.
+
+**One thing I had to be careful about:** the `PUT` takes both fields, and mobile keeps collapse in
+local state per screen. Sending `collapsedWidgetIds: []` would have silently cleared whatever the
+same user had collapsed **on web**. The saved value is read on load and carried through untouched.
+
+### The affordance — and why it is not drag
+
+The brief said "drag-to-reorder like web", and also "REUSE that pattern/library and its persistence
+approach" from session B, with an explicit escape if drag fought the ScrollView. **Session B's
+pattern is not drag** — it is a reorder **mode**, toggled from a header button (`move` ↔ `check`),
+with per-card up/down buttons that appear only while it is on.
+
+I reused it whole, which means:
+
+- **the gesture conflict never arises** — there is nothing to time-box or report as janky;
+- a phone has no hover, so web's permanently-visible drag handle would be **nine controls nobody
+  touches** rather than an affordance.
+
+Verified end to end: the toggle reveals **18 move controls** (nine cards × two), moving Contact info
+down reorders the list on screen, and `PUT /widget-layouts/client-detail` fires. If you would rather
+have true drag, say so and it is its own session — the persistence is already done.
+
+## 6b — the thread-creation finding, and a judgment call
+
+**`POST /conversations` with `{ clientId }` exists, and it is what web's Message button calls.** It
+404s for `ARTIST`; for OWNER/FRONT_DESK it resolves-or-creates. No permission gate beyond that.
+
+**I did not wire creation.** The brief calls this "a navigation, not a write", and by intent it is —
+but `POST /conversations` does create a row, and this brief's own preamble says writes remain
+M2-gated. Where a specific instruction and a standing rule disagreed I took the reading that cannot
+do damage: **opening an existing thread is wired and works**; a client with no thread gets the toast,
+which the brief names as an acceptable outcome.
+
+It is one line to switch on. Say the word and creation goes in.
+
+**How the rows know:** one `GET /conversations` for the whole screen builds a `clientId → threadId`
+map, rather than a request per row — that endpoint already returns every thread the user can see,
+each carrying its `clientId`.
+
+## 4 — the tab bar
+
+`Home · Inquiries · CHAT · Schedule · FLASH`.
+
+**Web has always kept Tasks in the top bar** — `TopBar.tsx` renders a `TasksIcon` link to `/tasks`
+immediately left of the mentions bell, with the same badge. Mobile had been carrying that count on a
+tab; the tab is gone and the count came to the top bar with the icon. **The glyph was already
+right**: mobile's `TasksIcon` was copied from web's path-for-path in an earlier session.
+
+Flash took the fifth slot and **left the drawer**, so nothing is reachable from two navigation
+surfaces at once. Files were **moved, not duplicated** — `(tabs)/tasks.tsx → tasks.tsx` and
+`flash.tsx → (tabs)/flash.tsx` — because two expo-router files cannot claim the same route name.
+
+The badge count is web's own definition, unchanged: every system task plus every incomplete personal
+one.
+
+## 5 — the persistent cluster
+
+One `TopBarActions`, rendered by **both** `TopBar` (tabs) and `ScreenHeader` (every stacked screen).
+Before this the tabs bar had bell + avatar, `ScreenHeader` had a lone avatar, and neither had tasks
+at all — the corner changed shape every time you pushed a detail screen. Verified on the client
+detail and the clients list (`w-01`, `w-02`).
+
+**A bug this move surfaced, and it mattered.** `taskBadgeCount` did `data.system.length +
+data.personal.filter(...)`. That sum now runs on **every screen**, so a `/tasks` response missing
+either array threw and took the **whole top bar** down behind an error boundary — app-wide, not one
+blank badge. Found by rendering against exactly that response. It is defensive now: a badge is
+chrome, and it fails to zero.
+
+## 1, 2, 6a, 6c
+
+| # | Result |
+| --- | --- |
+| 1 | Deposit rows are the title and the chip. The meta line is gone entirely. |
+| 2 | Appointment rows: artist **avatar** + date/time left, chip **right-aligned**. Web renders an avatar in this very column before the name. |
+| 6a | No avatar circles. The client record has **no image field at all**, so every circle was a pair of initials restating the name beside it. |
+| 6c | Web's anatomy: `<Eyebrow>Everyone who's booked with your studio.</Eyebrow>` over a display-serif "Clients". Session E's `Eyebrow` did the job with its `alert` tone for the red ticks. The nav row stops repeating the word, as the client detail's does (session U). |
+
+## Verification
+
+`apps/mobile/parity-audit/`: `w-01-cluster-detail.png` (the cluster on a detail screen),
+`w-02-clients.png` (all of item 6 — Yoanliz's message button live because she has a thread, the other
+two dimmed), `w-03-rows.png` (items 1 and 2).
+
+The tab bar itself is **not** in a render: the harness mounts screens directly, without the `Tabs`
+navigator, so there was no bar to photograph. It is verified from the route files and the bundle
+instead — `FLASH` present, **`TASKS` absent as a tab label**, `My tasks` present as the top-bar
+control.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 17.34s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.92 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | `My tasks`, `FLASH`, `Reorder`, `Move `, `client-detail`, the eyebrow copy and the no-thread note all present; `TASKS` absent; harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture. The one `PUT`
+exercised was `/widget-layouts/client-detail` against that fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **The tab bar** — fifth tab is Flash, not Tasks.
+2. **The top right, on every screen you visit** — a tasks icon with its count, the bell, your avatar.
+   Tap the tasks icon; it should open the tasks screen. Check it on a tab AND after opening a client.
+3. **The drawer** — Flash Gallery should be gone from it.
+4. **A client → "Reorder"** in the header row. Move buttons appear on every card; move one and press
+   Done. **Then force-quit and reopen** — the order should still be there, and it should match what
+   web shows you.
+5. **Clients** — no avatar circles, a message button per row (live only where a thread exists), and
+   the eyebrow over the serif title.
+
+# Mobile session X — nav consistency, and the clients list
+
+**Base: `mobile/session-w` at `3f1c2f5`.** T2, T3, U, V, W are all unmerged (`main` is at `151c0d8`,
+carrying S and T). Worktree cut from W; two commits, pushed.
+
+---
+
+## 1 — Tasks takes Notifications' anatomy
+
+**Notifications is confirmed as the reference**, and the mechanism is explicit rather than incidental:
+
+```tsx
+<ScreenHeader title="Notifications" onBack={…} right={<View style={styles.spacer} />} />
+```
+
+That `right` override is what suppresses the cluster — `ScreenHeader`'s default has been the full
+cluster since session W. Tasks had kept **`TopBar`** (hamburger + cluster) from when it was a tab.
+It now uses the same three ingredients: back chevron, serif title, empty spacer.
+
+**Repeating the cluster inside a screen you reached by tapping the cluster is circular** — that is
+the rule, and it is why Notifications suppressed it in the first place.
+
+### The drift audit
+
+| Screen | Chrome | Launched from | Verdict |
+| --- | --- | --- | --- |
+| Notifications | back + title, no cluster | **the cluster** | the reference |
+| **Tasks** | was `TopBar` | **the cluster** | **fixed** |
+| Team, Scan, Settings, Profile | back + title + cluster | the **drawer** / account menu | left alone |
+| Client detail, gift card | back + cluster | pushed from a list | left alone |
+
+The four in row three are the judgment call. They are **drawer-launched, not cluster-launched**, so
+the circularity argument does not apply, and session W put the cluster there deliberately one round
+ago. Changing them would be reversing W on my own initiative. **Flagged, not swept in** — say the
+word if you want the rule to be "any pushed screen" rather than "any cluster-launched screen".
+
+## 2 — Clients gets tab chrome
+
+`clients.tsx` **moved into the tab group** and is registered as
+`<Tabs.Screen name="clients" options={{ href: null }} />` — expo-router's own way to say "in this
+navigator, but no tab button". A route outside the group **cannot render the tab bar at all**, so it
+had to move rather than be restyled where it was; the bar still shows five tabs.
+
+It wears `TopBar` now, like every tab screen, and is still reached from the drawer — the hamburger
+is how you go back to it.
+
+## 3 — The eyebrow, and the type token
+
+**Root cause of the wrapping ticks:** `eyebrowRow` carried **`flexWrap: 'wrap'`**. On a long eyebrow
+the row broke and dropped the closing `+` onto a line of its own. The row never wraps now; the
+**text** gives way instead, and the ticks are pinned.
+
+**The step is deterministic, on character count — not `adjustsFontSizeToFit`.** That prop is
+**iOS-only**; under react-native-web it is ignored and the text ellipsizes, which is precisely the
+failure it would have been there to prevent. It is kept as a further iOS safety net, but the sizing
+decision does not depend on it.
+
+**And the tracking is what actually overflows, not the type size.** `0.34em` at 11px is 3.7px between
+every letter — on this 39-character line that is **145px of pure air**, nearly half a 320pt screen's
+usable width. So a long eyebrow steps both down together: **9.5px / 0.5px tracking**.
+
+Measured after: **no truncation at 320 or 390**, ticks inline at both.
+
+Title is `type.welcome` — Home's own token for "Welcome, Juan", not a lookalike.
+
+## 4 — Preferred channel: **not supported**, and here is why
+
+Every possible source was checked:
+
+| Source | Has a channel? | Has a client key? | Usable? |
+| --- | --- | --- | --- |
+| `Client` model | **no such column** — no preferred/most-used field of any kind | — | no |
+| `GET /clients` | `findMany` with no `select`: scalars only, no relations | n/a | no |
+| `GET /inquiries` | **yes**, `channel` per row | **NO** — `INQUIRY_LIST_SELECT` selects `client: { firstName, lastName }`, with no `id` and no `clientId` | **no key to join on** |
+| `GET /conversations` | no channel on the summary | `clientId` | no |
+
+The inquiries route is the near miss: it has exactly the field wanted and no way to attribute it.
+Matching by **name** was the only alternative and is not one — this app ships a duplicate-client
+detector precisely because two clients share a name.
+
+**So the subtitle is the best identity available and carries no channel glyph:** email → formatted
+phone → `@handle`. The handle **is** real stored data (`instagramHandle` is a column); it is the
+*channel* that is unknowable. A wrong glyph is worse than none.
+
+**What the backend would need:** `clientId` on `INQUIRY_LIST_SELECT` would unlock this *and* the
+active-inquiry chip below, in one field.
+
+## 5 — Status chip: **partially supported**
+
+Of the owner's three, exactly one is reachable without N+1 — and it is the one ranked first:
+
+| Signal | Reachable | Why |
+| --- | --- | --- |
+| **upcoming appointment** | **yes** | `GET /appointments` takes a date range and returns `clientId` per row. **One bounded request** covers every client on screen. |
+| pending deposit | no | no list endpoint exposes deposit-form state per client |
+| active inquiry | no | the same missing join key as item 4 |
+
+So: **one chip, "Booked"**, on web's own definition of upcoming (`startTime >= now AND status
+CONFIRMED` — the same predicate as its `upcoming_appointment` activity filter, so the chip agrees
+with the filter that would produce it). Archived still outranks it.
+
+## Verification
+
+`apps/mobile/parity-audit/`: `x-01-pushed-chrome.png` (Tasks beside Notifications — identical),
+`x-02-clients.png` (320 and 390: tab chrome, one-line eyebrow, identity subtitles, the Booked chip).
+
+Eyebrow fit was read from computed style, not eyeballed: 9.5px, `scrollWidth` equal to laid-out
+width at both frames.
+
+**The tab bar itself is not in a render** — the harness mounts screens directly, without the `Tabs`
+navigator, so there is no bar to photograph. Same limitation as session W, and the device gate is
+where it shows.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 17.17s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.92 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | `Tasks`, `Booked`, the eyebrow copy, `No contact details` present; harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **Tap the tasks icon** in the top right. It should look like Notifications: back chevron, "Tasks",
+   nothing in the corner. No tab bar.
+2. **Drawer → Clients.** It should now look like a tab screen: hamburger and the cluster up top, and
+   **the tab bar along the bottom**. That last part is the bit I could not photograph.
+3. **The eyebrow** — one line, a small red `+` at each end, nothing wrapped. Worth a look on the
+   narrowest phone you have.
+4. **The rows** — a chip reading BOOKED on any client with a confirmed appointment coming up.
+5. **Team / Scan / Settings / Profile** still show the cluster. That is deliberate for now — item 1
+   above explains the distinction, and it is one line each if you want them changed.
+
+# Mobile session Y — Tasks restructure, eyebrow canon
+
+**Base: `mobile/session-x` at `9d02c2b`.** T2, T3, U, V, W, X are all unmerged (`main` is at
+`151c0d8`, carrying S and T). Worktree cut from X; three commits, pushed.
+
+---
+
+## 1 & 2 — Tasks, rebuilt as web's stacked page
+
+One scrolling page, three cards, read off `apps/web/src/pages/Tasks.tsx` rather than remembered.
+
+| Card | What web gives it | Gate |
+| --- | --- | --- |
+| **Studio queue** *(solo: "Queue")* | explainer — both wordings are web's, solo and multi; its own **type** Filter; groups **derived** from the tasks present; rows with dismiss | `tasks.viewQueue` |
+| **Assigned to me** *(solo: "Personal")* | Filter + Sort, the composer, check-off, due chip | always |
+| **Assigned by me** | web's explainer verbatim; rows with **no checkbox** | `tasks.assignToOthers` |
+
+Two details taken from web rather than invented:
+
+- **The queue's Filter only appears past one group.** Web's condition is `systemGroups.length > 1`,
+  and the reason is sound — a filter over a single group narrows nothing.
+- **The groups are derived, never hardcoded.** A type with nothing in it produces no heading. The
+  headings use web's own `TASK_TYPE_LABELS`, which are **plural** ("Unanswered inquiries") because
+  each names a group; mobile's `systemTaskLabel` is the **singular** row label and stays where it is.
+  Two different jobs, and mobile already had the second one.
+- **"Assigned by me" rows carry no checkbox** because the API's `PATCH` is assignee-only — which is
+  precisely what web's own explainer line tells the reader. A tick that cannot be honoured is worse
+  than none.
+
+**The scope filter is gone**, and so is its vocabulary: `taskSegmentsFor`, `segmentCount` and the
+MINE/DELEGATED/QUEUE labels had no callers once each card owned its data, and were still shipping in
+the bundle. Removed in their own commit — a dead scope vocabulary lying around is an invitation to
+reach for it again. `TaskSegment` itself stays; `taskFiltersFor` still needs to know which card asks.
+
+**The composer gained an assignee picker**, because the check said to: `CreatePersonalTaskRequest`
+has always taken an optional `userId`. Teammates are fetched only for someone who can actually
+assign, and only active, non-pending members — assigning work to a deactivated account creates a
+task nobody sees. **A task assigned to someone else is inserted into `assignedByMe`, not
+`personal`**: the wrong bucket would have shown it under "Assigned to me" with a checkbox this
+person may not use.
+
+Item 1's collision is fixed by giving the page a real content inset — the Filter row had none and
+sat flush against the header.
+
+**One deliberate call:** the header already carries the serif "Tasks", so the page body gets the
+eyebrow alone rather than a second title. Saying "Tasks" twice on one screen is what session U took
+off the client detail.
+
+## 3 — Eyebrow canon, and a second bug underneath it
+
+**Root cause: session W passed `tone="alert"` on the Clients eyebrow.** I read "red-tick eyebrow" as
+"red eyebrow". They are different things — **the ticks are always red regardless of tone**; `tone`
+recoloured the *text*. So Clients had red text where Home has muted.
+
+The prop is **gone entirely**. Home's rendering is the only one.
+
+**The type error did the sweep better than my grep had.** I found five call sites by grepping
+`<Eyebrow`; removing the prop surfaced **five more** whose `tone` sat on its own line —
+`InquiryRespondSheet` (×2), `PillMenu` (×2), and `StateMessage` in `ui.tsx`. Also removed: four
+`color: colors.accent` declarations on eyebrow *row* styles, which never reached the text at all
+(the component applies `style` to the row) — dead intent, no visual effect.
+
+**And removing it exposed a real bug.** The colour *came from* that prop, so with it gone the text
+had **no colour at all** — rendering **black on a black page**. The canonical `fgMuted` is baked into
+the component now.
+
+That one is worth keeping as a method note: the render merely *looked* dim, and I only caught it
+because I measured the computed colour (`rgb(0,0,0)`) instead of trusting my eyes. **After the fix:
+`rgb(155, 146, 127)`, matching Home.**
+
+Clients text shortened to "Everyone who's booked with you."
+
+## 4 — Chip placement, and the stray dot
+
+The chip sits **immediately after the name, on its baseline**. Measured at 320pt: chip starts right
+of the name's edge, centres within 4px of it, and the name is the only shrinkable thing in the line
+— so it truncates and the chip never wraps. Message icon still holds the right edge.
+
+**The stray red dot is real, and the cause is general.** `StatusChip` drew its dot **before** the
+label, unconditionally — so **any blank status renders as a bare coloured dot with no chip**. Several
+call sites can produce one: `label={g.status}` on a gift-card row, `label={w.status ?? 'Pending'}` on
+a waiver, any status the API returns as `""`.
+
+Fixed **in the component**, not at a call site: a chip with nothing to say now renders nothing. I
+could not pin which row in the screenshot produced it without the image, but the hole is closed for
+every call site rather than one.
+
+## Verification
+
+`apps/mobile/parity-audit/`: `y-01-tasks.png` (the three cards, groups derived, composer, dismiss),
+`y-02-clients.png` (muted eyebrow at 320 and 390, chip beside the name).
+
+Measured rather than eyeballed: eyebrow `rgb(155,146,127)` and untruncated at both widths; chip
+after the name and on its baseline.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 18.55s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.92 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | all three card titles, web's group labels and both queue explainers present; `DELEGATED` **absent** after the cleanup; harness absent |
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **Tap the tasks icon.** One page, three cards, no scope filter. The Filter/Sort row should have
+   air above it now.
+2. **Studio queue** — grouped headings, each row dismissable with the ×. Its Filter only appears when
+   there is more than one group, which is deliberate.
+3. **Type a task** — the date row appears, and if you can assign, a "ME / …teammates" row under it.
+   Assign one to someone and it should land in **Assigned by me**, not your own list.
+4. **The eyebrows, everywhere** — Home, Tasks, Clients, the sheets. They should all look like Home's:
+   muted text, red `+` at each end. Any gold or red *text* is drift I missed.
+5. **Clients** — the chip should sit right beside the name.
+
+# Mobile session Z — eyebrow/drawer/chrome convergence
+
+**Base: `mobile/session-y` at `616f2eb`.** T2, T3, U, V, W, X, Y are all unmerged (`main` is at
+`151c0d8`, carrying S and T). Worktree cut from Y; two commits, pushed.
+
+---
+
+## 3 — The background, root-caused. It was never the navigator.
+
+**Every screen was painting its own opaque page ground on top of the shared photo.**
+
+The photo/wash/grain is rendered **once**, at the root, as a sibling of the navigator. For it to show,
+every screen above it must be transparent — and until now each screen declared that for itself:
+
+| Screen | `screen:` style | |
+| --- | --- | --- |
+| `home.tsx` | `backgroundColor: 'transparent'` | ✓ |
+| `schedule.tsx` | `backgroundColor: 'transparent'` | ✓ |
+| **`clients.tsx`** | **`backgroundColor: colors.bg`** | ✗ |
+| **`team.tsx`** | **`backgroundColor: colors.bg`** | ✗ |
+| **`tasks.tsx`** | **`backgroundColor: colors.bg`** | ✗ |
+| **`scan.tsx`** | **`backgroundColor: colors.bg`** | ✗ |
+
+That is the whole bug, both times. Session X moved Clients into the tab navigator — which fixed the
+tab bar and **could not have fixed this**, because the navigator was never what covered the photo.
+
+### The fix is structural, because the bug is
+
+A per-screen decision that must be right on **every** screen will be wrong on some of them, and was
+— twice. So it is not a per-screen decision any more. **`ScreenShell`** owns it and **all 22 screens
+are migrated**. Two additions make the class of drift hard to reintroduce:
+
+- **A dev assertion.** Passing a `backgroundColor` through `style` **throws in development**. This
+  bug's failure mode has always been that the screen looks *fine*, just flat — so it needed something
+  louder than review. (It is correctly **absent from the production bundle**: `__DEV__` strips it.)
+- **`OpaqueScreenShell`**, separately named, for the two screens that genuinely want an opaque ground
+  (the camera, login). A named component rather than a flag, so choosing it is a decision someone
+  made on purpose and can be found by grepping.
+
+`z-02` shows the photo coming through Clients — the harness mounts the real `ScreenBackground`, since
+it bypasses the root layout.
+
+## 1 — The eyebrow, extracted
+
+From `apps/web/src/components/Eyebrow.tsx`, not measured off an image:
+
+| Property | Web | Mobile after |
+| --- | --- | --- |
+| size | `text-[11px]` | **11px** ✓ |
+| weight | `font-semibold` | **Jura_600SemiBold** ✓ |
+| tracking | `tracking-[0.34em]` | **3.74px** ✓ |
+| colour | `text-fg-muted` | **rgb(155, 146, 127)** ✓ |
+| gap | `gap-3` | **12px** ✓ |
+| tick size | `text-[13px]` | **13px** ✓ |
+| tick colour | `text-danger-strong` | **rgb(194, 64, 47)** ✓ |
+| tick tracking | `tracking-normal` | **0** ✓ |
+| title gap | `mt-1` | **4px** ✓ |
+
+Read off the running component, not asserted. One reading needs explaining: **computed
+`font-weight` reports 400** while the *family* is `Jura_600SemiBold` — React Native selects a weight
+by font **file**, not by the CSS property, so the glyphs are semibold and the property is inert.
+
+**`type.eyebrow` already held every one of those numbers.** What diverged was a step **I added in
+session Y** — 9.5px at 0.5px tracking past 24 characters — to stop one label overflowing at 320pt.
+That made two screens render as a visibly different component from the rest, which is what kept
+being reported across three rounds. It is gone. Home's title margin also moves 12 → 4.
+
+**The cost, stated plainly:** at **320pt the Clients eyebrow no longer fits.** It needs **316px** and
+has **247** — short by **69**. It ellipsizes; the ticks stay put. At 390 it fits. The lever is the
+copy, and the copy is yours: `EVERYONE WHO'S BOOKED.` (22 chars, ~202px) would clear it at every
+width. I did not shorten your line without asking.
+
+## 2 — The drawer
+
+**Web literally specifies the width you asked for.** `Sidebar.tsx` is `w-[80vw]` — the "~80%" is
+web's own number, not an approximation of one. A fixed **288** was right on a 360pt phone and wrong
+on every other size.
+
+Re-verified against *current* web, since session O's extraction predates the logo change:
+
+| Property | Web | Was | Now |
+| --- | --- | --- | --- |
+| width | `w-[80vw]` | 288 fixed | **80% of screen** |
+| logo cap | `max-h-28` | 96 | **112** |
+| row padding | `px-3 py-2.5` | 12 / 12 | **12 / 10** |
+| row gap | `gap-1` | 0 | **4** |
+| label | `text-[15px]` | body default | **15px** |
+| **active marker** | `::before` **3×20, danger-strong**, radius `0 2px 2px 0` | **2px full-height GOLD** | **web's red bar** |
+| active row | `.on` → surface fill + border | gold tint at 8% | **surface + border** |
+
+The marker is the substantive one: it was gold, and web has always drawn it red. That is one of the
+few places red is not punctuation in this design — it is the sidebar's "you are here".
+
+## 4 — Direct drag, and it did not fight
+
+**No mode.** The toggle is gone; every card wears web's six-dot handle permanently (its
+`DragHandleIcon`, dot for dot — the one glyph web fills rather than strokes).
+
+**The handle is the only drag surface, and that is what made it tractable.** The pan gesture lives on
+a 44pt target in the card header; the card body keeps ordinary scroll and tap. The two never contend
+for the same touch, so the ScrollView conflict that got this timeboxed in session W does not arise.
+Scroll is frozen for the duration of a drag and thawed on release.
+
+**Heights are measured, not assumed** (`onLayout` per card): these range from one collapsed line to a
+full inquiries table, so any fixed row step would be wrong for every one of them.
+
+**Not built: the haptic on lift.** `expo-haptics` is not a dependency, and adding one for a single
+tick was not worth it against everything else in this session. One line if you want it.
+
+**Honest limit:** this is verified by construction and by typecheck, not by a drag in the preview —
+a synthetic pointer sequence through react-native-web's gesture bridge would prove very little about
+the native gesture. The device gate is the real test, and if it misbehaves there the fallback the
+brief named (handle visible, long-press to lift) is a one-line change to `.activateAfterLongPress()`.
+
+## 5 — Team
+
+The Clients anatomy: tab chrome, the shared ground, eyebrow and serif title. **Web's Team page has
+its own eyebrow — "The Roster"** (`pages/Team.tsx`) — so that is the copy rather than the invented
+line the brief offered as a fallback. Segments and rows unchanged (`z-03`).
+
+**Scan keeps its own chrome deliberately.** It is on `ScreenShell`'s opaque variant, because a photo
+behind a camera viewfinder is noise. Flash was already a tab.
+
+## Verification
+
+`apps/mobile/parity-audit/`: `z-01-eyebrow.png` (web's literal values, with the title at `mt-1`),
+`z-02-clients-background.png` (the ground showing through), `z-03-team.png`.
+
+Every eyebrow value above was **read from computed style**, not eyeballed — this being the third
+round, that seemed like the point.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean — enums re-derived, match `schema.prisma` |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 21.04s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.92 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | `The Roster`, the handle's labels present; the client-detail reorder **mode** absent; the dev assertion correctly stripped by `__DEV__`; harness absent |
+
+One bundle string needs a note so it is not misread: **`Done reordering` is still present** — that
+is the **artist profile editor**'s own reorder mode (session B), which item 4 did not cover and I did
+not touch. The client-detail mode is gone (`Move Contact info up` absent).
+
+**No database writes** — every check was a read or a render against a local fixture.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+1. **Clients and Team** — the photo should be behind them, exactly as on Home. This is the one to
+   check first.
+2. **The drawer** — it should open to 80% of your screen, with a bigger logo and a **red** bar beside
+   the active row.
+3. **A client → grab a card's six-dot handle and drag.** The list should not scroll while you hold
+   it. If it fights, tell me and I will switch it to long-press-to-lift.
+4. **The eyebrows** — compare Home against your web screenshot side by side; they should now measure
+   the same.
+5. **Clients at 320pt** — its eyebrow will ellipsize. That is item 1's cost, and shortening the line
+   is your call.
+
+# Mobile session AA — quick fixes, and the client record's first live writes
+
+**Base: `mobile/session-z` at `4b25573`.** T2 → Z are all unmerged (`main` is at `151c0d8`, carrying
+S and T). Worktree cut from Z; two commits, pushed.
+
+---
+
+## 6a — Web's client write surface, inventoried
+
+From `apps/api/src/routes/clients.ts`, before building anything:
+
+| Route | Permission | Wired |
+| --- | --- | --- |
+| `PATCH /clients/:id` | `clients.edit` | **yes** — the Edit screen |
+| `POST /clients/:id/phones` | `clients.edit` | **yes** |
+| `DELETE /clients/:id/phones/:phoneId` | `clients.edit` | **yes** |
+| `POST /clients/:id/phones/:id/make-primary` | `clients.edit` | **yes** |
+| `POST /clients/:id/emails` · `DELETE` · `make-primary` | `clients.edit` | **yes** |
+| `POST /clients/:id/archive` · `/unarchive` | `clients.archive` | **yes** — the More menu |
+| `POST /clients/:id/merge` | `clients.merge` | **yes** — typed confirm |
+| `DELETE /clients/:id` | **OWNER role** | **no — deliberately** |
+
+**Delete is web's other More-menu item and stays toast-gated.** It permanently destroys the record,
+it is OWNER-only, and web guards it with a typed confirmation over a *server-rendered preview* of
+what would go with it. None of that is in the set this session was cleared for, and half-building a
+destructive confirm is worse than not offering one.
+
+**What `PATCH` accepts** is `EDITABLE_CLIENT_FIELDS` — firstName, lastName, email, phone,
+instagramHandle, facebookProfileUrl, otherContact, address, preferredLocale — and **it ignores
+anything else silently, not with a 400.** A form offering a field the server does not take would
+appear to save and quietly discard it, which is why the write module names fields rather than
+spreading a form object. (`preferredLocale` is left out: it is a picker over the supported-locale
+set and belongs with the i18n work.)
+
+## The exercise earned its keep — a rule I would have shipped broken
+
+Running every path against the **dev API** (item 6f) turned up something no amount of reading the UI
+would have shown:
+
+```
+DELETE /clients/:id/phones/:phoneId
+→ 400  "Make another phone primary before removing this one"
+```
+
+**The primary row cannot be deleted while others exist** — and *can* be when it is the last one, in
+which case the client's own `phone` column is nulled with it. Without this, the trash button would
+have been **permanently broken on exactly one row per group**, on every client with more than one
+number, and only there.
+
+The UI encodes the real rule now: `removable = !isPrimary || rows.length === 1`, and the disabled
+button carries the server's own sentence. The exercise proves both halves — the refusal and the
+allowed last-row delete.
+
+## 6f — the write-path evidence
+
+Two labelled fixtures created on the **dev database**, mutated, and left in place:
+
+| | id |
+| --- | --- |
+| survivor | `cmt8sbb9j000jcoi2gm2u71xp` — *ZZ-Fixture-Survivor 20260825-AA* |
+| source | `cmt8sbby5000mcoi29p2jlmxc` — *ZZ-Fixture-Source 20260825-AA* |
+
+**19/19 passed.**
+
+| Step | Result |
+| --- | --- |
+| `PATCH` firstName + address + instagram | 200 |
+| `PATCH` with a non-editable field | ignored, as documented — not accepted, not rejected |
+| `POST /phones`, `POST /emails` | 201 |
+| `make-primary` (both) | 200 |
+| `DELETE` the **primary** phone | **400, refused** — the rule above |
+| `DELETE` a non-primary phone / email | 204 |
+| `DELETE` the **last** phone | 204 — allowed, nulls `client.phone` |
+| `archive` → `archivedAt` set | 200 |
+| `unarchive` → `archivedAt` cleared | 200 |
+| `merge` | 200 |
+| source still exists, `mergedIntoId` set | **tombstone, not a deletion** |
+| merged record refuses edits | 400, web's own sentence |
+| source gone from `GET /clients` | filtered out |
+| `DELETE` a phone that is not there | 404 — the revert path the UI needs |
+
+**Production untouched.** Every call went to `127.0.0.1:4001` against the dev database, on records
+this session created.
+
+## 6e — merge semantics, and why the confirm says what it says
+
+`performMerge` (`apps/api/src/lib/clientMerge.ts`), in one transaction:
+
+1. every inquiry, appointment and gift card is **repointed** to the survivor;
+2. the two clients' **conversations are folded** together;
+3. the source's phones and emails **carry over as aliases**;
+4. the source gets `mergedIntoId` — **it is not deleted.**
+
+So the source becomes a tombstone pointing at the survivor: out of every list view, and refused by
+`PATCH` with *"This client has been merged and can no longer be edited directly."* Both confirmed
+live.
+
+**It cannot be undone.** `archive` has an `unarchive`; this has nothing — there is no unmerge route
+anywhere in the API, and step 1 records no inverse. So the confirm sheet says *"This cannot be
+undone"* as a fact, lists the four consequences above, and requires typing **MERGE** — web's own
+pattern for its destructive actions, and the right control for a one-way door.
+
+## 6b, 6c, 6d — the flows
+
+**Contact writes are optimistic with a visible revert.** The row moves at once; a failure puts the
+previous client object back exactly and says why above the card. A write that silently did not happen
+is the outcome worth engineering against — the screen would go on claiming a number the studio no
+longer has. After each success the client is **re-read** rather than trusted, because adding a phone
+can also change which row is primary and the server decides that.
+
+**Set-primary is offered** — web has it as a text link on every non-primary row; same rule here, with
+a drawn star since web has no glyph for it.
+
+**Edit** is a real form on session B's layer: dirty tracking, the unsaved-changes guard, and
+validation that **mirrors web's without exceeding it** (non-empty names; ten digits if a phone is
+given, matching `isValidPhoneDigits`; a shape check on email). Only dirty fields are sent — the audit
+trail records every field a `PATCH` touches, so sending the whole object would write nine entries for
+a one-field change.
+
+## 1–5
+
+| # | Result |
+| --- | --- |
+| 1 | Drag gone. **The persistence stays wired on purpose** — `fetchWidgetLayout` still reads on load and the key is still web's `client-detail`, so an order arranged on web is honoured. `saveWidgetLayout` has no caller here now; the comment says that is intentional. |
+| 2 | One `SCREEN_TOP_INSET`. Home had the padding and nothing else did. |
+| 3 | Tasks back to **QUEUE / MINE / OTHERS**. Recorded as a deliberate divergence from web, since Y's stacked layout *was* web's. The scope segments Y deleted are **not** back: those filtered one list, these are three. |
+| 4 | Team's segment eyebrows gone. |
+| 5 | Flash takes the tab anatomy it should have had since W. |
+
+## Verification
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | clean, lockfile stable |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 13.06s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 4.96 MB |
+| React singleton | bundle carries 19.1.0; the root's 19.2.7 absent |
+| Bundle content | every write path present; the drag labels absent; harness absent |
+
+**A bundle-check note, in the spirit of session Q's:** two markers first read ABSENT —
+`Type MERGE to confirm` and the primary-delete sentence — because both are **template strings**, so
+the literal never exists. Re-checked against their constant fragments (`' to confirm'`, `'MERGE'`,
+`' primary before removing this one.'`, `'Make another '`) — all present. **A marker spanning a `${}`
+will always read absent**; check the fragments.
+
+`Delete client` is present and *should* be — it renders dimmed with its explanation. The only
+`Reorder` left is `profile-edit.tsx`'s own artist-profile mode, untouched and out of scope.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under it.
+
+**These are real writes now — use the fixture client, `ZZ-Fixture-Survivor 20260825-AA`.**
+
+1. **Contact info → `+`** — add a phone, then an email. They should appear immediately and survive a
+   pull-to-refresh.
+2. **The trash on the primary row is disabled** and says why. Promote another row first, then it
+   frees up. That is the server's rule, not a mobile invention.
+3. **Turn on airplane mode, then delete a row.** It should vanish, come back, and tell you it did not
+   save. This is the path worth testing on a bad connection.
+4. **Edit** — change a name, leave without saving; it should stop you.
+5. **More → Archive**, then Unarchive.
+6. **Merge** — pick the other fixture (`ZZ-Fixture-Source`), read the consequences, type MERGE.
+   Afterwards the source should be gone from your client list. **Do this on the fixtures, not a real
+   client:** it cannot be undone.
+
+# Mobile session AB — one title system, and the safe actions go live
+
+**Base: `mobile/session-aa` at `30b43a4`.** T2 → AA are all still unmerged. Worktree cut from AA;
+one commit (`2eebf44`), pushed.
+
+---
+
+## The correction this session turned on
+
+I came into item 4 believing attach-to-a-session was a money flow and planning to toast-gate it.
+**That was wrong, and reading the route rather than trusting the earlier note is what caught it.**
+
+`PATCH /gift-cards/:id/attachment` (`apps/api/src/routes/giftCards.ts:535`) sets `appointmentId`,
+writes a `rollover` audit row, and returns. No amount is read. No balance moves. Nothing is
+redeemed.
+
+The money check I had attributed to it — `validateGiftCardsForAttachment`, which sums
+`amountCents` across a set of cards and refuses a shortfall against `requiredCents` — lives on a
+**different path entirely**: `POST /appointments` and inquiry scheduling. Neither is reachable from
+the gift card screen. apps/web's own call site says the same thing in its own words: *"This just
+sets which appointment the card is aimed at; no new balance/redemption math lives here."*
+
+So under the brief's own test — *"IF investigation shows it's a plain association write … wire with
+confirm"* — attach qualifies, and it is live. **Void and transfer are untouched and stay gated**,
+which is the line the standing constraint actually draws.
+
+The lesson is the one already in memory as [[feedback_verify_premises]]: a premise carried forward
+from an earlier note is not evidence. Two functions with similar names sat on opposite sides of the
+money line.
+
+## 4 — the gift card's safe actions
+
+**The code is copyable.** It is the thing someone reads down a phone line, and copying it touches
+nothing. A haptic fires on the tap, because the entire result of that tap lives in an invisible
+clipboard — a label that changes for two seconds is not feedback you can feel.
+
+**Attach is live**, with the shape the action's real weight deserves:
+
+| | |
+| --- | --- |
+| Which sessions are offered | this client's **upcoming REQUESTED/CONFIRMED** ones |
+| Why not all of them | the server accepts any of this client's appointments; web narrows for a reason it states — a cancelled or finished session is a confusing choice, not a real one |
+| Confirm | two steps, not a typed word — **this is reversible**, and a typed confirm would be theatre |
+| What the copy says | nothing is charged now; **the session it is on now loses this deposit**; you can move it again |
+| Detach | included — `appointmentId: null` is a real state the route takes, and staff need it when a session moves |
+
+Refusals are the server's own sentences, not a generic "not allowed": no `giftCards.issue`; a card
+that is not ACTIVE or EXEMPT; a card with no holder.
+
+**Void and transfer are reworded, not unlocked.** They said "portal only", which reads as a
+permanent verdict. They now say *"Coming soon"* — the truth is that they are next, not never.
+
+## 5 — deposit and waiver PDFs
+
+Both routes are the same shape: an authenticated GET that replies with the bytes. No signed URL, no
+redirect, no separate storage host.
+
+**A share sheet, not a "download".** A phone has no downloads folder to put this in. The native
+idiom is: write into the app's own cache, hand the file to the system sheet, let the person pick
+Files or Mail or AirDrop — that is what they meant by download. Anything else leaves a file nobody
+can reach. The cache is the right home precisely because the OS may reclaim it, and the server can
+always re-issue.
+
+**Built on expo-file-system 19's `File` API for one specific reason.** SDK 54 moved the old
+`downloadAsync`/`cacheDirectory` pair behind `expo-file-system/legacy`, and the legacy call
+**resolved for any status**. A 403 would have written the error body to disk and opened a share
+sheet offering a "PDF" containing the word Forbidden. `File.downloadFileAsync` rejects on a non-2xx
+and writes nothing — read off `ios/FileSystemModule.swift`, which also settles how the status
+reaches JS:
+
+```swift
+UnableToDownloadException("response has status \(httpResponse.statusCode)")
+```
+
+That string is the only place the status survives, which is why the code parses it rather than
+reading a status field that does not exist. 401/403/404 each get a sentence someone can act on;
+everything else gets one honest line rather than a guess.
+
+`CardIconButton` grew a real `busy` state for the round trip — the glyph becomes a spinner and the
+button stops accepting taps, because a control that looks idle while it works invites a second tap
+and a second download.
+
+## 1, 2, 3 — the title system
+
+| # | Result |
+| --- | --- |
+| 1 | `EYEBROW_TITLE_GAP = 8` on `ScreenShell`. Web is `mt-1` — 4px — and session Z matched it exactly; this is **recorded as an owner-directed divergence**, one step up the scale rather than a number picked by eye. |
+| 2 | Tasks' eyebrow is gone. The header already names the screen and the tabs already name each list; a standing caption between them was a third voice. |
+| 3a | Flash **is** the pattern, so it moves onto the shared component rendering exactly what it rendered before. |
+| 3b | Inquiries: title + `3 inquiries · 2 projects`, computed from the same counts the segmented control uses, so the two cannot disagree. |
+| 3c | Clients: eyebrow removed (**reversing X and Z**, owner's call), title + `2 clients · 1 archived`, `+` wired. |
+
+**The action control moved into the pattern too.** Flash had its own `newButton` style; Clients
+would have had a second copy. `TitleAction` now lives beside `ScreenTitle` — three screens each
+keeping their own copy of a control is precisely how the eyebrow drifted in the first place.
+
+The Clients count line has a constraint worth stating: **the archived figure only appears when the
+toggle is on, and that is not a display choice.** `GET /clients` excludes archived rows unless
+`includeArchived` is set, so with the pill off the screen genuinely does not know how many there
+are. It counts the *filtered* rows, so the line describes what is on screen while a search runs.
+
+### Add Client is live; New Inquiry is not, deliberately
+
+`POST /clients`, gated `clients.edit` **at the entry point** — the `+` is absent without the
+permission, never present-and-refusing, which is how web hides its own `canAddClient` button.
+Verified both ways in the harness: present with the permission, absent without it.
+
+Four fields, because that is what the route reads (`{ firstName, lastName, email, phone, address }`,
+the two names required). Web's Add Client modal offers the same four minus address, so a record
+created on a phone and one created in the portal are the same record. Web's ten-digit rule, to the
+digit.
+
+**New Inquiry is omitted and this is the reason, not an oversight.** Web's `StaffInquiryForm` is
+524 lines and requires **two image uploads** — reference and placement — before it will submit, on
+top of client selection, artist assignment, size, placement and budget. A `+` opening a shrunken
+version of that would create inquiries the portal treats as incomplete. It is a session of its own.
+
+## The write-path evidence — dev database only
+
+**Confirmed I was on the dev database before writing anything**: session AA's own fixture clients
+are present at the exact ids AA reported (`cmt8sbb9j000jcoi2gm2u71xp`). 100 clients. Every call went
+to `127.0.0.1:4001`. **Production untouched.**
+
+### `POST /clients`
+
+| Step | Result |
+| --- | --- |
+| names + email + phone | **201** — `ZZ-Fixture-New 20260825-AB`, `cmt98d8ie0000hoi2lq1so686` |
+| names only, both optionals omitted | **201** — `ZZ-Fixture-Minimal 20260825-AB`, `cmt98d9cl0003hoi2ve1dod1b` |
+| missing `lastName` | **400** `Missing required field(s): lastName` |
+| the created record, re-read | primary phone row **and** primary email row both created by `createClientFromFields`; referral code server-generated |
+
+### `PATCH /gift-cards/:id/attachment`
+
+Exercised on one dev card and **restored to its original state exactly** — the round trip *is* the
+restoration:
+
+| Step | Result |
+| --- | --- |
+| detach (`appointmentId: null`) | **200**, `appointmentId` null, `detachedFromAppointment` naming the session it left |
+| re-attach to the original session | **200**, back where it started |
+| an appointment belonging to somebody else | **400** `appointmentId must belong to this card's client in your studio` |
+| `appointmentId: 42` | **400** `appointmentId must be a string or null` |
+| a REDEEMED card | **400** `Only an ACTIVE or EXEMPT card can be moved (this one is REDEEMED)` |
+| the audit trail afterwards | **two `rollover` rows**, one per direction — which is what the screen re-reads on success |
+
+### The PDF routes
+
+| | deposit form | waiver |
+| --- | --- | --- |
+| authenticated | **200**, `application/pdf`, 103,706 bytes, `%PDF-` | **200**, `application/pdf`, 107,515 bytes, `%PDF-` |
+| `Content-Disposition` | `attachment; filename="deposit-form-….pdf"` | `attachment; filename="waiver-….pdf"` |
+| no token | **401** | **401** |
+| unknown id | **404** | **404** |
+
+## Verification
+
+### What the harness proved, and what it could not
+
+Every screen was looked at, not inferred: Clients (with and without `clients.edit`), Inquiries,
+Flash, Tasks, New Client, the gift card, the attach sheet's list step and its confirm step, and the
+client detail's download buttons at full opacity where they used to be dimmed.
+
+**One thing is honestly unverified: the share sheet itself.** `Sharing.isAvailableAsync()` is false
+under react-native-web, so the native hand-off is device-gate work. The routes are proven, the
+wiring compiles and renders, the busy state was exercised — the sheet opening is for the phone.
+
+**A harness note worth keeping.** Two of my own fixtures were wrong in ways that looked like app
+bugs. `status: 'CLAIMED'` is not a `FlashPieceStatus`, so `STATUS_LABELS[status]` was undefined and
+`Chip` crashed on `.toUpperCase()` — the app was right and my data was not. And the first Clients
+screenshot showed rows stacked on top of each other, which is the artifact **`Appear.tsx`'s own
+comment already documents**: Reanimated implements `entering` on web by briefly
+absolutely-positioning the list. A reanimated error froze it mid-flight. Neither was a regression.
+
+Also caught by looking: **I dropped `<TopBar />` from Inquiries** while inserting the title — the
+replacement text simply did not carry it forward. Invisible in a diff review, obvious in a
+screenshot.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `git status` before building | **clean, 0 entries** |
+| `npm ci` | clean, lockfile stable, tree still clean after |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean, 14.53s |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 5.02 MB, **identical bundle hash before and after `npm ci`** |
+| React singleton | only `19.1.0` in the bundle; the root's 19.2.7 absent |
+
+### Bundle content
+
+Every new path present (`/attachment`, `DETACH FROM ITS SESSION`, `com.adobe.pdf`, `/client-new`,
+`Copy gift card code`); every replaced string absent (`Downloading a PDF is a portal action for
+now`, `Voiding a card destroys its value`, `Transferring a card to another client`, `Everyone who`,
+`Everything needing attention`); the harness absent.
+
+**Two markers first read as failures and both were my check, not the code** — the same trap as
+sessions Q and AA:
+
+- `'portal only'` is still in the bundle because **four other actions legitimately say it** (issue
+  gift card, send deposit form, send waiver, text receipt). The one I reworded is gone, proven by
+  its own full sentence being absent.
+- `'preview'` is all expo-router internals (`__PreviewKey__`, `expo_router_is_preview`). Checked
+  against strings only my harness could have produced — all absent.
+
+**A substring is not a marker.** Check the sentence, or check what else in the app could have
+written it.
+
+## Dependencies
+
+Three added, each pinned to what SDK 54 bundles so they ship **inside Expo Go** and the owner's
+phone can still open the app:
+
+| | required | installed |
+| --- | --- | --- |
+| `expo-file-system` | `~19.0.24` | 19.0.24 |
+| `expo-haptics` | `~15.0.8` | 15.0.8 |
+| `expo-sharing` | `~14.0.8` | 14.0.8 |
+
+## Left open
+
+- **The share sheet is unproven on a device.** Everything up to it is verified; the hand-off is the
+  first thing to try on the gate.
+- Two labelled fixture clients remain on **dev**: `ZZ-Fixture-New 20260825-AB` and
+  `ZZ-Fixture-Minimal 20260825-AB`. Harmless, and named here so they are not mistaken for real
+  records.
+- New Inquiry, per above.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under
+it.
+
+1. **Clients** — the eyebrow is gone; the line under the title counts what is on screen. Type in
+   the search box and watch the count follow it. Tap **+**, create someone, and land on their page.
+2. **Inquiries and Flash** wear the same title block. That is the point of the item — check they
+   look like one system, not three.
+3. **A gift card → the calendar button.** On an ACTIVE card with an upcoming session it opens the
+   sheet; pick a session, read the consequences, attach. Then attach it back, or detach. **Do this
+   on a dev card.** The activity history should show your move.
+4. **Void and transfer still say no** — they should now say "coming soon", not "portal only".
+5. **Tap the gift card code.** It should copy and you should feel it.
+6. **The download icon on a signed deposit form or waiver** — this is the one that has never run on
+   hardware. Expect a spinner, then the iOS share sheet. Save it to Files and open it: it should be
+   a real, readable PDF, not an error page.
+
+# Mobile session AC — the pill, Flash's filters, and the toggle settled by measurement
+
+**Base: `mobile/session-ab` at `50d8000`** — the stack head. T2 → AB remain unmerged (`main` is at
+`151c0d8`). Worktree cut from AB; one commit (`f8af371`), pushed.
+
+---
+
+## 3 — The toggle. Fifth report, and the first one with a measurement that could fail
+
+**The brief's premise is not true, and checking it is what produced the fix.**
+
+> "adopt the segmented-tab pattern that Tasks (AA item 3) now uses — QUEUE/MINE/OTHERS style
+> segments render labels + counts without collision because they size from a different anatomy"
+
+Tasks renders `SegmentedControl`. Inquiries renders `SegmentedControl`. It renders `Pill`. **They
+are the same three components.** The single difference is one line:
+
+```tsx
+// tasks.tsx          { key: 'mine', label: 'Mine' }                       <- no count
+// inquiries.tsx      { key: v.key, label: …, count: counts[v.key] }       <- a count
+```
+
+Tasks does not collide because Tasks has no badges. The badge was the entire delta.
+
+### Why four fixes "passed" and the phone still lost
+
+`Pill` already carries `flexShrink: 0` on the pill, on the badge and on the label, plus
+`maxFontSizeMultiplier: 1.3`. Its comment records a measurement — *"both pills end at 291px, so this
+fits a 320pt screen with 29px to spare"* — and that measurement is correct. It is also taken in a
+browser, and **react-native-web implements no iOS Dynamic Type at all**. Every previous check tested
+the one condition in which the cause cannot occur.
+
+So this session emulated it: scale the text and not the padding, which is what Dynamic Type does,
+up to 1.3× — the largest the shipped control still permits. Jura confirmed loaded
+(`Jura_500Medium`), two-digit counts, both variants, four widths:
+
+| width | A: with badges @1.0 | A @1.3 | B: labels only @1.0 | B @1.3 |
+| --- | --- | --- | --- | --- |
+| **320** | ends 288px | **ends 327px — 7px past the screen** | ends 231px | ends 265px (55px spare) |
+| 375 | 288px | 327px (48 spare) | 231px | 265px (110 spare) |
+| 390 | 288px | 327px (63 spare) | 231px | 265px (125 spare) |
+| 430 | 288px | 327px (103 spare) | 231px | 265px (165 spare) |
+
+**327 > 320 is the bug.** And because two earlier fixes pinned `flexShrink: 0`, it does not
+ellipsis — it overflows into the horizontal scroll, which on a phone reads exactly as *"PROJECTS is
+cut off"*. The pinning was right; it just moved the symptom from truncation to overflow.
+
+### The decision
+
+**Variant B: labels alone, counts in the sub-header** — the brief's stated fallback, and the
+evidence supports it rather than merely permitting it:
+
+- it is the only variant that fits the narrowest supported width at the largest permitted text;
+- the counts were **already** on screen — AB put "24 inquiries · 18 projects" in the title's
+  sub-header. The badges were a second copy of the same two numbers, 40px below the first, and they
+  were the copy that could not fit;
+- it makes Inquiries and Tasks the same control with the same inputs, which is what "one system"
+  should mean.
+
+Both renders are in the exhibits, at 320pt with the screen edge drawn in red.
+
+## 1 — The action slot is web's pill
+
+Extracted, not eyeballed. `FlashGallery.tsx`'s own button plus `.editorial-btn-primary`
+(`index.css:1948`):
+
+| | web | mobile |
+| --- | --- | --- |
+| shape | `rounded-full` | `radius.pill` |
+| padding | `px-4 py-2` | 16 / 8 |
+| fill | `bg-accent` **#c99a5b** | `colors.accent` |
+| label colour | `text-bg` **#0e0b08** | `colors.bg` |
+| font | `var(--font-jura)` 400, 11.5px | `fonts.label`, 11.5 |
+| tracking | `0.14em` | 1.61 |
+| case | `uppercase` | uppercase |
+| glyph / gap | `h-4 w-4` / `gap-2` | 16 / 8 |
+
+**The label colour is `bg`, not `accentFg`** (#0e0b08 vs #171208). Two different tokens, close
+enough to look identical — guessing would have been a guess. It replaced an icon-only circle in
+`accentButton` (#d5a05c), a *third* gold, that made the reader work out what "+" meant per screen.
+
+## 2 — Flash's two dropdowns
+
+**Multi-select, verified from source rather than assumed.** `FlashGallery` renders two
+`MultiSelectFilter`s and filters with `selected.includes(...)` over a `string[]`. (Worth noting the
+method cuts both ways: `PillMenu`'s own comment records that web's *task* filters are single-select,
+so mobile made those single. Same method, opposite answer.)
+
+New `MultiPillMenu` reuses the existing trigger and sheet, and carries web's trigger-label rule
+verbatim — placeholder → that option's label → "N selected" — plus "Clear all" at the top only when
+something is selected, and a tap that never dismisses the sheet.
+
+The artist filter is conditional exactly as web gates it: `canManageOthers && !isSoloStudio`. An
+ARTIST caller is narrowed server-side to their own pieces, so the control would offer one option.
+
+### The one-artist gallery link — investigated, and NOT built
+
+What web renders: filter to exactly one artist and a **"Copy public gallery link"** button appears
+(an ARTIST or solo studio gets it unconditionally). It copies
+`${origin}/flash/${studioSlug}/${artistId}`.
+
+**It cannot come over, and the blocker is not effort.** Mobile can get both ids — `GET /studios/:id`
+returns `slug`, the artist id is in the profile — but the **origin** is `PUBLIC_APP_URL`, which
+exists only on the server. `apps/api/src/lib/publicUrl.ts` is explicit that it is a different domain
+from the API's own, so deriving it from `API_URL` would be wrong, and hardcoding it is inventing
+API surface.
+
+The one route that already builds this URL is `GET /clients/:id/shareable-links` — but it is
+per-client and only lists artists with AVAILABLE pieces, so it cannot answer "my own gallery link".
+
+**The smallest unblock**, if wanted later: have `GET /artists` (or `/users/me`'s artist block) return
+the built `publicGalleryUrl`, the way gift cards already return `publicUrl`. Then mobile copies a
+string the server owns, which is the pattern this codebase already uses everywhere else.
+
+## 4 — New Inquiry is live
+
+AB deferred this. AC builds it, and the deferral turned out to be about length rather than
+difficulty.
+
+**One route, two callers.** `POST /inquiries` is mounted with `optionalAuth` and branches on
+`req.user`, not on the path: no token → the public form, `studioSlug` required; a token → staff, the
+studio comes from the token, and `inquiries.create` is checked **inline** (there is no
+`requirePermission` middleware to hang off a dual-purpose route). So mobile sends no `studioSlug` —
+sending one would be inventing a parameter the staff branch never reads.
+
+Web's fourteen fields, its rules to the digit: the nine required ones, phone optional but ten digits
+if given, a referral code when the channel is REFERRAL, at least one reference image and one
+placement photo. The channel list is web's deliberate subset — five of `Channel`'s six, since
+FLASH_GALLERY is set only by the public flash-request flow and staff cannot pick it.
+
+**Deliberately not ported:** web's client-search box, which locks contact fields to a matched record
+via `existingClientId`. It is a second search surface with its own matched/locked states, and
+omitting it changes nothing about what gets created — the server matches on email either way.
+
+Built as a pushed `FormScreen`, not a sheet: this app has one idiom for "a long form you can leave"
+and it already carries the unsaved-changes guard.
+
+## 5 — Schedule takes the title
+
+"Schedule", with a live line derived from `sections` — the exact rows about to render, so it cannot
+disagree with the list under it. Day mode says "N sessions today" only when the selected day *is*
+the studio's today; Upcoming says "N sessions upcoming". Day/Upcoming and TODAY stay in their row
+below. **No action slot** — appointment creation is backend-gated, and a button that only apologises
+is worse than no button.
+
+It also gave a homeless string a home: `subtitle` (the "Times in …" / "Studio timezone unavailable"
+note) was **computed and never rendered**, dead since some earlier refactor. It matters on this
+screen specifically — "today" here means the *studio's* today, and a viewer in another zone had no
+way to know.
+
+## Two defects found while verifying
+
+Neither was in the brief; both were visible the moment a screen was actually looked at.
+
+1. **The count line truncated mid-word.** Once the action became a labelled pill it took real width,
+   and Flash's own line was cut to "…1 b…" at 390pt. It wraps to two lines now. A summary should
+   wrap; chrome should not.
+2. **`DayStrip` was missing `flexGrow: 0`.** On a day with nothing booked the selected date rendered
+   as a ~300px tall gold column. **This is the third place in this app to need that exact line** —
+   `Pill`'s row and `SegmentedControl` both carry the same note, both learned the hard way.
+   Pre-existing, not introduced here; it shows on any empty day.
+
+And one caught during implementation: at 320pt, "Inquiries" wanted 131px and had 130 — **short by
+one pixel**, which character-wrapped the word into "Inquirie / s". A one-pixel miss is not a
+one-pixel problem, so the fix is structural and is web's own: its header is `flex flex-wrap`, so the
+row wraps and the action drops to its own line when the title cannot have its minimum. Verified: it
+wraps at 320 and sits beside the title at 375, 390 and 430.
+
+## The write-path evidence — dev database only
+
+Confirmed the database before writing: session AB's own fixtures are present, 100 clients. Every
+call went to `127.0.0.1:4011`. **Production untouched.** (Port 4011, not 4001 — another session's
+API held 4001 and killing it was not mine to do.)
+
+| Step | Result |
+| --- | --- |
+| create, exactly the body mobile sends | **201** — `cmt9dkmf40003nwi2pdht49l5`, status NEW |
+| missing required fields | **400**, and the server names them in its own words: *Describe the tattoo you want, Color or Black & Grey?, Placement, Estimated size, Have you been tattooed before?, Reference images, Placement photos* — which is exactly mobile's required set, including both photo types |
+| `hasBeenTattooedBefore: "yes"` | **400** `must be a boolean` — hence the yes/no radio mapping to a real boolean |
+| `referenceImages: "nope"` | **400** `must be an array of strings` |
+| REFERRAL with no code | **400** `A friend's referral code is required for this option` — mobile's own rule, confirmed |
+| the inquiry in `GET /inquiries` | present, with its client and its stored reference image |
+| the client record | created, phone normalised |
+| **no token, same body** | **400** `Missing required field(s): studioSlug` — the public branch, proving the 201 above took the staff branch |
+
+Fixture left on dev, labelled: `ZZ-Inquiry 20260826-AC`.
+
+## Verification
+
+Previews at 320 / 375 / 390 / 430 for the toggle (both variants, with the 1.3× emulation), plus
+Flash, Inquiries, Schedule and the New Inquiry form rendered from the real screens.
+
+**What the harness cannot do, stated plainly:** it cannot reproduce Dynamic Type, which is why the
+1.3× emulation exists and why the toggle's numbers are the honest form of the check rather than the
+comfortable one. The image *upload* path in the new form is also unproven on hardware — the picker
+and the signature endpoint are session-B machinery reused unchanged, but this is the first screen to
+use them for inquiry photos.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `git status` before building | **clean, 0 entries** |
+| `npm ci` | clean, lockfile stable, tree still clean after |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 5.04 MB, **identical bundle hash before and after `npm ci`** |
+| React singleton | only `19.1.0`; the root's 19.2.7 absent |
+
+### Bundle content
+
+Every new path present; the harness absent. **One marker read as a failure and was mine, not the
+code's** — `'sessions upcoming'` never exists as a literal because the line is a template string.
+The trap AA and AB both recorded. Re-checked against its constant fragments (`' upcoming'`,
+`' today'`, `'Times in '`, `'Studio timezone unavailable'`): all present.
+
+## Left open
+
+- The gallery link, above — blocked on a value only the server has, with the smallest unblock named.
+- Image upload from the new inquiry form is unexercised on a device.
+- New Inquiry always offers the REFERRAL channel; web hides it unless the studio runs a referral
+  programme (`GET /studio-settings`). Mobile does not read that setting yet. Offering it when the
+  studio does not run one is the safer direction — the server refuses an unknown code — but it is a
+  known divergence, not an oversight.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Restart any `expo start` already running from the primary checkout first — the branch changed under
+it.
+
+1. **Inquiries** — the toggle is the point. INQUIRIES / PROJECTS, no badges, counts on the line
+   under the title. **Turn iOS text size up** (Settings → Display & Brightness → Text Size) and look
+   again: that is the setting every previous fix was never tested against.
+2. **Tap "+ NEW INQUIRY"** and file one. It needs a reference image and a placement photo — that is
+   web's rule, not a mobile invention. It should land on the new inquiry's own page.
+3. **Flash** — "+ NEW FLASH" is the gold pill with the word on it now. The two dropdowns replace the
+   status pills; pick two statuses at once and confirm the grid narrows to both.
+4. **Schedule** — a title and a live count. Scroll to a day with nothing booked: the selected date
+   should be a normal cell, not a tall gold column.
+5. If any screen is at its narrowest and the button sits under the title rather than beside it, that
+   is deliberate — web wraps there too.
+
+# Mobile session AD — inquiry rows: the thumbnails were always there
+
+**Base: `mobile/session-ac` at `a75b721`** — the stack head. T2 → AC remain unmerged (`main` is at
+`151c0d8`). Worktree cut from AC; one commit (`96bd38a`), pushed.
+
+---
+
+## 0 — The toggle shipped, and it does not clip
+
+**AC's replacement is on the stack head.** The segments carry no `count`:
+
+```tsx
+segments={INQUIRY_TABS.map((v) => ({ key: v.key, label: v.label.toUpperCase() }))}
+```
+
+Re-measured from a fresh worktree on this head — not quoting AC, measuring again — at 1.0× and at
+1.3×, the largest scale `Pill`'s own `maxFontSizeMultiplier` still permits on a device:
+
+| 320pt screen | ends at | headroom |
+| --- | --- | --- |
+| **shipped (labels only)** @1.0 | 231px | 89px |
+| **shipped** @1.3 | **265px** | **55px** |
+| the badged one it replaced @1.0 | 288px | 32px |
+| the badged one it replaced @1.3 | **327px** | **−7px — past the edge** |
+
+At 375pt the shipped control has 110px of headroom at 1.3×. There is no supported width at which it
+clips.
+
+### So what is in the owner's screenshot
+
+It has to be a build predating AC. The most likely cause is the one AC's own gate note warned about:
+an `expo start` that was already running when the branch changed under it keeps serving the old
+bundle.
+
+**The tell is the button, not the toggle.** AC also replaced the action control:
+
+| | before AC | after AC |
+| --- | --- | --- |
+| Inquiries header action | *(none)* | **`+ NEW INQUIRY`** gold pill |
+| Flash header action | icon-only gold circle | **`+ NEW FLASH`** gold pill |
+
+If the screenshot shows no button on Inquiries, or a bare circle on Flash, it is a pre-AC bundle —
+stop `expo start`, start it again, and the toggle will be the labels-only one. If a screenshot ever
+shows the `+ NEW INQUIRY` pill *and* count badges on the toggle, that would be new information and
+worth sending, because the measurement above says it cannot happen.
+
+### The last badged control, measured rather than assumed
+
+`Team` is the only `SegmentedControl` still passing counts (`Staff 12` / `Artists 18`). Measured in
+the same harness: **273px at 1.3× on a 320pt screen, 47px of headroom.** Safe — its labels are
+short enough that the badges fit. Left as it is, and now that is a measured claim rather than an
+impression.
+
+## 1 — The thumbnails: a bug, and a comment that asserted the opposite
+
+**Root cause.** `fromStaff` in `inquiries.tsx`:
+
+```tsx
+// The staff list projection returns no images at all, so there is
+// nothing to show here and the row falls back to its placeholder.
+thumbnailUrl: null,
+```
+
+That comment is false, and it had been load-bearing:
+
+- `INQUIRY_LIST_SELECT` (`apps/api/src/routes/inquiries.ts:881`) contains **`referenceImages: true`**;
+- `StaffInquiryListItem` declares **`referenceImages: string[]`**;
+- confirmed on the wire — the field is present on every row of `GET /inquiries`.
+
+OWNER and FRONT_DESK read *that* projection. So the people most likely to notice were the only ones
+guaranteed never to see a thumbnail: the URLs arrived on every response and were discarded one line
+later. **No backend ask. No N+1. No seeding needed.**
+
+`InquiryRowData.thumbnailUrl` carried the same false claim in its doc comment; both are corrected,
+and `inquiryThumbnail` is now typed on the field (`{ referenceImages?: string[] | null }`) rather
+than against the artist row alone, which was what quietly implied the staff row had nothing to give
+it.
+
+### Proven end to end on live data
+
+The real screen, the real dev API, a real token — payload, mapper and render together:
+
+| | |
+| --- | --- |
+| dev inquiries carrying reference URLs | **62 of 100** |
+| image elements rendered in the live list | **10** (8 `res.cloudinary.com` + 2 local app assets) |
+| decoded successfully | **10 / 10** |
+| the same number before this fix | **structurally 0** — the field was hard-coded `null` |
+
+### A second defect the live render exposed
+
+**`Thumbnail` had no error fallback.** With a URL present it rendered `<Image>` unconditionally; when
+the fetch failed it left an *empty dark square* — strictly worse than the placeholder, because it
+reads as a broken row rather than as an inquiry with no reference.
+
+Not hypothetical: **47 of those 62 dev URLs point at `example.com`** (seed data), and any real studio
+will eventually have an asset deleted out from under a URL. `Avatar` has always guarded faces this
+way (`failed` state → initials); the thumbnail now does the same → placeholder.
+
+**On the dev data itself:** the brief offered "seed 2–3 inquiries with real photos" as the remedy if
+this turned out to be data. It was not data, so nothing was seeded — but it is worth recording that
+three quarters of the reference URLs on dev are fake, so the dev list will keep showing a majority
+of placeholders no matter what. That is now the *correct* rendering of that data rather than a
+silent void.
+
+## 2, 3, 4 — the row
+
+| | before | after |
+| --- | --- | --- |
+| meta line | chip + CHANNEL word + price range | *(gone)* |
+| chip | on its own line, left | **top-right, left of the date** |
+| date | top-right, after the name | top-right, on a **fixed right edge** |
+| artist | name, as text, bottom-left | **avatar bottom-right**, initials fallback |
+| unassigned | UNASSIGNED, bottom-left | unchanged, and no avatar |
+
+Every row's date now lands at the same x — measured at 320pt, all five cases ended at **304px**.
+
+**The title is the only thing that gives.** `flexShrink: 0` on the chip and the stamp, `flex: 1` +
+`numberOfLines={1}` on the name: neither the chip nor the date can wrap, at any width, which is what
+item 4 asked for. It is the same lesson the toggle took five rounds to teach — pin what must not
+move and let exactly one thing absorb.
+
+`channel` is off `InquiryRowData` entirely. Nothing renders it now, and a field nothing consumes is
+an invitation to render it again.
+
+### The cost of that rule, stated plainly
+
+At 320pt with the longest live status, the name is what pays:
+
+| 320pt, worst case | width |
+| --- | --- |
+| chip `AWAITING CLIENT RESPONSE` | 142px |
+| date `Fri` | ~24px |
+| **name left over** | **21px** — "Konstantina Papadopoulou-Whitfield" renders as **"K."** |
+
+That is the priority the brief chose and it works exactly as specified — but 21px of name is close to
+no name, and `AWAITING_CLIENT_RESPONSE` is a real, common status rather than a contrived one. At
+390pt the same row reads "Konsta…", which is recognisable.
+
+Web has no shorter label to adopt: `describeInquiryStatus` falls through to generic Title Case for
+this status, so web says "Awaiting Client Response" too — it simply has a desktop's width for it.
+
+**If this trade should be revisited**, the two options that keep the chip/date rule intact are: let
+the chip drop to its own line below ~360pt, or abbreviate the longest labels on the chip only. Not
+done here — the brief was explicit about the priority, and changing it unasked would be substituting
+my judgement for a stated decision.
+
+## Verification
+
+Five cases rendered at 320 and 390: photo + assigned, no photo + unassigned, the worst case above,
+initials fallback + guest studio, and the artist's own list (no artist slot at all). Plus the live
+screen against the dev API.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `git status` before building | **clean, 0 entries** |
+| `npm ci` | clean, tree still clean after |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 5.04 MB, **identical bundle hash before and after `npm ci`** |
+| React singleton | only `19.1.0` |
+| Bundle content | new paths present, harness absent, **0 failures** |
+
+## Left open
+
+- The 320pt name-vs-chip trade above, if the owner wants it revisited.
+- The dev database's reference URLs are three-quarters `example.com`; the placeholder is now the
+  honest rendering of those, but a realistic-looking dev list would need real assets.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+**Stop any `expo start` that is already running first.** For this session that is not boilerplate —
+it is the most likely explanation for item 0's screenshot.
+
+1. **Inquiries** — rows should show real reference photos wherever the inquiry has one. This is the
+   thing that has never worked for an owner account.
+2. A row with no photo, or a photo whose URL is dead, shows the **outlined placeholder** — never an
+   empty black square.
+3. **The right edge**: chip then date, aligned identically down the whole list. Scroll and check
+   nothing wanders.
+4. **Assigned rows** show the artist's face bottom-right (initials if they have no photo);
+   **unassigned** rows say UNASSIGNED bottom-left and show no face.
+5. **The toggle**: INQUIRIES / PROJECTS, no badges. Turn iOS text size up and confirm it still fits.
+   If you still see badges, you are on a pre-AC bundle — check whether Flash's button says
+   `+ NEW FLASH` or is a bare circle.
+
+# Mobile session AE — the chat thread, at Messages' density
+
+**Base: `mobile/session-ad` at `10c1b3b`** — the stack head. T2 → AD remain unmerged (`main` is at
+`151c0d8`). Worktree cut from AD; one commit (`94e1ebf`), pushed.
+
+---
+
+## 5 — What the ❤️ actually is, answered before anything was built
+
+**A real stored reaction model. Not parsed SMS tapback text.**
+
+| | |
+| --- | --- |
+| Routes | `PUT` / `DELETE /conversations/:id/messages/:messageId/reaction` |
+| Allowed set | `❤️ 👍 👎 😂 ‼️ ❓` — anything else is a 400 |
+| Cardinality | **upsert, one per (message, user)** — a different emoji replaces, never stacks |
+| Delivery | **internal annotation only.** Never sent over SMS or email |
+| Already wired? | **yes** — `setReaction` / `clearReaction` and a long-press menu shipped previously |
+
+So the brief's condition — *"only build reaction-SENDING if the API supports it"* — resolves to: it
+does, and it was already there. **Nothing goes on the backend list for reactions.** Item 5 was
+therefore presentation, and that is what changed: the chip is now a Messages-style badge overlapping
+the bubble's corner, absolutely positioned so it costs the row no height and cannot push the next
+bubble down.
+
+## 3 — expo-media-library, confirmed before the dependency was added
+
+`expo/bundledNativeModules.json` for SDK 54 lists **`expo-media-library: ~18.2.1`**, and
+`expo-web-browser: ~15.0.11` for item 4. Both are bundled, so both work inside the App Store build
+of Expo Go — checked first, because a module that is *not* bundled produces an app the owner's phone
+cannot open at all.
+
+Installed at exactly those versions.
+
+**Saving is two steps, not one.** `saveToLibraryAsync` takes a *local* path and chat images live on
+Cloudinary, so the bytes come down first through the same `File.downloadFileAsync` the deposit and
+waiver PDFs use — and for the same reason: it rejects on a non-2xx and writes nothing, so a dead URL
+cannot land in someone's camera roll as a broken file. The cache copy is deleted afterwards.
+
+**Write-only permission** (`requestPermissionsAsync(true)`). Adding one photo should not ask to read
+someone's entire library; iOS shows a smaller prompt for it.
+
+**Where the affordance lives:** the long-press sheet and the full-screen viewer — not a badge on
+every thumbnail. A permanent button on each image is exactly the clutter this session removes, and
+by the time someone wants to keep a photo they have opened it.
+
+## 1 — Density and grouping
+
+| | before | after |
+| --- | --- | --- |
+| body line-height | 23 | **21** (same 16px) |
+| bubble padding | 12 / 10 | **12 / 7** |
+| gap, consecutive same sender | 4 | **2** |
+| gap, speaker changes | 4 | **12** |
+
+The old layout used one gap for everything, so a thread read as a list of items. **The contrast
+between the two numbers is the grouping cue** — which is why both had to move, not just the small
+one.
+
+A run breaks on a different sender, a different day, or a five-minute pause. That is a *different*
+question from the existing `showMeta` "same burst", which is same-**minute** and governs the
+timestamp; a visual run can span several minutes, a burst cannot. Both now live in `buildThreadRows`,
+which stays a pure function and stays testable without rendering.
+
+## 2 — Timestamps became a gesture
+
+The per-message meta line is gone from the default render. What was on it:
+
+- **time** → revealed by dragging the thread left;
+- **channel** and **"Edited"** → the long-press sheet;
+- **"Sending…"** → **kept in place.** It is about this moment rather than about the record, and a
+  bubble in flight has to say so without being asked.
+- day separators → **unchanged and stationary**, as Messages keeps them.
+
+One shared value drives the whole list rather than one per row — every bubble slides by the same
+number, so per-row state would be N copies of it and N updates per frame.
+
+**The gesture has to lose to the FlatList, not fight it:** `activeOffsetX([-14, 14])` so it only
+claims a touch after clear horizontal intent, `failOffsetY([-12, 12])` so it hands back the moment
+the finger goes vertical. Left-only, clamped to the gutter width, spring home on release — it never
+latches, because a latched state would need a way to close it.
+
+## 4 — Links
+
+Hand-rolled and deliberately narrow: an explicit `http(s)://` or a bare `www.` host. A linkify
+dependency brings TLD tables and email/phone/hashtag detection this app has no use for, and each of
+those is another way a client's message renders as something it is not.
+
+**Trailing punctuation is not part of the URL**, and a closing bracket belongs to the link only if an
+opening one did. Nine cases exercised, all passing — including the two that matter most:
+
+```
+"see you at 5.30 for $40.00"                   -> no links     (a greedy matcher makes two)
+"look at https://x.com/a."                     -> .../a        (not ".../a.")
+"wiki https://en.wikipedia.org/wiki/Foo_(bar)" -> keeps the bracket
+```
+
+Text runs reassemble to the original input, so no character is ever eaten.
+
+Long URLs truncate from the **middle** — the host says where you are going and the tail is often the
+only thing distinguishing two links; an end-ellipsis keeps the first and throws away the second.
+
+## 6 — Composer: styles only, and here is the proof
+
+The brief's requirement was that behaviour must not regress now that sends are real. It did not
+change at all:
+
+| Check | Result |
+| --- | --- |
+| `lib/conversations.ts` (holds `sendMessage`) | **no diff whatsoever** |
+| the `sendMessage(...)` call in the thread | **byte-identical** — same four spread conditions |
+| `wouldSendLive` + `submit()` in the composer | **`diff` reports identical** |
+| the composer's whole diff | style declarations and comments only |
+
+What changed visually: the field is a capsule (`radius.pill`) rather than a form rectangle, the send
+button matches the field's resting height instead of hanging below it, and "nothing to send" reads as
+a quiet outline rather than a grey slab.
+
+**"Sends for real over SMS" stays**, styled quietly on purpose: it is a standing fact about the
+current mode, not a warning to re-read on every keystroke, and the channel dot beside it already
+carries the colour.
+
+### No SMS was sent during this session
+
+Nothing here required one. The send path was not refactored, so the honest verification is the diff
+above rather than a live dispatch — and with production now reaching real phones and costing money,
+a live send would have been a cost and a risk bought for no additional information.
+
+## Two defects found by looking at the render
+
+Both were invisible in a diff and obvious in a screenshot:
+
+1. **Every timestamp was visible at rest.** The reveal gutter was anchored with `left: '100%'` on a
+   wrapper that was only as wide as *the bubble*, so it began a few pixels past whatever that
+   bubble's width happened to be — measured at **281px inside a 390pt frame**, mid-thread. It now
+   hangs off the full-width row, so all eight sit at **398px against a 390pt edge**: hidden at rest,
+   and at 330px under a full drag.
+2. **The tiled image grid collapsed to a single column.** Making the bubble a flex child let it be
+   shrunk to one tile's width before the row could claim two. The grid now takes an explicit
+   `104 × 2 + 2` width, so it wraps at exactly two per row.
+
+## Verification
+
+Rendered at 390 and 320: grouped bubbles, the bare-image bubble, the 2-up collage, linkified and
+middle-truncated text, the reaction badge on the corner, the long-press sheet with its new detail
+line (`SMS · Aug 26, 2026, 10:13 AM · Edited`) and Save image, and the revealed state.
+
+**What the harness cannot prove, stated plainly:** the *feel* of the drag. Synthetic pointer events
+do not drive gesture-handler under react-native-web, so the revealed state is captured by parking the
+shared value at its full extent — which shows the geometry exactly, and leaves the spring, the
+hand-off with vertical scroll, and the rubber-banding as **device-gate items**. That was expected;
+the brief flagged it too.
+
+### Standard bar, clean worktree
+
+| Check | Result |
+| --- | --- |
+| `git status` before building | **clean, 0 entries** |
+| `npm ci` | clean, tree still clean after |
+| shared-types typecheck | clean |
+| `apps/api` `tsc` | clean |
+| `apps/web` `tsc -b` + `vite build` | clean |
+| `apps/mobile` `tsc --noEmit` | clean |
+| `expo export --platform ios` | clean — 5.07 MB, **identical bundle hash before and after `npm ci`** |
+| React singleton | only `19.1.0` |
+| linkify | **9/9 cases, 0 failures** |
+
+### Bundle content
+
+**Two markers read as failures and both were mine** — I checked for the package names
+`'expo-media-library'` and `'expo-web-browser'`, which Metro resolves at build time and which
+therefore never reach the bytecode. Re-checked against what the modules actually leave behind —
+`ExpoMediaLibrary`, `saveToLibraryAsync`, `ExpoWebBrowser`, `openBrowserAsync` — plus this app's own
+call-site strings (`Photos access is off for this app`, `That image could not be saved`): **all
+present.** A module name is not a bundle marker; the symbols it registers are.
+
+Everything else present, harness absent, and all three composer mode strings still in the bundle.
+
+## Left open
+
+- The gesture's feel, per above — the first thing to try on the gate.
+- Saving is unexercised on hardware: the permission prompt, the write, and the success haptic are all
+  Expo Go questions.
+- Reactions remain **render-and-send but not push-updated** — someone else's reaction appears on the
+  next fetch, as before. Unchanged by this session, noted because the badge is now prominent enough
+  that the lag is more visible.
+
+## Device gate
+
+```
+cd apps\mobile
+npx expo start
+```
+
+Stop any `expo start` already running first.
+
+1. **Open a client thread and drag it left.** Timestamps ride in from the right; let go and they
+   spring back. Then **scroll normally** — the thread must not wobble sideways. That hand-off is the
+   thing to feel.
+2. **Density**: consecutive messages from one person should sit almost touching, with a real gap
+   when the speaker changes.
+3. **An image-only message** should be a photo with rounded corners and no bubble around it. Two
+   images should sit side by side.
+4. **Long-press a bubble**: the sheet now carries the channel, exact time and Edited at the bottom,
+   plus Save image when there is one. **Save one** — expect a permission prompt the first time, then
+   a haptic and "Saved to your photos". Check it is really in Photos.
+5. **Tap a link** in a message; it should open in-app, not throw you to Safari.
+6. **The composer**: send a message on a dev thread. The mode strip must still say what it always
+   said — "Sends for real over SMS" when it would, "Logged to the thread as…" when it would not.
+   Nothing about sending changed, and this step is to confirm that.

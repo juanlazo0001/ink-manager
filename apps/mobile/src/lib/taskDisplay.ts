@@ -18,32 +18,19 @@ import { civilDateKey, formatDateKey, shiftDateKey, todayKey } from './studioTim
  * gets the segment, and one that revokes it from front desk loses it.
  * Kept pure so the rule is checkable without rendering anything.
  */
+/**
+ * Which of the three cards a filter is being built for.
+ *
+ * This used to be a SCOPE FILTER — MINE / DELEGATED / QUEUE, three
+ * mutually exclusive lists behind one control. Session Y replaced that
+ * with web's structure: three stacked cards, each owning its own data.
+ * The type survives only because `taskFiltersFor` still needs to know
+ * which card is asking; `taskSegmentsFor`, `segmentCount` and the
+ * MINE/DELEGATED/QUEUE labels went with the control they served.
+ */
 export type TaskSegment = 'assignedToMe' | 'assignedByMe' | 'queue';
 
-export interface TaskSegmentDef {
-  key: TaskSegment;
-  label: string;
-}
 
-const ALL_SEGMENTS: Record<TaskSegment, string> = {
-  assignedToMe: 'MINE',
-  assignedByMe: 'DELEGATED',
-  queue: 'QUEUE',
-};
-
-export function taskSegmentsFor(permissions: string[]): TaskSegmentDef[] {
-  const segments: TaskSegmentDef[] = [{ key: 'assignedToMe', label: ALL_SEGMENTS.assignedToMe }];
-  // `assignedByMe` can only ever contain rows this person created for
-  // someone else, which requires the permission to assign in the first
-  // place.
-  if (permissions.includes('tasks.assignToOthers')) {
-    segments.push({ key: 'assignedByMe', label: ALL_SEGMENTS.assignedByMe });
-  }
-  if (permissions.includes('tasks.viewQueue')) {
-    segments.push({ key: 'queue', label: ALL_SEGMENTS.queue });
-  }
-  return segments;
-}
 
 /**
  * The calendar date a task is due, as a `"YYYY-MM-DD"` key.
@@ -160,18 +147,6 @@ export function splitByCompletion(tasks: PersonalTask[]): { open: PersonalTask[]
 }
 
 /** How many items a segment would show, for the segmented control's badge. */
-export function segmentCount(data: TasksResponse | null, segment: TaskSegment): number {
-  if (!data) return 0;
-  switch (segment) {
-    case 'assignedToMe':
-      // Open only. A badge counting finished work would never go down.
-      return data.personal.filter((t) => !t.completedAt).length;
-    case 'assignedByMe':
-      return data.assignedByMe.filter((t) => !t.completedAt).length;
-    case 'queue':
-      return data.system.length;
-  }
-}
 
 /**
  * System task types, turned into something readable.

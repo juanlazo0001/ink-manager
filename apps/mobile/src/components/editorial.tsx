@@ -19,6 +19,38 @@ import { duration, easing } from '@/theme/motion';
 /**
  * The eyebrow: letterspaced uppercase Jura flanked by red `+` glyphs.
  *
+ * ONE RENDERING, NO VARIANTS. There used to be a `tone` prop — `muted`,
+ * `accent`, `alert` — and it recoloured the TEXT while the ticks stayed
+ * red regardless. That is how the Clients screen ended up with a red
+ * eyebrow: session W read "red-tick eyebrow" as "red eyebrow" and passed
+ * `tone="alert"`, which is a different thing entirely. Home's rendering
+ * is canonical and is now the only one: muted text, red ticks, inline.
+ *
+ * `style` still reaches the ROW, for spacing. It has never reached the
+ * text, so the four call sites that set `color` on it were no-ops; those
+ * are gone too.
+ *
+ * ─── WEB'S LITERAL VALUES ───────────────────────────────────────────
+ *
+ * Extracted from `apps/web/src/components/Eyebrow.tsx`, not measured off
+ * a screenshot:
+ *
+ *   container  inline-flex items-center gap-3      -> 12px between parts
+ *   text       font-jura text-[11px] font-semibold
+ *              tracking-[0.34em] text-fg-muted      -> Jura 600, 11px,
+ *                                                      3.74px, fgMuted
+ *   ticks      text-danger-strong text-[13px]
+ *              tracking-normal                      -> 13px, 0 tracking
+ *   meta       text-fg-muted/70 text-[11px]
+ *              font-normal normal-case tracking-normal
+ *
+ * `type.eyebrow` already held every one of those numbers. What diverged
+ * was a step session Y added — 9.5px at 0.5px tracking for any label over
+ * 24 characters — to stop the Clients eyebrow overflowing at 320pt. That
+ * is gone: it made two screens look like a different component, which is
+ * what the owner kept seeing. A label too long for its screen is fixed by
+ * shortening the LABEL.
+ *
  * Web's `components/Eyebrow.tsx`:
  *   container  font-jura text-[11px] font-semibold tracking-[0.34em]
  *              text-fg-muted uppercase, gap-3
@@ -35,7 +67,6 @@ export function Eyebrow({
   children,
   meta,
   style,
-  tone = 'muted',
 }: {
   children: ReactNode;
   /** A date range, "All-time" — the card's contextual second line. */
@@ -46,16 +77,19 @@ export function Eyebrow({
    * `tone`, which is why no call site sets one by hand.
    */
   style?: StyleProp<ViewStyle>;
-  /** `accent` for the one eyebrow on a screen that is the screen's subject. */
-  tone?: 'muted' | 'accent' | 'alert';
 }) {
-  const color = tone === 'accent' ? colors.accent : tone === 'alert' ? colors.danger : colors.fgMuted;
+  const label = String(children).toUpperCase();
   return (
     <View style={[styles.eyebrowRow, style]}>
       <Text style={styles.tick} accessibilityElementsHidden importantForAccessibility="no">
         +
       </Text>
-      <Text style={[styles.eyebrow, { color }]}>{String(children).toUpperCase()}</Text>
+      <Text
+        style={styles.eyebrow}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
       <Text style={styles.tick} accessibilityElementsHidden importantForAccessibility="no">
         +
       </Text>
@@ -108,8 +142,22 @@ export function Card({ children, style }: { children: ReactNode; style?: StylePr
 }
 
 /**
- * A card's title. Web's `.sc` class at `text-[20px]` — see `type.sectionHeader`
- * for why mobile renders it as uppercase rather than true small-caps.
+ * A card's title.
+ *
+ * SENTENCE CASE, and that is a divergence from web, which sets these in
+ * caps (`.sc` at `text-[20px]`). Owner-directed.
+ *
+ * The uppercasing lived HERE, in this one component, as
+ * `String(children).toUpperCase()` — call sites always passed sentence
+ * case ("Contact info", "Gift cards"). So this is a single change and
+ * every card moved together; no strings were hardcoded in caps.
+ *
+ * Tracking drops with it. `type.sectionHeader` carries 1.02px, which is
+ * 0.06em — letterspacing that exists to keep uppercase from setting
+ * solid. Sentence case has ascenders and descenders doing that work
+ * already, and the same tracking on mixed case reads as a gap between
+ * every letter. `type.sectionHeader` carries the chosen value and the
+ * reasoning behind it.
  */
 export function SectionHeader({
   children,
@@ -123,7 +171,7 @@ export function SectionHeader({
 }) {
   return (
     <Text style={[styles.sectionHeader, style]} numberOfLines={numberOfLines}>
-      {String(children).toUpperCase()}
+      {children}
     </Text>
   );
 }
@@ -268,9 +316,30 @@ export function RedRule({ style }: { style?: StyleProp<ViewStyle> }) {
 }
 
 const styles = StyleSheet.create({
-  eyebrowRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, flexWrap: 'wrap' },
-  eyebrow: { ...type.eyebrow },
-  tick: { ...type.eyebrow, fontSize: 13, letterSpacing: 0, color: colors.dangerStrong },
+  /*
+   * NEVER WRAPS. `flexWrap: 'wrap'` was here, and on a long eyebrow the
+   * row broke — dropping the closing `+` onto a line of its own, which is
+   * not an eyebrow, it is a stray glyph. The ticks flank the text; that
+   * is the whole anatomy.
+   *
+   * `gap: space.md` is 12px, which is web's `gap-3` exactly.
+   *
+   * When the text is too wide it ellipsizes. It no longer shrinks: the
+   * shrink step made a long eyebrow render as a visibly different
+   * component from a short one, and a label too long for its screen is a
+   * copy problem, not a type problem.
+   */
+  eyebrowRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  /*
+   * The canonical colour, baked in.
+   *
+   * It used to come from the `tone` prop, so removing that prop left the
+   * text with NO colour at all -- black on a black page, invisible rather
+   * than muted. Caught by measuring the computed value rather than
+   * trusting a render that merely looked dim.
+   */
+  eyebrow: { ...type.eyebrow, color: colors.fgMuted, flexShrink: 1 },
+  tick: { ...type.eyebrow, fontSize: 13, letterSpacing: 0, color: colors.dangerStrong, flexShrink: 0 },
   eyebrowMeta: { ...type.meta, color: colors.fgMuted, opacity: 0.7 },
 
   card: {

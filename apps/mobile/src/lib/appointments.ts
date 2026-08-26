@@ -25,7 +25,7 @@ import { apiFetch } from './api';
  */
 export function fetchAppointments(
   token: string,
-  params: { start?: Date; end?: Date; artistId?: string } = {},
+  params: { start?: Date; end?: Date; artistId?: string; clientId?: string } = {},
   signal?: AbortSignal,
 ): Promise<AppointmentListItem[]> {
   const query = new URLSearchParams();
@@ -36,6 +36,10 @@ export function fetchAppointments(
     query.set('end', params.end.toISOString());
   }
   if (params.artistId) query.set('artistId', params.artistId);
+  // `GET /appointments` has always accepted this; mobile simply never
+  // passed it. Web's client detail makes exactly this call alongside
+  // `GET /clients/:id` — see the Appointments card there.
+  if (params.clientId) query.set('clientId', params.clientId);
 
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return apiFetch<AppointmentListItem[]>(`/appointments${suffix}`, { token, signal });

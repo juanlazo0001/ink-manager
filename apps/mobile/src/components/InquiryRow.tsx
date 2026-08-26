@@ -1,18 +1,13 @@
 import Feather from '@expo/vector-icons/Feather';
 import { Image } from 'expo-image';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import {
-  channelLabel,
-  formatEstimateRange,
-  inquiryClientName,
-  isClosedStatus,
-  statusLabel,
-  statusTone,
-} from '@/lib/inquiryDisplay';
+import { inquiryClientName, isClosedStatus, statusLabel } from '@/lib/inquiryDisplay';
 import { relativeStamp } from '@/lib/time';
+import { Avatar, initialsOf } from '@/components/Avatar';
 import { InquiryStatusChip } from '@/components/StatusChip';
-import { colors, hairline, radius, space, tones, type } from '@/theme';
+import { colors, hairline, radius, space, type } from '@/theme';
 
 /**
  * The fields both list shapes share.
@@ -26,32 +21,36 @@ export interface InquiryRowData {
   id: string;
   description: string;
   status: string;
-  channel: string;
   updatedAt: string;
-  priceEstimateLow: number | null;
-  priceEstimateHigh: number | null;
   client: { firstName: string; lastName: string } | null;
   /**
    * Three states, not two:
-   *   a name    show it
-   *   null      genuinely unassigned — say so
-   *   undefined don't mention the artist at all
+   *   an artist  show their avatar, bottom-right
+   *   null       genuinely unassigned — say so, bottom-left
+   *   undefined  do not mention the artist at all
    *
    * The artist's own list is the third case. Every row there is theirs by
    * construction, so naming them on each one is noise — but it was passing
    * `null`, which made every row read UNASSIGNED. They are assigned; they
    * are assigned to the person reading. Caught on screen.
+   *
+   * AD: an object rather than a bare name, because the row shows a face
+   * now. `assignedArtist.user.avatarUrl` was already in the staff list
+   * payload; nothing new is fetched for it.
    */
-  artistName?: string | null;
+  artist?: { name: string; avatarUrl: string | null } | null;
   fromGuestStudio: { id: string; name: string } | null;
   /**
    * The first reference image, or null. Reference images are what the
    * CLIENT sent as the idea for the piece, so the first is the closest
    * thing a list row has to "what is this about".
    *
-   * Only the ARTIST route returns these — the staff list projection has no
-   * images at all — so the staff screen leaves it null and the row falls
-   * back, rather than the row assuming every caller can supply one.
+   * BOTH routes return these. An earlier comment here claimed the staff
+   * projection "has no images at all" and the staff mapper hard-coded
+   * null on the strength of it — so every row an OWNER or FRONT_DESK ever
+   * saw showed the placeholder, whatever the data said. It is in
+   * `INQUIRY_LIST_SELECT` (`referenceImages: true`) and on
+   * `StaffInquiryListItem`, and always was.
    */
   thumbnailUrl?: string | null;
   /** The next session an artist has to show up for. Projects tab only. */
@@ -67,7 +66,22 @@ export interface InquiryRowData {
  * two layouts as it scrolled.
  */
 function Thumbnail({ url }: { url: string | null }) {
-  if (!url) {
+  /*
+   * A URL that does not load falls back to the same placeholder as no URL
+   * at all, which is NOT what this did before: it rendered <Image> and,
+   * when the fetch failed, left an empty dark square — strictly worse
+   * than the placeholder, because it reads as a broken row rather than an
+   * inquiry with no reference.
+   *
+   * Not hypothetical. 47 of the 62 reference URLs on the dev database
+   * point at example.com (seed data), and any real studio will eventually
+   * have an asset deleted out from under a URL. Avatar has always
+   * handled this for faces; this is the same guard for thumbnails.
+   */
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [url]);
+
+  if (!url || failed) {
     return (
       <View style={[styles.thumb, styles.thumbEmpty]}>
         <Feather name="image" size={16} color={colors.fgMuted} />
@@ -82,15 +96,14 @@ function Thumbnail({ url }: { url: string | null }) {
       transition={140}
       // The app's own ground behind a slow decode, never a white flash.
       placeholderContentFit="cover"
+      onError={() => setFailed(true)}
       accessible={false}
     />
   );
 }
 
 export function InquiryRow({ inquiry, onPress }: { inquiry: InquiryRowData; onPress?: () => void }) {
-  const tone = tones[statusTone(inquiry.status)];
   const closed = isClosedStatus(inquiry.status);
-  const estimate = formatEstimateRange(inquiry.priceEstimateLow, inquiry.priceEstimateHigh);
 
   return (
     <Pressable
@@ -104,10 +117,25 @@ export function InquiryRow({ inquiry, onPress }: { inquiry: InquiryRowData; onPr
         <Thumbnail url={inquiry.thumbnailUrl ?? null} />
 
         <View style={styles.topText}>
+          {/*
+            ITEM 4. One right-aligned line: [chip] [date]. Those are the
+            two things scanned down a list, so they share a fixed right
+            edge on every row instead of landing wherever the title
+            happens to end.
+
+            The title is the ONLY thing that gives: `flexShrink: 0` on the
+            chip and the stamp, `flex: 1` + `numberOfLines={1}` on the
+            name. The name ellipsises long before either can wrap. Same
+            lesson the toggle took five rounds to teach — pin what must
+            not move and let exactly one thing absorb.
+          */}
           <View style={styles.header}>
             <Text style={styles.client} numberOfLines={1}>
               {inquiryClientName(inquiry.client)}
             </Text>
+            {/* Tone carries the meaning: warning = someone must act,
+                danger = genuinely lost. Red arrives only via CLOSED_LOST. */}
+            <InquiryStatusChip status={inquiry.status} />
             <Text style={styles.stamp}>{relativeStamp(inquiry.updatedAt)}</Text>
           </View>
 
@@ -117,34 +145,39 @@ export function InquiryRow({ inquiry, onPress }: { inquiry: InquiryRowData; onPr
         </View>
       </View>
 
-      <View style={styles.metaLine}>
-        {/* Tone carries the meaning: warning = someone must act, danger =
-            genuinely lost. Red arrives here only via CLOSED_LOST. */}
-        <InquiryStatusChip status={inquiry.status} />
+      {/*
+        ITEM 2 + 3. What used to be two lines of text — the channel word,
+        the price range, the artist's name — is one line carrying at most
+        a word and a face. Both removed things were true, and neither was
+        ever the reason someone opened a row.
 
-        <Text style={styles.channel}>{channelLabel(inquiry.channel).toUpperCase()}</Text>
+        Rendered only when it has something to say, so an assigned row on
+        the artist's own list adds no empty strip.
+      */}
+      {inquiry.artist !== undefined || inquiry.fromGuestStudio ? (
+        <View style={styles.footerLine}>
+          {inquiry.artist === null ? <Text style={styles.unassigned}>UNASSIGNED</Text> : null}
 
-        {estimate ? <Text style={styles.estimate}>{estimate}</Text> : null}
-      </View>
+          {inquiry.fromGuestStudio ? (
+            <View style={styles.guest}>
+              <Feather name="map-pin" size={10} color={colors.accent} />
+              <Text style={styles.guestLabel} numberOfLines={1}>
+                {inquiry.fromGuestStudio.name}
+              </Text>
+            </View>
+          ) : null}
 
-      <View style={styles.footerLine}>
-        {inquiry.artistName === undefined ? null : inquiry.artistName ? (
-          <Text style={styles.artist} numberOfLines={1}>
-            {inquiry.artistName}
-          </Text>
-        ) : (
-          <Text style={styles.unassigned}>UNASSIGNED</Text>
-        )}
-
-        {inquiry.fromGuestStudio ? (
-          <View style={styles.guest}>
-            <Feather name="map-pin" size={10} color={colors.accent} />
-            <Text style={styles.guestLabel} numberOfLines={1}>
-              {inquiry.fromGuestStudio.name}
-            </Text>
-          </View>
-        ) : null}
-      </View>
+          {/* Hard right, whatever is or is not to its left. */}
+          {inquiry.artist ? (
+            <Avatar
+              url={inquiry.artist.avatarUrl}
+              initials={initialsOf(inquiry.artist.name)}
+              size={22}
+              style={styles.artistAvatar}
+            />
+          ) : null}
+        </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -165,30 +198,19 @@ const styles = StyleSheet.create({
     borderWidth: hairline,
     borderColor: colors.border,
   },
-  header: { flexDirection: 'row', alignItems: 'baseline', gap: space.sm },
+  /* `center`, not `baseline`: a chip and a text baseline do not agree,
+     and on baseline the chip rode high against the name. */
+  header: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  /* The one shrinkable thing in the row. */
   client: { ...type.heading, color: colors.fg, flex: 1 },
-  stamp: { ...type.meta, color: colors.fgMuted },
+  stamp: { ...type.meta, color: colors.fgMuted, flexShrink: 0 },
 
   description: { ...type.small, color: colors.fgSecondary },
 
-  metaLine: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexWrap: 'wrap', marginTop: 2 },
-  statusPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.xs,
-    borderWidth: hairline,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.sm,
-    paddingVertical: 2,
-  },
-  statusDot: { width: 5, height: 5, borderRadius: radius.pill },
-  statusLabel: { ...type.label, fontSize: 9 },
-  channel: { ...type.label, fontSize: 9, color: colors.fgMuted },
-  estimate: { ...type.meta, color: colors.fgSecondary },
-
   footerLine: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 2 },
-  artist: { ...type.meta, color: colors.fgMuted, flex: 1 },
-  unassigned: { ...type.label, fontSize: 9, color: colors.accent, flex: 1 },
+  unassigned: { ...type.label, fontSize: 9, color: colors.accent },
+  /* Hard right even when it is the only thing on the line. */
+  artistAvatar: { marginLeft: 'auto' },
   guest: { flexDirection: 'row', alignItems: 'center', gap: 3, maxWidth: '50%' },
   guestLabel: { ...type.meta, color: colors.accent },
 });

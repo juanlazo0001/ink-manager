@@ -107,6 +107,15 @@ export function rowsForTab(items: ArtistInquiryListItem[], tab: InquiryTab): Art
  * a photo of an arm is not a picture of the work, and showing one where a
  * reference belongs would misrepresent the row.
  */
-export function inquiryThumbnail(item: Pick<ArtistInquiryListItem, 'referenceImages'>): string | null {
+/**
+ * The first reference image, from EITHER list projection.
+ *
+ * Both carry `referenceImages: string[]` — the staff select has
+ * `referenceImages: true` and `StaffInquiryListItem` declares the field —
+ * so this is typed on the field rather than on one of the two row types.
+ * It used to be typed against the artist row alone, which quietly implied
+ * the staff row had nothing to offer it.
+ */
+export function inquiryThumbnail(item: { referenceImages?: string[] | null }): string | null {
   return item.referenceImages?.[0] ?? null;
 }

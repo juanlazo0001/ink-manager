@@ -3,8 +3,8 @@ import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { SwitchField, TextField } from '@/components/form/Fields';
 import { FormScreen, useUnsavedChangesGuard } from '@/components/form/FormScreen';
 import { ImageGridField } from '@/components/form/ImageFields';
@@ -220,16 +220,16 @@ export default function FlashPieceScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Flash piece" onBack={() => router.back()} right={<View />} />
         <ScreenLoading />
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
   if (loadError) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Flash piece" onBack={() => router.back()} right={<View />} />
         <StateMessage
           eyebrow="Not available"
@@ -238,12 +238,12 @@ export default function FlashPieceScreen() {
           body={loadError}
           action={{ label: 'Back to gallery', onPress: () => router.back() }}
         />
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <ScreenHeader
         title={isNew ? 'New flash piece' : 'Edit piece'}
         subtitle={piece ? formatPrice(piece.priceCents) + ' · ' + formatDuration(piece.estimatedDurationMinutes) : undefined}
@@ -368,12 +368,11 @@ export default function FlashPieceScreen() {
           </View>
         ) : null}
       </FormScreen>
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   headerSpacer: { width: 36 },
 
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingTop: space.lg, flexWrap: 'wrap' },

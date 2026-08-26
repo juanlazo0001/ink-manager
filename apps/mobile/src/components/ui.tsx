@@ -129,7 +129,7 @@ export function StateMessage({
 }) {
   return (
     <View style={styles.stateMessage}>
-      {eyebrow ? <Eyebrow tone={tone === 'alert' ? 'alert' : 'accent'}>{eyebrow}</Eyebrow> : null}
+      {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : null}
       <Text style={styles.stateTitle}>{title}</Text>
       {body ? <Text style={styles.stateBody}>{body}</Text> : null}
       {action ? <QuietButton label={action.label} onPress={action.onPress} style={styles.stateAction} /> : null}

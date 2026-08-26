@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { TopBarActions } from '@/components/TopBar';
 import { useAuth } from '@/context/auth';
 import { colors, hairline, radius, space, type } from '@/theme';
 
@@ -33,7 +34,8 @@ export function ScreenHeader({
   right,
   onBack,
 }: {
-  title: string;
+  /** Omit when the screen's own header card already carries the name. */
+  title?: string;
   subtitle?: string;
   /** Replaces the avatar. Used by screens that need their own action there. */
   right?: ReactNode;
@@ -58,9 +60,11 @@ export function ScreenHeader({
       ) : null}
 
       <View style={styles.titles}>
-        <Text style={styles.title} numberOfLines={1}>
-          {title}
-        </Text>
+        {title ? (
+          <Text style={styles.title} numberOfLines={1}>
+            {title}
+          </Text>
+        ) : null}
         {subtitle ? (
           <Text style={styles.subtitle} numberOfLines={1}>
             {subtitle}
@@ -68,33 +72,14 @@ export function ScreenHeader({
         ) : null}
       </View>
 
-      {right ?? (
-        <Pressable
-          onPress={() => router.push('/account')}
-          accessibilityRole="button"
-          accessibilityLabel="Account"
-          hitSlop={8}
-          style={({ pressed }) => [styles.avatar, pressed && styles.pressed]}
-        >
-          {/* The real photo, from `profile.avatarUrl` on the session this
-              app already holds — the same field web's TopBar renders. No
-              new request: GET /users/me has always returned it, and the
-              corner has been drawing initials over the top of it. */}
-          {session?.profile.avatarUrl ? (
-            <Image
-              source={{ uri: session.profile.avatarUrl }}
-              style={styles.avatarImage}
-              contentFit="cover"
-              transition={140}
-              accessible={false}
-            />
-          ) : (
-            <Text style={styles.avatarLabel}>
-              {initial(session?.profile.name ?? null, session?.profile.email ?? '?')}
-            </Text>
-          )}
-        </Pressable>
-      )}
+      {/*
+        ITEM 5: the SAME cluster the tabs bar renders — tasks with its
+        badge, the bell, the account avatar. This header used to draw a
+        lone avatar, so the corner changed shape every time you pushed a
+        detail screen. `right` still overrides for the rare screen that
+        needs its own control there.
+      */}
+      {right ?? <TopBarActions onOpenAccount={() => router.push('/account')} />}
     </View>
   );
 }

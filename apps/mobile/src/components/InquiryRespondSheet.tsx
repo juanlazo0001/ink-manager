@@ -68,7 +68,7 @@ export function InquiryRespondSheet({
           <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
             {mode === 'decline' ? (
               <>
-                <Eyebrow tone="alert">Decline this project</Eyebrow>
+                <Eyebrow>Decline this project</Eyebrow>
                 <Text style={styles.title}>Let the studio know why</Text>
                 <Text style={styles.body}>
                   {clientName}&apos;s project goes back to the studio as an unassigned enquiry — it stops being
@@ -116,7 +116,7 @@ export function InquiryRespondSheet({
               </>
             ) : (
               <>
-                <Eyebrow tone="accent">Approve this project</Eyebrow>
+                <Eyebrow>Approve this project</Eyebrow>
                 <Text style={styles.title}>The estimate is built in the portal</Text>
                 <Text style={styles.body}>
                   Approving means writing the estimate — a price range, a time range and the session plan. That

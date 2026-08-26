@@ -1,5 +1,13 @@
 import { useState } from 'react';
-import { Alert, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  StyleSheet,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
 import { colors, radius, space, tones } from '@/theme';
 
@@ -7,22 +15,25 @@ import { colors, radius, space, tones } from '@/theme';
  * A card's action, as a circular icon button.
  *
  * apps/web's own, measured off the running client detail rather than
- * read off class names. Web draws these at TWO sizes and mobile keeps
- * both, because the distinction is meaningful:
+ * read off class names:
  *
- *              header (`h-11 w-11`)    row (`h-8 w-8`)
- *   size       44 x 44                 32 x 32
- *   glyph      16px                    16px
- *   radius     full                    full
- *   border     1px rgba(201, 154, 91, 0.18)  -- exactly `colors.border`
- *   fill       none                    none
- *   colour     `fg`                    `fgSecondary`
+ *   size    44 x 44
+ *   glyph   16px
+ *   radius  full
+ *   border  1px rgba(201, 154, 91, 0.18)   -- exactly `colors.border`
+ *   fill    none
  *
- * A header action names the whole section, so it gets the full 44pt tap
- * target; a row action belongs to one line of a list and web deliberately
- * makes it recede. Below `md` web's header buttons are ALREADY icon-only
- * (`md:h-auto md:w-auto` plus a `hidden md:inline` label) -- so icon-only
- * is web's own phone form here, not a mobile invention.
+ * Below `md` web's header buttons are ALREADY icon-only (`md:h-auto
+ * md:w-auto` plus a `hidden md:inline` label) -- so icon-only is web's
+ * own phone form here, not a mobile invention.
+ *
+ * ONE SIZE, EVERYWHERE. Web draws row-level actions smaller (`h-8 w-8`,
+ * in `fg-secondary`) than section actions (`h-11 w-11`), and mobile
+ * mirrored that split until the owner saw it on the device: a card whose
+ * header buttons and row buttons are different sizes reads as two
+ * unrelated controls, and 32pt is under the 44pt iOS tap-target floor
+ * anyway. There is now a single size token and no variant to pick, so a
+ * per-card size cannot come back by accident.
  *
  * It is NOT the top bar's button, despite the shared diameter: that one
  * carries an inset fill and a drop shadow because it floats over content.
@@ -41,7 +52,7 @@ export function CardIconButton({
   label,
   onPress,
   unavailableNote,
-  size = 'header',
+  busy = false,
   tone = 'default',
   style,
 }: {
@@ -51,8 +62,13 @@ export function CardIconButton({
   onPress?: () => void;
   /** Shown when tapped, if the action is not built yet. */
   unavailableNote?: string;
-  /** `header` is web's 44pt circle; `row` its 32pt one. */
-  size?: 'header' | 'row';
+  /**
+   * The action is running. The glyph becomes a spinner in place and the
+   * button stops accepting taps — a document fetch is a round trip over
+   * the network, and a control that looks idle while it works invites a
+   * second tap and a second download.
+   */
+  busy?: boolean;
   /**
    * `danger` for a destructive control. Web writes its Remove links in
    * `text-danger`, and losing that colour when the words became a glyph
@@ -61,11 +77,12 @@ export function CardIconButton({
   tone?: 'default' | 'danger';
   style?: StyleProp<ViewStyle>;
 }) {
-  const enabled = !!onPress;
+  const enabled = !!onPress && !busy;
   const [pressedNote, setPressedNote] = useState(false);
 
   function handlePress() {
-    if (enabled) {
+    if (busy) return;
+    if (enabled && onPress) {
       onPress();
       return;
     }
@@ -83,17 +100,22 @@ export function CardIconButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       // Not `disabled`: the button still answers, it just cannot act.
-      accessibilityState={{ disabled: !enabled }}
+      accessibilityState={{ disabled: !enabled, busy }}
       accessibilityHint={enabled ? undefined : unavailableNote}
       style={({ pressed }) => [
         styles.button,
-        size === 'row' && styles.buttonRow,
-        !enabled && styles.disabled,
+        // Busy is not the dimmed treatment: the spinner reads as work in
+        // progress, and half-opacity on it reads as broken.
+        !enabled && !busy && styles.disabled,
         (pressed || pressedNote) && styles.pressed,
         style,
       ]}
     >
-      <Icon size={16} color={glyphColor(enabled, size, tone)} />
+      {busy ? (
+        <ActivityIndicator size="small" color={colors.accent} />
+      ) : (
+        <Icon size={16} color={glyphColor(enabled, tone)} />
+      )}
     </Pressable>
   );
 }
@@ -103,19 +125,31 @@ export function CardIconButton({
  * A destructive control that greys out entirely reads as a different
  * button, and this one still answers when tapped.
  */
-function glyphColor(enabled: boolean, size: 'header' | 'row', tone: 'default' | 'danger'): string {
+function glyphColor(enabled: boolean, tone: 'default' | 'danger'): string {
   if (tone === 'danger') return tones.danger;
-  if (!enabled) return colors.fgMuted;
-  return size === 'row' ? colors.fgSecondary : colors.fg;
+  return enabled ? colors.fg : colors.fgMuted;
 }
 
-/** The row these sit in — right-aligned, as web aligns them. */
-export function CardActionRow({ children }: { children: React.ReactNode }) {
-  return <View style={styles.row}>{children}</View>;
+/**
+ * The row these sit in — right-aligned, as web aligns them.
+ *
+ * `wrap` mirrors web's own `flex-wrap` on rows that hold more than two:
+ * the gift card's action row carries four, which is 200pt of buttons
+ * against a 236pt card at 320. Web wraps there and so does this.
+ */
+export function CardActionRow({
+  children,
+  wrap = false,
+}: {
+  children: React.ReactNode;
+  wrap?: boolean;
+}) {
+  return <View style={[styles.row, wrap && styles.rowWrap]}>{children}</View>;
 }
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'flex-end', gap: space.sm },
+  rowWrap: { flexWrap: 'wrap', rowGap: space.sm },
   button: {
     width: 44,
     height: 44,
@@ -125,7 +159,6 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
-  buttonRow: { width: 32, height: 32 },
   disabled: { opacity: 0.45 },
   pressed: { opacity: 0.6 },
 });

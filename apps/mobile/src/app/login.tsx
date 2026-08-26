@@ -12,8 +12,8 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { OpaqueScreenShell } from '@/components/ScreenShell';
 import { GoldGradientButton } from '@/components/GoldGradientButton';
 import { LoginBackdrop } from '@/components/LoginBackdrop';
 import { useAuth } from '@/context/auth';
@@ -84,7 +84,7 @@ export default function LoginScreen() {
     <View style={styles.root}>
       <LoginBackdrop />
 
-      <SafeAreaView style={styles.safe}>
+      <OpaqueScreenShell>
         <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <ScrollView
             contentContainerStyle={[styles.content, compact && styles.contentCompact]}
@@ -172,7 +172,7 @@ export default function LoginScreen() {
             <Text style={styles.apiHint}>{API_URL.replace(/^https?:\/\//, '')}</Text>
           </ScrollView>
         </KeyboardAvoidingView>
-      </SafeAreaView>
+      </OpaqueScreenShell>
     </View>
   );
 }

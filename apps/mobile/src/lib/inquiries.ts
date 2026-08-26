@@ -95,3 +95,78 @@ export function respondToInquiry(
     body: JSON.stringify(body),
   });
 }
+
+/**
+ * `POST /inquiries` — staff logging a walk-in or phone inquiry.
+ *
+ * ─── ONE ROUTE, TWO CALLERS ─────────────────────────────────────────
+ *
+ * It is mounted with `optionalAuth`, and it branches on `req.user`, not
+ * on the path:
+ *
+ *   no token   the public intake form. `studioSlug` is required.
+ *   a token    staff. The studio comes from the token, `studioSlug` is
+ *              ignored, and the caller must hold `inquiries.create`
+ *              (checked inline, 403 otherwise — there is no
+ *              requirePermission middleware to hang it off).
+ *
+ * So this sends no `studioSlug`: sending one from an authenticated
+ * client would be inventing a parameter the route does not read.
+ *
+ * ─── REQUIREDNESS IS THE STUDIO'S, NOT A CONSTANT ───────────────────
+ *
+ * The server walks the studio's own configured intake fields
+ * (`enabledSystemFields`, `isRequired(key)`) and replies
+ * `Missing required field(s): <labels>`. Mobile mirrors web's client-side
+ * rules, which assume the defaults — so a studio that has turned a field
+ * off may see the server accept something this form still asks for. That
+ * is the safe direction to be wrong in, and the server's message is
+ * surfaced verbatim when it disagrees.
+ */
+export interface NewInquiry {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  channel: string;
+  referralCode?: string;
+  description: string;
+  colorOrBlackGrey: string;
+  placement: string;
+  estimatedSize: string;
+  hasBeenTattooedBefore: boolean;
+  budget?: string;
+  desiredTiming?: string;
+  preferredArtistId?: string;
+  referenceImages: string[];
+  placementImages: string[];
+  existingClientId?: string;
+}
+
+export function createInquiry(token: string, input: NewInquiry): Promise<{ id: string }> {
+  return apiFetch<{ id: string }>('/inquiries', {
+    method: 'POST',
+    token,
+    // `|| undefined` on every optional, matching web exactly: the route
+    // distinguishes absent from empty on several of these.
+    body: JSON.stringify({
+      firstName: input.firstName,
+      lastName: input.lastName,
+      email: input.email,
+      phone: input.phone || undefined,
+      channel: input.channel,
+      referralCode: input.channel === 'REFERRAL' ? input.referralCode : undefined,
+      description: input.description,
+      colorOrBlackGrey: input.colorOrBlackGrey,
+      placement: input.placement,
+      estimatedSize: input.estimatedSize,
+      hasBeenTattooedBefore: input.hasBeenTattooedBefore,
+      budget: input.budget || undefined,
+      desiredTiming: input.desiredTiming || undefined,
+      preferredArtistId: input.preferredArtistId || undefined,
+      referenceImages: input.referenceImages,
+      placementImages: input.placementImages,
+      existingClientId: input.existingClientId || undefined,
+    }),
+  });
+}

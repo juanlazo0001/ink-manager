@@ -49,16 +49,28 @@ export function NewTaskBar({
   onCreate,
   busy,
   error,
+  assignees,
 }: {
   /** The studio's zone — "today" is the studio's today, not the phone's. */
   timeZone: string;
-  onCreate: (input: { title: string; dueAt: string | null }) => void;
+  onCreate: (input: { title: string; dueAt: string | null; userId?: string }) => void;
   busy?: boolean;
   error?: string | null;
+  /**
+   * Teammates this person may assign to. Undefined means they cannot —
+   * the picker never renders, and the task is created for themselves,
+   * which is what this bar did before the control existed.
+   *
+   * `POST /tasks/personal` has always taken an optional `userId`
+   * (`CreatePersonalTaskRequest`); the API side needed nothing.
+   */
+  assignees?: { id: string; name: string }[];
 }) {
   const [title, setTitle] = useState('');
   const [due, setDue] = useState<DueKey>('none');
   const [expanded, setExpanded] = useState(false);
+  /** Empty string = me, which is the API's own default (omit `userId`). */
+  const [assignee, setAssignee] = useState('');
 
   const canAdd = title.trim().length > 0 && !busy;
 
@@ -69,9 +81,10 @@ export function NewTaskBar({
       choice.offset === null
         ? null
         : dateKeyToDueAt(shiftDateKey(todayKey(timeZone), choice.offset), timeZone);
-    onCreate({ title: title.trim(), dueAt });
+    onCreate({ title: title.trim(), dueAt, userId: assignee || undefined });
     setTitle('');
     setDue('none');
+    setAssignee('');
     setExpanded(false);
   }
 
@@ -123,6 +136,38 @@ export function NewTaskBar({
                 style={({ pressed }) => [styles.due, on && styles.dueOn, pressed && styles.pressed]}
               >
                 <Text style={[styles.dueLabel, on && styles.dueLabelOn]}>{choice.label.toUpperCase()}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+
+      {/* Who it is for. Only when this person can assign at all, and only
+          once there is a task to assign — the same rule the date row
+          above follows. */}
+      {expanded && assignees && assignees.length > 0 ? (
+        <View style={styles.dueRow}>
+          <Pressable
+            onPress={() => setAssignee('')}
+            accessibilityRole="button"
+            accessibilityState={{ selected: assignee === '' }}
+            style={({ pressed }) => [styles.due, assignee === '' && styles.dueOn, pressed && styles.pressed]}
+          >
+            <Text style={[styles.dueLabel, assignee === '' && styles.dueLabelOn]}>ME</Text>
+          </Pressable>
+          {assignees.map((person) => {
+            const on = person.id === assignee;
+            return (
+              <Pressable
+                key={person.id}
+                onPress={() => setAssignee(person.id)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}
+                style={({ pressed }) => [styles.due, on && styles.dueOn, pressed && styles.pressed]}
+              >
+                <Text style={[styles.dueLabel, on && styles.dueLabelOn]} numberOfLines={1}>
+                  {person.name.toUpperCase()}
+                </Text>
               </Pressable>
             );
           })}

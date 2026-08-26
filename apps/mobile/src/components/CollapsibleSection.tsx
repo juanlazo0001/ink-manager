@@ -76,6 +76,7 @@ export function CollapsibleSection({
 }
 
 const styles = StyleSheet.create({
+
   head: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   // `minWidth: 0` is what lets the title truncate instead of forcing the
   // row wider than the card — RN's default `minWidth: auto` would not.

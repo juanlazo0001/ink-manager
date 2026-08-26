@@ -16,13 +16,24 @@ import { isActiveDestination, visibleDestinations } from '@/lib/navDestinations'
 import { colors, hairline, radius, space, type } from '@/theme';
 import { duration, easing } from '@/theme/motion';
 
-const WIDTH = 288;
+/**
+ * WEB'S OWN NUMBER, not an approximation of one: its mobile sidebar is
+ * `w-[80vw]` (`Sidebar.tsx`), which is where the owner's "~80%" comes
+ * from. A fixed 288 was close on a 360pt phone and wrong on every other
+ * size — too wide on an SE, too narrow on a Pro Max.
+ */
+const WIDTH_FRACTION = 0.8;
 /**
  * Web caps the logo at `max-h-28` — 112px — and lets it use the sidebar's
  * full width. The drawer is 288 wide, so the same treatment reads at the
  * same size here.
  */
-const LOGO_HEIGHT = 96;
+/**
+ * Web's sidebar logo is `h-auto max-h-28 w-full object-contain` — a
+ * 112px cap. Session P set 96 here, before the logo change; re-verified
+ * against current web and restored to web's own number.
+ */
+const LOGO_HEIGHT = 112;
 
 /**
  * The navigation drawer — every screen that is NOT a bottom tab.
@@ -50,6 +61,7 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
   const pathname = usePathname();
   const { session } = useAuth();
   const { width: screenWidth } = useWindowDimensions();
+  const drawerWidth = Math.round(screenWidth * WIDTH_FRACTION);
   /*
    * Insets read HERE, in the app's own tree, and applied as padding — not
    * via <SafeAreaView> inside the Modal.
@@ -68,9 +80,9 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
   const studioName = session?.studio?.name ?? 'Studio unavailable';
   const logoUrl = session?.studio?.logoUrl ?? null;
 
-  // -WIDTH is off-screen left; 0 is open. Driven rather than toggled so
+  // -drawerWidth is off-screen left; 0 is open. Driven rather than toggled so
   // the swipe can hand a real position back to the animation.
-  const x = useSharedValue(-WIDTH);
+  const x = useSharedValue(-drawerWidth);
 
   /*
    * The Modal has to outlive `open`, or the close is never seen: RN
@@ -84,7 +96,7 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
   useEffect(() => {
     if (open) setMounted(true);
     x.value = withTiming(
-      open ? 0 : -WIDTH,
+      open ? 0 : -drawerWidth,
       { duration: duration.base, easing: easing.standard },
       (finished) => {
         if (finished && !open) runOnJS(setMounted)(false);
@@ -96,7 +108,7 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
   // The scrim fades with the panel instead of appearing at full strength
   // the instant the drawer starts moving.
   const scrimStyle = useAnimatedStyle(() => ({
-    opacity: (x.value + WIDTH) / WIDTH,
+    opacity: (x.value + drawerWidth) / drawerWidth,
   }));
 
   const swipe = Gesture.Pan()
@@ -108,9 +120,9 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
     .onEnd((e) => {
       // Past a third of the way, or thrown fast enough, it closes —
       // otherwise it settles back open.
-      const shouldClose = e.translationX < -WIDTH / 3 || e.velocityX < -600;
+      const shouldClose = e.translationX < -drawerWidth / 3 || e.velocityX < -600;
       if (shouldClose) {
-        x.value = withTiming(-WIDTH, { duration: duration.fast, easing: easing.standard }, () => {
+        x.value = withTiming(-drawerWidth, { duration: duration.fast, easing: easing.standard }, () => {
           runOnJS(onClose)();
         });
       } else {
@@ -136,7 +148,7 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
         </Animated.View>
 
         <GestureDetector gesture={swipe}>
-          <Animated.View style={[styles.panel, { width: WIDTH }, panelStyle]}>
+          <Animated.View style={[styles.panel, { width: drawerWidth }, panelStyle]}>
             <View style={[styles.panelInner, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
               {/*
                 Web's sidebar header is `flex justify-center` around the
@@ -210,7 +222,7 @@ export function NavDrawer({ open, onClose }: { open: boolean; onClose: () => voi
 
         {/* Keeps the panel from being dragged wider than the screen on a
             small device. */}
-        <View pointerEvents="none" style={{ width: Math.max(0, screenWidth - WIDTH) }} />
+        <View pointerEvents="none" style={{ width: Math.max(0, screenWidth - drawerWidth) }} />
       </View>
     </Modal>
   );
@@ -247,27 +259,46 @@ const styles = StyleSheet.create({
   studio: { ...type.heading, color: colors.fg, textAlign: 'center' },
   ornament: { marginBottom: space.sm },
 
-  items: { paddingHorizontal: space.sm, paddingBottom: space.lg },
+  /* Web: `mt-2 flex flex-col gap-1 px-1` — 4px between rows, 4px sides. */
+  items: { paddingHorizontal: space.xs, paddingBottom: space.lg, gap: space.xs },
+  /* Web: `flex items-center gap-3 rounded-btn px-3 py-2.5 text-[15px]`. */
   item: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
     paddingRight: space.md,
-    paddingVertical: space.md,
+    paddingVertical: 10,
     borderRadius: radius.input,
+    // Web declares 'border: 1px solid transparent' on every row so the
+    // active state can colour it without the row changing size.
+    borderWidth: hairline,
+    borderColor: 'transparent',
   },
-  itemActive: { backgroundColor: 'rgba(201, 154, 91, 0.08)' },
+  /* Web's `.side-nav-link.on`: surface fill, border-coloured edge. */
+  itemActive: { backgroundColor: colors.surface, borderColor: colors.border },
 
+  /*
+   * Web's `.side-nav-link::before`, extracted from index.css:
+   *
+   *   width 3px, height 20px, background --color-danger-strong,
+   *   border-radius 0 2px 2px 0, vertically centred
+   *
+   * It was a 2px full-height GOLD rule here. Red is the brand's own
+   * marker for "you are here" in the sidebar, and it is one of the few
+   * places red is not punctuation — web has always drawn it this way.
+   */
   marker: {
-    width: 2,
-    alignSelf: 'stretch',
-    borderRadius: radius.pill,
+    width: 3,
+    height: 20,
+    borderTopRightRadius: 2,
+    borderBottomRightRadius: 2,
     backgroundColor: 'transparent',
     marginRight: space.xs,
   },
-  markerActive: { backgroundColor: colors.accent },
+  markerActive: { backgroundColor: colors.dangerStrong },
 
-  itemLabel: { ...type.body, color: colors.fgSecondary, flex: 1 },
+  /* Web: `text-[15px] font-normal`. */
+  itemLabel: { ...type.body, fontSize: 15, color: colors.fgSecondary, flex: 1 },
   itemLabelActive: { color: colors.fg },
 
   empty: { ...type.small, color: colors.fgMuted, padding: space.md },

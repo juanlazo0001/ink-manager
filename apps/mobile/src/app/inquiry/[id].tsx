@@ -3,8 +3,8 @@ import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { DetailField, DetailSection, FieldDivider } from '@/components/DetailSection';
 import { InquiryRespondSheet, type RespondMode } from '@/components/InquiryRespondSheet';
 import { PhotoStrip, PhotoViewer } from '@/components/PhotoViewer';
@@ -127,7 +127,7 @@ export default function InquiryDetailScreen() {
 
   if (!inquiry) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Project" onBack={() => router.back()} right={<View style={styles.headerSpacer} />} />
         {error ? (
           <View style={styles.centre}>
@@ -142,7 +142,7 @@ export default function InquiryDetailScreen() {
         ) : (
           <ScreenLoading />
         )}
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
@@ -155,7 +155,7 @@ export default function InquiryDetailScreen() {
     : null;
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <ScreenHeader
         title={inquiryClientName(inquiry.client)}
         subtitle={`${channelLabel(inquiry.channel)} · ${relativeStamp(inquiry.createdAt)}`}
@@ -332,12 +332,11 @@ export default function InquiryDetailScreen() {
         visible={viewerIndex !== null}
         onClose={() => setViewerIndex(null)}
       />
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   headerSpacer: { width: 36 },
   centre: { flex: 1, justifyContent: 'center' },
   content: { paddingBottom: space.xxxl },
