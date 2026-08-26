@@ -193,7 +193,10 @@ export function ThreadHeader({
 }
 
 const styles = StyleSheet.create({
-  wrap: { overflow: 'hidden' },
+  /* zIndex so the thread passes BENEATH the header (9) rather than over
+     it: the list now translates upward with the keyboard, and a later
+     sibling would otherwise paint on top of the identity row. */
+  wrap: { overflow: 'hidden', zIndex: 10 },
   solidFallback: { backgroundColor: colors.surfaceRaised },
   tint: { backgroundColor: 'rgba(29, 24, 19, 0.72)' },
 
