@@ -36,6 +36,7 @@ import { ScreenShell } from '@/components/ScreenShell';
 import { Composer, type ComposerSendState } from '@/components/Composer';
 import { MessageActions } from '@/components/MessageActions';
 import { MessageOverlay } from '@/components/MessageOverlay';
+import { Tapback } from '@/components/Tapback';
 import { FlyTarget } from '@/components/FlyTarget';
 import { ScrollToBottomPill } from '@/components/ScrollToBottomPill';
 import { TypingRow } from '@/components/TypingRow';
@@ -1054,6 +1055,20 @@ export default function ConversationScreen() {
           rect={overlayRect}
           reduced={flyReduced}
           onDismiss={closeOverlay}
+          /*
+            §7 rev D: the tapback goes ABOVE the lifted bubble, aligned to
+            the bubble's own side. It is the first thing under the thumb
+            when the bubble comes up, which is what makes reacting a
+            gesture rather than a menu choice.
+          */
+          above={
+            <Tapback
+              own={overlayRow?.own ?? false}
+              mine={(actionFor.reactions ?? []).find((r) => r.userId === viewerUserId)?.emoji ?? null}
+              reduced={flyReduced}
+              onReact={(emoji) => handleReact(actionFor, emoji)}
+            />
+          }
           bubble={
             <MessageBubble
               message={actionFor}
@@ -1109,9 +1124,6 @@ export default function ConversationScreen() {
                 }
             : null
         }
-        myReaction={
-          actionFor ? ((actionFor.reactions ?? []).find((r) => r.userId === viewerUserId)?.emoji ?? null) : null
-        }
         // Web's rule exactly: edits are STAFF/GROUP-only and author-only,
         // which is also what the API enforces.
         canEdit={!!actionFor && !isClientThread && actionFor.authorUserId === viewerUserId}
@@ -1131,7 +1143,6 @@ export default function ConversationScreen() {
           closeOverlay();
           void handleSaveImage(url);
         }}
-        onReact={(emoji) => actionFor && handleReact(actionFor, emoji)}
         onReply={() => {
           setReplyTo(actionFor);
           setEditing(null);

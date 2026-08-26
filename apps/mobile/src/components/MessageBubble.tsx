@@ -624,15 +624,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: radius.pill,
-    /* A real border against the app ground, so the badge reads as sitting
-       ON the bubble rather than being part of it. */
-    borderWidth: 1,
-    borderColor: colors.bg,
-    backgroundColor: colors.surfaceRaised,
+    /* A real border in the PAGE colour, so the chip reads as sitting ON
+       the bubble rather than being part of it -- the same trick, and the
+       same reason, as the channel badge on a list avatar (§1.1). */
+    borderWidth: 2,
+    borderColor: chat.surface,
+    backgroundColor: chat.surfaceRaised,
   },
   reactionMine: { borderColor: colors.accent, backgroundColor: 'rgba(201, 154, 91, 0.16)' },
   reactionGlyph: { fontSize: 13, lineHeight: 16 },
-  reactionCount: { ...type.meta, color: colors.fgMuted },
+  /* §1.2: every count in this app is Jura. This was Outfit-light via
+     type.meta -- body type doing a metadata job. */
+  reactionCount: { ...type.label, fontSize: 10, color: chat.textMuted },
 
   images: { flexDirection: 'row', flexWrap: 'wrap', gap: 2 },
   /* 2 tiles + the gap between them. Messages' own collage is 2-up. */

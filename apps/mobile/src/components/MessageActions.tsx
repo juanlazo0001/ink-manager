@@ -1,8 +1,6 @@
 import Feather from '@expo/vector-icons/Feather';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Eyebrow } from '@/components/ui';
-import { REACTION_EMOJIS, type ReactionEmoji } from '@/lib/conversations';
 import { stamp } from '@/lib/format';
 import { colors, hairline, radius, space, type } from '@/theme';
 
@@ -31,15 +29,12 @@ export function MessageActions({
   visible,
   onClose,
   failure,
-  /** The viewer's current reaction on this message, if any. */
-  myReaction,
   canEdit,
   /** False for a message with no text — there is nothing to put on the clipboard. */
   canCopy,
   copied,
   detail,
   images,
-  onReact,
   onReply,
   onCopy,
   onEdit,
@@ -58,7 +53,6 @@ export function MessageActions({
     onRetry?: () => void;
     onDiscard?: () => void;
   } | null;
-  myReaction?: string | null;
   canEdit: boolean;
   canCopy: boolean;
   copied: boolean;
@@ -73,7 +67,6 @@ export function MessageActions({
   detail?: { channel: string; sentAt: string; edited: boolean } | null;
   /** Image attachments on this message, if any — enables Save. */
   images?: string[];
-  onReact: (emoji: ReactionEmoji) => void;
   onReply: () => void;
   onCopy: () => void;
   onEdit: () => void;
@@ -114,35 +107,8 @@ export function MessageActions({
 
       {failure ? <View style={styles.divider} /> : null}
 
-      {/* Reactions stay a plain row here for now; §7 rev D moves them
-          into a tapback above the lifted bubble, which is 5B's job. */}
       {failure ? null : (
-        <>
-          <Eyebrow style={styles.eyebrow}>React</Eyebrow>
-          <View style={styles.emojiRow}>
-            {REACTION_EMOJIS.map((emoji) => {
-              const mine = myReaction === emoji;
-              return (
-                <Pressable
-                  key={emoji}
-                  onPress={() => onReact(emoji)}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: mine }}
-                  accessibilityLabel={mine ? `Remove ${emoji} reaction` : `React ${emoji}`}
-                  style={({ pressed }) => [styles.emoji, mine && styles.emojiMine, pressed && styles.pressed]}
-                >
-                  <Text style={styles.emojiGlyph}>{emoji}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <View style={styles.divider} />
-        </>
-      )}
-
-      {failure ? null : (
-          <Pressable
+        <Pressable
             onPress={onReply}
             accessibilityRole="button"
             style={({ pressed }) => [styles.action, pressed && styles.pressed]}
@@ -242,22 +208,6 @@ const styles = StyleSheet.create({
 
   failure: { paddingBottom: space.sm },
   failureText: { ...type.small, color: colors.fgSecondary },
-  eyebrow: { marginBottom: space.sm },
-
-  emojiRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: space.xs },
-  emoji: {
-    width: 46,
-    height: 46,
-    borderRadius: radius.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: hairline,
-    borderColor: 'transparent',
-  },
-  // The viewer's own reaction, marked the same way a selected pill is.
-  emojiMine: { borderColor: colors.accent, backgroundColor: 'rgba(201, 154, 91, 0.08)' },
-  emojiGlyph: { fontSize: 24, lineHeight: 30 },
-
   detail: { paddingTop: space.sm, paddingHorizontal: space.xs },
   detailText: { ...type.meta, color: colors.fgMuted },
   divider: { height: hairline, backgroundColor: colors.border, marginTop: space.md, marginBottom: space.xs },
