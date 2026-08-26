@@ -8,8 +8,7 @@ import { Appear } from '@/components/Appear';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { PillMenu } from '@/components/PillMenu';
 import { TopBar } from '@/components/TopBar';
-import { CardIconButton } from '@/components/CardIconButton';
-import { MoreIcon, PlusIcon } from '@/components/icons';
+import { PlusIcon } from '@/components/icons';
 import { SkeletonList } from '@/components/Skeleton';
 import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -34,7 +33,8 @@ import {
   upcomingWindow,
 } from '@/lib/clientListSignals';
 import { StatusChip } from '@/components/StatusChip';
-import { ClientRowActionsSheet } from '@/components/ClientRowActionsSheet';
+import { ArchiveConfirmSheet } from '@/components/ArchiveConfirmSheet';
+import { ClientSwipe } from '@/components/ClientSwipe';
 import { archiveClient, unarchiveClient } from '@/lib/clientWrites';
 import type { AppointmentListItem } from '@ink-manager/shared-types';
 
@@ -361,12 +361,21 @@ export default function ClientsScreen() {
           keyExtractor={(c) => c.id}
           renderItem={({ item, index }) => (
             <Appear index={index}>
-              <ClientRow
-                client={item}
-                onPress={() => router.push({ pathname: '/client/[id]', params: { id: item.id } })}
-                upcoming={upcoming[item.id]}
-                onOpenActions={() => setActionsFor(item)}
-              />
+              <ClientSwipe
+                archived={item.archivedAt !== null}
+                hasThread={!!threadsByClient[item.id]}
+                onMessage={() => {
+                  const threadId = threadsByClient[item.id];
+                  if (threadId) router.push({ pathname: '/conversation/[id]', params: { id: threadId } });
+                }}
+                onArchive={() => setActionsFor(item)}
+              >
+                <ClientRow
+                  client={item}
+                  onPress={() => router.push({ pathname: '/client/[id]', params: { id: item.id } })}
+                  upcoming={upcoming[item.id]}
+                />
+              </ClientSwipe>
             </Appear>
           )}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
@@ -399,19 +408,13 @@ export default function ClientsScreen() {
       ) : null}
 
       {actionsShown ? (
-        <ClientRowActionsSheet
+        <ArchiveConfirmSheet
           visible={actionsFor !== null}
           name={clientName(actionsShown)}
           archived={actionsShown.archivedAt !== null}
-          hasThread={!!threadsByClient[actionsShown.id]}
           busy={archiving}
           onClose={() => setActionsFor(null)}
-          onMessage={() => {
-            const threadId = threadsByClient[actionsShown.id];
-            setActionsFor(null);
-            if (threadId) router.push({ pathname: '/conversation/[id]', params: { id: threadId } });
-          }}
-          onToggleArchive={() => void toggleArchive(actionsShown)}
+          onConfirm={() => void toggleArchive(actionsShown)}
         />
       ) : null}
     </ScreenShell>
@@ -421,13 +424,10 @@ export default function ClientsScreen() {
 function ClientRow({
   client,
   onPress,
-  onOpenActions,
   upcoming,
 }: {
   client: ClientListItem;
   onPress: () => void;
-  /** Opens this row's `⋯` sheet. */
-  onOpenActions: () => void;
   /** Their soonest confirmed appointment, if they have one. */
   upcoming?: AppointmentListItem;
 }) {
@@ -493,18 +493,16 @@ function ClientRow({
         </Text>
       </View>
       {/*
-        SESSION AI: the row's single-purpose Message button becomes the
-        overflow `⋯`. Message did not go away — it is the first item
-        inside, still navigating to an existing thread and still saying so
-        when there isn't one. What changed is that the row now has somewhere
-        to put a SECOND action (Archive), which a dedicated message icon
-        had no room for.
+        SESSION AJ, owner decision: the row's trailing button is GONE. Its
+        two actions (Message, Archive) now live behind a left swipe, which
+        is where iOS puts row actions on a list like this. The row's own
+        tap still opens the client, so nothing lost a home — the row simply
+        stopped spending 56pt of its width on a control that was one tap
+        away from the same two things.
+
+        The width goes straight back to the NAME, which AG's avatar column
+        had taken 52pt from: 106 -> 162pt at 320.
       */}
-      <CardIconButton
-        Icon={MoreIcon}
-        label={`Actions for ${name}`}
-        onPress={onOpenActions}
-      />
     </Pressable>
   );
 }

@@ -29288,3 +29288,249 @@ now interfering with a second feature and is worth its own fix.
 **No schema change, no migration, no backfill.** No database contact at
 all this session — the archive round-trip ran against the scratchpad
 fixture, not against dev.
+
+# Mobile session AJ — reconciling two diverged lines, and swipe row actions
+
+## PART 0 — the branch map, and what the owner was seeing
+
+### Where everything actually sat
+
+| line | branch | base | unique commits | holds |
+| --- | --- | --- | --- | --- |
+| trunk | **`main` @ `bb157da`** | — | — | AA–AE **merged**, chat-ux 00/01/02 merged, and the notifications/`viewerState` work merged |
+| chat polish | **`chat-ux/03-05-combined`** | `bb157da` | **14** | send-fly, incoming pop, typing row, list furniture, row anatomy, conversation row swipes, long-press overlay, reactions, **image bubbles**, pinch-zoom viewer, and the CLAUDE.md harness note |
+| clients polish | **`mobile/session-ai`** | `bb157da` | **5** | AF Outfit names · AG avatars + divider rule · AH filter button · AI shared `Sheet` + row `⋯` |
+
+`mobile/session-ae` is **fully merged into main** — `git rev-list --count
+origin/main..origin/mobile/session-ae` is **0**. So "the AE line" is not a
+branch at all; it is `main`, and AE's own work (grouped bubbles,
+`revealPan` swipe timestamps) is in it.
+
+### The owner's symptom, confirmed feature by feature
+
+Every Clients feature was checked against every candidate branch:
+
+| feature | marker | main | chat-ux | session-ai |
+| --- | --- | --- | --- | --- |
+| AF Outfit row names | `type.rowName` | — | — | **yes** |
+| AG client avatar column | `AVATAR_SIZE` in `clients.tsx` | — | — | **yes** |
+| AH filter button | `CLIENT_FILTERS` | — | — | **yes** |
+| AI sheet scrim fix | `components/Sheet.tsx` | absent | absent | **present** |
+
+**All four exist on `mobile/session-ai` and nowhere else.** Running main —
+or the chat-ux branch, which is what the primary checkout was sitting on
+when this session started — shows none of them. That is exactly the report.
+
+### What was done: `mobile/reconciled`, NOT main
+
+Both lines merged into a new branch cut from `origin/main`:
+
+    mobile/reconciled = main + chat-ux/03-05-combined + mobile/session-ai
+
+**Deliberately not merged to main.** The brief said to prefer main "if the
+owner's gates passed, which his usage implies" — but the gate word never
+came for AF–AI, the standing rule in CLAUDE.md is explicit that merge
+happens only after the owner's gate passes and he says "merge", and
+landing on main triggers a Railway deploy. Usage implying a gate passed is
+not the same as a gate passing, and this is the one step that is hard to
+take back. The reconciliation itself — the part that was actually blocked
+— is done and verified.
+
+**To promote it, once the gate passes:**
+
+    git checkout main && git merge --ff-only mobile/reconciled && git push origin main
+
+It is a fast-forward: `main` has no commits that `mobile/reconciled` lacks.
+
+### The five conflicts, and how each was resolved
+
+| file | conflict | resolution |
+| --- | --- | --- |
+| `REPORT.md` | both lines appended | **both tails kept**, in branch order — 212 + 905 lines. All six session headings verified present (AE, Chat UX 03+04+05, AF, AG, AH, AI). |
+| `(tabs)/index.tsx` | chat-ux rebuilt the screen; AG had changed the separator | **chat-ux** — and AG's *rule* survives intact, see below |
+| `ConversationRow.tsx` | chat-ux rebuilt row anatomy; AG exported an inset constant | **chat-ux** — same reason |
+| `MessageActions.tsx` | chat-ux made it an overlay panel; AI had migrated it to `Sheet` | **chat-ux** — it is no longer a modal, so AI's migration is moot |
+| `RetrySheet.tsx` | **deleted** by chat-ux, modified by AI | **deletion accepted** — chat-ux-05a folded retry into the long-press overlay and nothing imports it |
+
+**Favouring both features, concretely.** AG's contribution to the chat list
+was the rule *"the divider's inset is the text's inset, and the avatar
+occupies the gap"*. chat-ux implements that same rule more thoroughly, in
+a shared `theme/listMetrics.ts`:
+
+    LIST_SEPARATOR_INSET = LIST_INSET(20) + LIST_AVATAR(44) + 12 = 76
+
+with its own comment saying "the rule starts where the text starts". So
+taking chat-ux's side there is not AG losing — it is AG's idea shipping in
+the better implementation. AG's client-list work is untouched and intact.
+
+Two deletions were checked before being accepted rather than assumed:
+`FrequentStrip` (chat-ux-04a removed it deliberately, with a recorded
+reason) and `RetrySheet` (superseded by `MessageOverlay`).
+
+### Proof the reconciled tree carries BOTH
+
+Fourteen markers, all present:
+
+    AF  Outfit row names (type.rowName)         YES     AE  grouped bubbles              YES
+    AF  clients row uses rowName                YES     AE  swipe timestamps (revealPan) YES
+    AG  client row avatar (AVATAR_SIZE)         YES     CUX image bubbles                YES
+    AG  divider = text inset (LIST_SEPARATOR)   YES     CUX conversation row swipes      YES
+    AH  filter button (CLIENT_FILTERS)          YES     CUX reactions tapback            YES
+    AH  iconOnly PillMenu trigger               YES     CUX send-fly                     YES
+    AI  Sheet.tsx scrim/slide split             YES     CUX CLAUDE.md harness note       YES
+
+And rendered, both screens, at 320pt
+(`design-refs/session-aj/reconciled-{clients,chatlist}-320.png`):
+
+| screen | measured |
+| --- | --- |
+| **Clients** | name font **`Outfit_500Medium 18px`** (AF) · avatar initials present (AG) · Filter button present (AH) · 6 rows |
+| **Chat list** | separator inset **76** and avatar **44** (chat-ux §8) · **PINNED** + **CONVERSATIONS** sections · FrequentStrip gone · 8 rows |
+
+**One thing the render caught.** The chat list first crashed with
+`Cannot read properties of undefined (reading 'isPinned')`. That was **not**
+a merge defect: chat-ux's pin/mute reads `viewerState` unguarded, the real
+API returns it (the notifications work is merged to main), and it was the
+scratchpad FIXTURE that was lagging the payload. Fixed the fixture. Worth
+recording because the same shape — new required field, stale fixture —
+would look identical to a bad merge.
+
+### Branches safe to delete, after the promotion above
+
+Once `mobile/reconciled` is on main, every one of these is fully contained
+in it and can go, local and remote:
+
+    mobile/session-af   mobile/session-ag   mobile/session-ah   mobile/session-ai
+    chat-ux/03-05-combined
+    mobile/session-aa .. mobile/session-ae   (already merged to main before this session)
+    chat-ux/00-investigation  chat-ux/01-thread-anatomy  chat-ux/02-composer-keyboard  (already in main)
+
+**Do not delete yet:** `session/twilio-messaging-service`,
+`session/customer-language-preference`, `session/prepay-onhold`,
+`explore/*` — none was examined this session and none is contained in the
+reconciliation.
+
+## PART 1 — swipe row actions
+
+`components/ClientSwipe.tsx`, built on `ReanimatedSwipeable` — the same
+control `ConversationSwipe` already uses for the chat list, so the two
+lists answer a thumb identically. Swipe LEFT reveals **Message** and
+**Archive** behind the row.
+
+**The `⋯` button is gone**, per the owner decision that swipe replaces it.
+That has a measurable dividend: the row stops spending 56pt (44 button +
+12 gap) on a trailing control, and the width goes back to the name.
+
+| | AG (avatar, msg icon) | AI (avatar, `⋯`) | **AJ (avatar, swipe)** |
+| --- | --- | --- | --- |
+| name box at 320 | 106 | 106 | **162** |
+| `"Marcus Delacroix"` (16 ch, the dev DB's **median**) | truncated | truncated | **fits** |
+| row height | 68 | 68 | 65 |
+
+So the median client name fits again — the thing AF achieved, AG's avatar
+column cost, and swipe gives back.
+
+### No full-swipe commit — and the rule is not new
+
+The brief allowed a full swipe to fire the primary action "if it feels
+right". `ConversationSwipe` had already worked out the rule and written it
+down: **one action, full swipe; more than one, tap to choose.** This side
+has two, so a full swipe has no defensible meaning. The rule holds even
+when Message is hidden (a client with no thread), leaving Archive alone —
+because that file makes the same exception explicit for the same action:
+**Archive never auto-commits.** It is a write, and a write taken by a thumb
+that travelled slightly too far is not something this app should be able
+to do.
+
+### The red, and the two standing rules it sits against
+
+Archive's panel is `dangerStrong` (`#c2402f`) with a white label, as
+directed. Flagged rather than silently shipped, because two things in this
+repo point the other way:
+
+1. **CLAUDE.md**: "Red is punctuation … never a fill color or a large
+   surface area", with exactly two sanctioned exceptions, both on the chat
+   control. An 88pt full-height panel is a large surface.
+2. **`ConversationSwipe`** gives its own Archive a *receding* near-black
+   panel and says why: archive is soft and reversible, so a loud panel
+   "would invite the tap rather than warn about it".
+
+Archiving a client is likewise reversible — the API's own comment calls it
+a "soft, reversible hide" and there is a matching unarchive route. So the
+red arguably overstates what the button does. **`styles.archive` in
+`ClientSwipe.tsx` is the one line to change** if the owner reverses it.
+The label is white rather than cream because cream on `dangerStrong`
+measures 4.39:1, under the AA floor — CLAUDE.md records that for the chat
+control and this is the same fill at a smaller size.
+
+### Confirm, not undo-toast — and the sheet that shrank
+
+Tapping Archive opens a confirm. AI's finding still stands: there is no
+undo-toast pattern in this app (the only toast is `pointerEvents="none"`,
+with nothing to tap), so inventing one would be a new pattern rather than
+a reused one.
+
+`ClientRowActionsSheet` (AI) becomes **`ArchiveConfirmSheet`**. With
+Message and Archive both on the swipe panel, the sheet's menu branch was
+unreachable, so the file keeps the part still wanted — the confirm — and
+drops the rest rather than leaving dead code behind a prop. AI's reason for
+building the confirm as a sheet state rather than `Alert.alert` survives
+unchanged: `react-native-web` stubs `Alert.alert` to a no-op, so that
+confirm could be claimed but never shown.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean  (merged tree AND after Part 1)
+    apps/web      tsc -b && vite build         built in 14.09s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean, matches schema.prisma
+    apps/api      test suite                   233/233 pass
+
+**Panel geometry, measured on the running screen** — 12 panels across 6
+rows, two per row:
+
+| panel | size | fill | label |
+| --- | --- | --- | --- |
+| Message | 88 × 65 | `rgb(29, 24, 19)` (`surfaceRaised`) | `rgb(199, 190, 169)` (`fgSecondary`) |
+| Archive | 88 × 65 | **`rgb(194, 64, 47)`** (`dangerStrong`) | **`rgb(255, 255, 255)`** |
+
+**Archive round-trip, driven through the new path:**
+
+    1. before                      6 rows, "6 clients"
+    2. tap the panel's Archive     confirm sheet: "Archive Marcus Delacroix?"
+    3. confirm                     row gone, 5 rows, "5 clients"
+    fixture log: POST /clients/c2/archive -> archive c2; archivedAt=2026-08-26T23:51:38.139Z
+
+**320pt (item 5):** content width 320 · row 65 · avatar 40 at x=16 · text
+inset 68 · separator 68 · chip one line · name box 162.
+
+### DEVICE GATE — the swipe itself is unproven here, deliberately
+
+CLAUDE.md's own rule, added by the chat-ux session and now in the
+reconciled tree: *"Gesture-handler is likewise inert to synthetic input, so
+Pan/Pinch behaviour is device-gate too — its silence there proves nothing
+in either direction."*
+
+That governs this work directly. What is proven above is that the panels
+**render** with the right geometry, colours and labels, and that tapping
+Archive runs the whole archive path. What is **NOT** proven, and cannot be
+on this harness:
+
+- that a left drag reveals them;
+- that a mostly-vertical drag still scrolls the list instead (the
+  scroll-vs-swipe coexistence the brief asks for — the code relies on
+  `ReanimatedSwipeable`'s own `activeOffsetX` window, and this is the same
+  arrangement `ConversationSwipe` already ships on the chat list);
+- how any of it feels.
+
+An earlier attempt to reveal the panels by CSS translation is not in
+`design-refs/` on purpose: it would have been a picture of a state the
+gesture never produced, filed next to real renders. **These are the gate
+items:** swipe a client row left, check both panels appear, check a
+vertical drag still scrolls, and check Archive's red reads as intended
+before it is kept.
+
+## Database
+
+**No schema change, no migration, no backfill.** No database contact —
+the archive round-trip ran against the scratchpad fixture.
