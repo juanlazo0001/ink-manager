@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
-import { ConversationRow } from '@/components/ConversationRow';
+import { ConversationRow, CONVERSATION_TEXT_INSET } from '@/components/ConversationRow';
 import { FrequentStrip } from '@/components/FrequentStrip';
 import { TopBar } from '@/components/TopBar';
 import { ThreadListControls } from '@/components/ThreadListControls';
@@ -20,7 +20,7 @@ import {
   type ThreadSort,
 } from '@/lib/conversationListControls';
 import { screenErrorMessage } from '@/lib/screenError';
-import { colors, space } from '@/theme';
+import { colors, hairline } from '@/theme';
 
 /**
  * Refresh strategy, decided in this session's investigation: poll, not
@@ -217,6 +217,18 @@ export default function ConversationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  separator: { height: 1, backgroundColor: colors.borderSoft, marginLeft: space.lg },
+  /*
+    SESSION AG sweep. Was `marginLeft: space.lg` — 16pt, the row's own
+    padding — on a list whose every row leads with a 42pt avatar. So the
+    rule started under the avatars and cut the column of faces in half,
+    which is the one thing iOS's list divider never does: in Messages,
+    the divider begins where the TEXT begins and the avatar sits in the
+    gap before it. 16 + 42 + 12 = 70, imported rather than retyped so it
+    cannot drift from the avatar it is measured against.
+
+    `hairline` rather than the literal `1` it used to be, for the same
+    reason every other list here uses the token.
+  */
+  separator: { height: hairline, backgroundColor: colors.borderSoft, marginLeft: CONVERSATION_TEXT_INSET },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
 });

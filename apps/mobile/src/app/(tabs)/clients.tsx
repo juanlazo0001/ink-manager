@@ -265,9 +265,31 @@ function ClientRow({
       accessibilityLabel={name}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
-      {/* ITEM 6a: no avatar. These are never photographs — the client
-          record has no image field at all, so every circle on this screen
-          was a pair of initials restating the name beside it. */}
+      {/*
+        SESSION AG, owner-directed: the avatar column is BACK, reversing
+        session W's removal (`97d59d0`, "ITEM 6a: no avatar"). W's argument
+        was that a client circle can only ever be initials restating the
+        name beside it, and that argument is still factually true — see
+        `url={null}` below. The ruling is that the column earns its place
+        anyway, as ANATOMY: it is the leading inset that gives the row its
+        iOS Contacts rhythm and gives the divider something to start after.
+
+        `url={null}` is not a stub. `Client` has NO image column of any
+        kind in `schema.prisma` (checked this session: only
+        `instagramHandle`/`facebookProfileUrl`, both explicitly documented
+        there as manual links with "no automatic profile/photo import"),
+        and `GET /clients` is a bare `findMany` with no select, so there is
+        no photo in the payload to pass. `Avatar` already renders a photo
+        the moment one is handed to it, so the day a `Client.avatarUrl`
+        exists this becomes a one-word change.
+      */}
+      <Avatar
+        url={null}
+        initials={initialsOf(name)}
+        size={AVATAR_SIZE}
+        labelStyle={styles.avatarLabel}
+      />
+
       <View style={styles.rowText}>
         {/*
           ITEM 4: the chip sits with the NAME, on its baseline — it says
@@ -305,6 +327,17 @@ function ClientRow({
   );
 }
 
+/**
+ * The leading inset zone, in one place.
+ *
+ * 40pt is the iOS Contacts list size, and it is also the number the
+ * divider was already computing against (`space.lg + 40 + space.md`)
+ * before session W removed the avatar it referred to. Declared once so
+ * the avatar and the divider can never drift apart again — which is
+ * exactly what happened last time one of them moved without the other.
+ */
+const AVATAR_SIZE = 40;
+
 const styles = StyleSheet.create({
   /* Web: an eyebrow, then `font-display` at clamp(28,3.4vw,38). */
   /* ITEM 2: the same air Home puts above its eyebrow. */
@@ -325,7 +358,25 @@ const styles = StyleSheet.create({
 
   listContent: { paddingVertical: space.sm },
   emptyBox: { flexGrow: 1, justifyContent: 'center' },
-  separator: { height: hairline, backgroundColor: colors.borderSoft, marginLeft: space.lg + 40 + space.md },
+  /*
+    iOS's own rule, and the reason the avatar had to come back before this
+    line could be called correct: THE DIVIDER'S INSET IS THE TEXT'S INSET,
+    and the zone it skips is occupied by the avatar. 16 (row padding) + 40
+    (avatar) + 12 (gap) = 68, which is exactly where the name starts.
+
+    This value was ALREADY 68 before this session — written as
+    `space.lg + 40 + space.md` when the row still had an avatar, and left
+    behind untouched when session W removed it. So for the whole time the
+    avatar was gone, the divider was indenting past nothing. Restoring the
+    avatar is what makes the existing indent true rather than arbitrary,
+    which is why this line is unchanged in VALUE and only rewritten to
+    stop hard-coding the 40 the avatar is drawn at.
+  */
+  separator: {
+    height: hairline,
+    backgroundColor: colors.borderSoft,
+    marginLeft: space.lg + AVATAR_SIZE + space.md,
+  },
 
   row: {
     flexDirection: 'row',
@@ -337,6 +388,7 @@ const styles = StyleSheet.create({
   // Name and its chip share a baseline; only the name can shrink.
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   rowText: { flex: 1 },
+  /* Live again as of AG. Orphaned but never deleted while W's removal stood. */
   avatarLabel: { ...type.label, fontSize: 13, color: colors.fgMuted },
   /* Session AF: the body face, not the display face. See `type.rowName`
      for the web citation and the measurement that picked 18. */

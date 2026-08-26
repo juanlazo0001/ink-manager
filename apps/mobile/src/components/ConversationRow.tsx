@@ -7,6 +7,22 @@ import { ChannelSwatch } from '@/components/ChannelSwatch';
 import { colors, hairline, radius, space, type } from '@/theme';
 import { relativeStamp } from '@/lib/time';
 
+/**
+ * This row's avatar size, and the text inset it produces.
+ *
+ * Exported because the thread list's DIVIDER has to start exactly where
+ * this row's text starts (iOS's rule: divider inset = text inset, and the
+ * zone it skips is the avatar's). The list owns the separator and this
+ * file owns the avatar, so without a shared constant the two live in
+ * different files with no link between them — which is precisely how
+ * Clients ended up with a divider indenting past an avatar that had been
+ * deleted (see session AG's report).
+ *
+ * 16 (row padding) + 42 (avatar) + 12 (gap) = 70.
+ */
+export const CONVERSATION_AVATAR_SIZE = 42;
+export const CONVERSATION_TEXT_INSET = space.lg + CONVERSATION_AVATAR_SIZE + space.md;
+
 const CHANNEL_LABELS: Record<string, string> = {
   IN_APP: 'In-app',
   SMS: 'SMS',
@@ -90,7 +106,7 @@ export function ConversationRow({
       <Avatar
         url={item.counterpart?.avatarUrl}
         initials={initialsOf(name)}
-        size={42}
+        size={CONVERSATION_AVATAR_SIZE}
         ring={unread ? colors.accent : undefined}
         style={styles.avatar}
         labelStyle={[styles.avatarLabel, unread && styles.avatarLabelUnread]}

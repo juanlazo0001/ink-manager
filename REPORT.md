@@ -28367,3 +28367,241 @@ observation, not something this session proved.
 session touches the schema or any row, in dev or in production. The only
 database contact was a READ — counting client name lengths to size the
 fixture — against the **dev** database.
+
+# Mobile session AG — the client row's avatar column, and the divider rule behind it
+
+Base: **`mobile/session-af` at `b976709`**, not `main`. AF is still at the
+owner's device gate and unmerged (`origin/main` is `bb157da`; `b976709` is
+not in it), and the handoff rule puts merging after the gate passes, so
+this session branched off the stack head rather than off `main`. Item 2
+also depends on AF directly — it asks the name to stay Outfit "per AF" —
+so a branch cut from `main` could not have shown the row it describes.
+Branch `mobile/session-ag`, own worktree via `scripts/new-session.ps1`
+(then reset onto AF).
+
+**Merge order: AF must land before AG. AG contains AF.**
+
+## 1. The avatar column is back
+
+`apps/mobile/src/app/(tabs)/clients.tsx`. Owner-directed, and it reverses
+session W's removal (`97d59d0`, whose comment read *"ITEM 6a: no avatar.
+These are never photographs"*). The reversal is recorded in the code at
+the point of the change, W's reasoning quoted, so the next reader finds
+the ruling rather than an unexplained flip-flop.
+
+    |<-16->|<--- 40 --->|<-12->|Name .............  [CHIP]      ( ✉ )
+    |      |   avatar   |      |(305) 555-0142
+    |                          |
+    |<--------- 68 ----------->|------- divider starts HERE -------->
+
+### W's argument was factually right, and the column came back anyway
+
+Checked rather than assumed, because W's claim was a factual one:
+**`Client` has no image column of any kind.** `schema.prisma`'s Client
+model carries `instagramHandle` and `facebookProfileUrl` and the schema's
+own comment beside them says "no automatic profile/photo import from
+Instagram or Facebook this pass". `GET /clients` is a bare `findMany` with
+no `select`, so there is no photo in the payload to pass either.
+
+So the avatar renders `url={null}` and every circle on this screen is a
+pair of initials — exactly what W said. The owner's ruling is that the
+column earns its place as **anatomy** rather than as a photo: it is the
+leading inset that gives the row its Contacts rhythm and gives the divider
+something to start after. `Avatar` already renders a photo the moment one
+is handed to it, so a future `Client.avatarUrl` is a one-word change here.
+
+### The divider was already indented past nothing
+
+The find of the session, and it is in the diff rather than in prose. The
+separator was already written as:
+
+    marginLeft: space.lg + 40 + space.md      // = 68
+
+That `40` was the avatar's size. It was written when the row still had an
+avatar and **left untouched when W deleted it** — so for the entire time
+W's removal stood, the client list drew a divider that indented 52pt past
+nothing at all. Measured on the running screen before this change:
+
+| | before AG | after AG |
+| --- | --- | --- |
+| avatar | none | 40pt at x=16 |
+| **text inset** | **16** | **68** |
+| **divider inset** | **68** | **68** |
+| aligned? | **no — off by 52** | **yes, exactly** |
+
+The divider's VALUE did not change this session. Restoring the avatar is
+what made the existing indent true. The expression is now
+`space.lg + AVATAR_SIZE + space.md` against a single `AVATAR_SIZE = 40`
+that the avatar is also drawn from, so the two cannot drift apart again —
+which is precisely what happened last time one of them moved alone.
+
+## 2. Composition at 320pt — and the cost, stated plainly
+
+Everything the brief asked to hold, holds. Measured on every row at a
+true 320pt content width:
+
+- avatar at **x=16**, **40×40**, on every row
+- **text inset 68** on every row
+- **divider inset 68** — exact match, running to the trailing edge
+- row height **68pt, unchanged** (driven by the 44pt message button)
+- status chip **one line on every row** — BOOKED label 12pt tall, ARCHIVED
+  16pt, neither wrapping
+- chip to message icon: **12pt clear** at the tightest, never negative
+- name → Outfit 500 @18 per AF, chip after the name, subtitle below,
+  message icon right — composition otherwise untouched, as specified
+
+### The cost: the avatar re-truncates the median name
+
+This needs saying outright because it undoes AF's headline result.
+
+The avatar and its gap take **52pt** out of the name's line. The name box
+goes **158pt → 106pt**, and `"Marcus Delacroix"` — 16 characters, the dev
+database's MEDIAN client name, which needs 139pt — **fits before and
+truncates after**:
+
+| name | chars | needs | before AG | after AG |
+| --- | --- | --- | --- | --- |
+| Jo Ng | 5 | 46pt | fits | fits |
+| Ana Ruiz | 8 | 69pt | fits | fits |
+| **Marcus Delacroix** | **16 (p50)** | **139pt** | **fits (158pt box)** | **TRUNCATES (106pt box)** |
+| Priyanka Venkataraman | 21 | 194pt | truncates | truncates |
+| Sebastian Oyelaran-Whitmore | 27 (p90) | 246pt | truncates | truncates |
+| Wilhelmina Fitzgerald-Thompson | 30 | 266pt | truncates | truncates |
+| Christopher-Alexander Montgomery | 32 | 293pt | truncates | truncates |
+| …-Worthington III | 48 (max) | 420pt | truncates | truncates |
+
+Implemented as directed and NOT quietly "fixed", because the brief says
+the rest of the composition stays and this is a real trade the owner
+should make rather than inherit. The options, with the arithmetic:
+
+| option | name box | fits p50? | cost |
+| --- | --- | --- | --- |
+| as shipped | 106pt | no | — |
+| **chip moves to the SUBTITLE line** | **180pt** | **yes, comfortably** | the chip stops sharing the name's baseline; this is what iOS itself does — secondary info on line two. **Recommended.** |
+| chip becomes a bare coloured dot | ~152pt | yes | loses the word "BOOKED"; `StatusChip` already refuses to render a dot with no label, so this is a new variant |
+| avatar 40 → 32 | 114pt | no | breaks the Contacts rhythm for 8pt |
+| drop the message icon | 162pt | yes | removes a capability from the row |
+
+### A correction to AF's numbers
+
+AF measured the name box at **143pt**; the true figure at 320pt is
+**158pt**. AF's browser was rendering into a 305pt content area because
+Chromium reserved 15pt for a classic scrollbar, and that was not accounted
+for. This session measures at viewport 335 so the content area is a true
+320.
+
+AF's *conclusion* survives — but by 1pt, not comfortably: Fraunces @19
+needs 159pt for the median name against a 158pt box, so it did still
+truncate, and Outfit @18 at 139pt did still fit. Every other number in
+AF's truncation table was likewise 15pt conservative.
+
+## 3. Consistency sweep — the divider rule across every list
+
+The rule, adopted going forward:
+
+> **Divider inset = text inset, and the inset zone is occupied by the
+> avatar when the list has one.**
+
+| # | list | leading element | text inset | divider inset | verdict |
+| --- | --- | --- | --- | --- | --- |
+| 1 | **Clients** — `(tabs)/clients.tsx` | none → **40pt avatar** | 16 → **68** | 68 (unchanged) | **FIXED** by item 1 — divider was indenting past nothing |
+| 2 | **Chat threads** — `(tabs)/index.tsx` | 42pt avatar | 70 | 16 → **70** | **FIXED** — clear mismatch, see below |
+| 3 | **Inquiries** — `(tabs)/inquiries.tsx` | 56pt thumbnail | *no single inset* | 16 | **TABLED** — see below |
+| 4 | **Schedule** — `(tabs)/schedule.tsx` | 52pt time column + 3pt spine | 95 | 80 | **TABLED** — divider lands on the spine, not the text |
+| 5 | **Team** — `(tabs)/team.tsx` | 38pt avatar | 66 | card-bounded rule at 16 | **TABLED** — it is a card's internal rule, not a list separator |
+| 6 | Detail sections — `DetailSection.tsx`, `form/Fields.tsx` | none | — | full-bleed | **CORRECT AS-IS** — no leading media, nothing to inset past |
+
+### #2, fixed — the one clear mismatch
+
+`(tabs)/index.tsx` had `marginLeft: space.lg` — 16pt, the row's own
+padding — on a list where **every** row leads with a 42pt avatar. The rule
+therefore began under the avatars and cut the column of faces in half,
+which is the one thing an iOS list divider never does. Measured before:
+text inset 70, divider 16, **54pt of mismatch**. Now 70 and 70.
+
+The value is `CONVERSATION_TEXT_INSET`, newly exported from
+`ConversationRow.tsx` alongside `CONVERSATION_AVATAR_SIZE`, because the
+list owns the separator and the row owns the avatar — two files, no link
+between them, which is exactly the shape of the Clients bug. Also swapped
+the literal `height: 1` for the `hairline` token every other list uses.
+
+### #3, tabled — Inquiries has no single text inset
+
+Worth the detail, because it looks like an obvious mismatch and is not.
+`InquiryRow`'s `footerLine` (UNASSIGNED, the guest-studio pin, the artist
+avatar) is a **sibling of** the thumbnail+text block, not a child of it —
+so lines 1–2 start at 84pt and the footer starts at **16pt**, the row's own
+padding. There is no single inset to align to. An 84pt divider would cut
+above content that begins at 16. The current 16pt divider matches the
+footer, which is the row's true leftmost content. **Owner's call.**
+
+### #4, tabled — Schedule's divider sits on the spine
+
+`AppointmentRow` is `[52pt time][3pt artist-colour spine][text]` with 12pt
+gaps: the spine starts at 80 and the text at 95. The divider is at 80, so
+it aligns to the spine rather than the text. Strict reading says 95;
+the counter-argument is that the spine is a rail belonging to the content
+block, and a divider that starts after it would leave the spine floating.
+**Owner's call.**
+
+### #5, tabled — Team's rule is a card's, not a list's
+
+`MemberRow`'s hairline is `borderBottomWidth` on the row inside a bordered
+`roster` card, so it spans the card's inner width. iOS's inset rule
+governs plain-list separators; a card's internal rule conventionally spans
+the card. **Owner's call.**
+
+## 4. Verification
+
+Preview harness: the **real** `ClientsScreen` and the **real** chat tab
+screen, mounted at two temporary routes inside a hand-built `AuthContext`,
+against the scratchpad fixture API. Both routes deleted before committing.
+Fixture names are the dev database's real length distribution (187 rows,
+p50 16 / p90 25 / p99 38 / max 48).
+
+Measured at **viewport 335 → a true 320pt content width**, after finding
+that AF's numbers had been taken through a 15pt scrollbar (see §2).
+
+Screenshots are committed to `design-refs/session-ag/` — before and after
+for both lists, plus a README carrying the anatomy diagram and the numbers.
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         built in 15.27s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean, matches schema.prisma
+    apps/api      test suite                   233/233 pass
+
+### The iOS Contacts screenshot — not supplied, and why
+
+The brief asks for the preview to be compared against an iOS Contacts
+screenshot dropped in `design-refs/session-ag/`. **That file is not
+there.** This session had no iOS device to take one with, and drawing a
+mock of Apple's UI and filing it under that name would have made a
+fabricated reference indistinguishable from a measured one in the very
+folder meant to hold the ground truth.
+
+`design-refs/session-ag/README.md` names the missing slot
+(`ios-contacts-reference.png`) so the owner can drop the real screenshot
+straight in.
+
+What this means for the work: the row was built to the **rule** the brief
+stated — divider inset = text inset, inset zone occupied by the avatar —
+which is iOS's own list anatomy and is not in question. The 40pt avatar
+size is the value the codebase was already computing its divider against,
+not a number read off an Apple screenshot. **If the owner's screenshot
+shows Apple at a different avatar size, the one constant to change is
+`AVATAR_SIZE` in `clients.tsx` — the divider follows it automatically.**
+That is the whole point of the constant.
+
+### What this could NOT verify
+
+`react-native-web` in Chromium, not a device: font rasterisation differs,
+and image decoding is not exercised at all here — `Avatar`'s photo path
+(the RN-Image-for-`data:`-URIs branch) never runs on this screen, because
+there is no client photo to render. The initials path is what was verified.
+
+## 5. Database
+
+**No database changes, no migration, no backfill.** The only database
+contact was a READ against **dev**, reusing AF's client-name length
+sampling.
