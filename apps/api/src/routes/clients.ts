@@ -152,8 +152,78 @@ router.get("/", requirePermission("clients.view"), async (req, res) => {
     orderBy: { createdAt: "desc" },
     take: 100,
   });
-  res.json(clients);
+
+  res.json(await withActivity(clients, now));
 });
+
+// Per-row "is anything happening with this client" signal, for a status
+// chip on a client row (apps/mobile's client list; apps/web's own list can
+// adopt it whenever it wants one).
+//
+// This route already computed exactly these conditions as FILTERS -- the
+// activityConditions block above -- but returned nothing per row saying
+// which of them a given client matched. So a client list could be narrowed
+// to "has an upcoming appointment" while no row could say so.
+//
+// Three grouped queries for the whole page, never one per row: the list is
+// capped at 100, and an N+1 here would be 300 round trips. Each groups on
+// clientId over an indexed column set (Appointment has @@index([studioId,
+// startTime]) and Inquiry is queried by clientId + status), so this is
+// three cheap aggregates, not a heavy join.
+//
+// Raw signals rather than one pre-rendered label: a chip needs a colour
+// and a shape as well as a word, which is a client decision. The intended
+// precedence, when several are true at once, is upcoming appointment >
+// pending deposit > active project -- soonest commitment first.
+interface ClientActivity {
+  /** ISO instant of the NEXT confirmed appointment, or null. */
+  upcomingAppointmentAt: string | null;
+  /** A project in SCHEDULING / WAITLISTED / CONFIRMED. */
+  hasActiveProject: boolean;
+  /** A project at DEPOSIT_PENDING -- money asked for and not yet in. */
+  hasPendingDeposit: boolean;
+}
+
+async function withActivity<T extends { id: string }>(clients: T[], now: Date): Promise<(T & { activity: ClientActivity })[]> {
+  if (clients.length === 0) return [];
+  const ids = clients.map((c) => c.id);
+
+  const [upcoming, activeProjects, pendingDeposits] = await Promise.all([
+    prisma.appointment.groupBy({
+      by: ["clientId"],
+      // Byte-identical to the `upcoming_appointment` FILTER condition
+      // above -- deliberately, including its not excluding archived
+      // appointments. A chip that disagreed with the filter that selected
+      // the row would be exactly the kind of two-sources-of-truth bug this
+      // addition exists to remove.
+      where: { clientId: { in: ids }, startTime: { gte: now }, status: "CONFIRMED" },
+      _min: { startTime: true },
+    }),
+    prisma.inquiry.groupBy({
+      by: ["clientId"],
+      where: { clientId: { in: ids }, status: { in: ACTIVE_PROJECT_STATUSES } },
+      _count: { _all: true },
+    }),
+    prisma.inquiry.groupBy({
+      by: ["clientId"],
+      where: { clientId: { in: ids }, status: InquiryStatus.DEPOSIT_PENDING },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const nextAppointment = new Map(upcoming.map((r) => [r.clientId, r._min.startTime]));
+  const active = new Set(activeProjects.map((r) => r.clientId));
+  const pending = new Set(pendingDeposits.map((r) => r.clientId));
+
+  return clients.map((client) => ({
+    ...client,
+    activity: {
+      upcomingAppointmentAt: nextAppointment.get(client.id)?.toISOString() ?? null,
+      hasActiveProject: active.has(client.id),
+      hasPendingDeposit: pending.has(client.id),
+    },
+  }));
+}
 
 // Shared by both POST /export (below) and POST /export-full -- "which
 // clients does this export request mean" must never drift between the
