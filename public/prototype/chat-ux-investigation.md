@@ -251,11 +251,19 @@ resets on API restart.
 - **NEEDS ACTION overlaps UNREAD by construction** (Q14) — every unread thread satisfies it. If the
   Filter dropdown shows both, they will often show the same rows. Worth a product look.
 
-### 5.8 🟢 Untracked spec files
+### 5.8 🟢 The spec and prototype were untracked
 
-`public/prototype/` (spec + prototype) was **untracked** when this session began. Committed on this
-branch alongside the report so the ground truth is versioned with the work that cites it. The spec
-file itself is unedited, per instruction.
+`public/prototype/chat-ux-spec.md` and `chat-ux-prototype.html` were **untracked** when this session
+began — present in the primary checkout's working tree, never committed. Because they were untracked
+they did **not** exist in this session's worktree at all, so the audit was run against the copies in
+the primary checkout while the branch work happened elsewhere.
+
+They are committed on this branch now, in a follow-up commit, so the ground truth this report cites
+is versioned alongside it. Both files are **unedited**, per instruction.
+
+*(Correction: the Task A+C commit message claims it committed them. It did not — `git add` matched
+nothing, because the files were not in that worktree. The follow-up commit is the one that actually
+carries them.)*
 
 ---
 
