@@ -37,6 +37,7 @@ import {
   callerBelongsToStudio,
   hasPermissionAt,
   hasPermissionOrSoloArtistAt,
+  rolesByStudioForCaller,
 } from "../lib/artistAccess";
 import {
   applyArtistFieldVisibility,
@@ -1110,15 +1111,58 @@ router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), requirePe
 // opening up either staff-only route. Default (no scope param) behavior
 // is completely unchanged, so MyInquiries.tsx's existing approve/decline
 // inbox is unaffected.
-// Permission-context fix inventory: intentionally left on the plain,
-// home-studio-scoped requirePermission, same reasoning as appointments.ts's
-// GET / -- this is a multi-studio LIST (assignedArtistId alone, no studio
-// filter at all, per this route's own comment above) with no single record
-// to check a matrix against.
-router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), requirePermission("inquiries.view"), async (req, res) => {
+// List/detail scoping consistency fix. This route previously carried the
+// plain, home-studio-scoped requirePermission("inquiries.view") middleware
+// and NO studio filter on the query at all -- assignedArtistId alone. Two
+// things followed from that, both reproduced:
+//
+// 1. The list and its own detail route disagreed about WHERE a permission
+//    is evaluated. The middleware read the caller's HOME studio's matrix;
+//    GET /assigned-to-me/:id reads the RECORD's studio via hasPermissionAt.
+//    An artist whose home grants inquiries.view but whose host studio
+//    denies it for ARTIST could list every project assigned to them there
+//    and get a 403 opening any of them -- and the inverse (home denies,
+//    host grants) made a project they were fully entitled to open
+//    unreachable, because the list it would be found in 403'd wholesale.
+//
+// 2. Worse, and not in the original report: with no studio filter, an
+//    artist kept seeing a studio's projects after their GUEST membership
+//    ENDED -- forever. That is the ghost-access bug class CLAUDE.md's
+//    artist-scoping section exists for, and the same one the historical
+//    GET /artists roster bug was. The detail route already closed it
+//    (effectiveRoleAt returns null with no live membership, so
+//    hasPermissionAt 403s); this list never did.
+//
+// Both close with one change: resolve the studios this caller has a LIVE
+// relationship with and effectively holds inquiries.view at RIGHT NOW --
+// evaluated per studio with their effective role there, exactly as the
+// detail route does -- and scope the query to that set. The decision
+// recorded in the architect thread is that the detail route's semantics
+// win; this is the list matching them.
+//
+// The old 403-on-denied is deliberately preserved for the single-studio
+// artist (the overwhelmingly common case): no qualifying studio at all
+// still 403s rather than quietly returning an empty list. It only widens
+// where it genuinely must -- a caller entitled at ONE of several studios
+// now gets that studio's rows instead of a blanket 403.
+router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), async (req, res) => {
   const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
   if (!artist) {
     return res.json([]);
+  }
+
+  // Home + every ACTIVE membership, each with the effective role that
+  // governs the caller THERE (home keeps their real role; every guest
+  // studio is Role.ARTIST) -- one Artist lookup and one membership query,
+  // not one round trip per studio.
+  const rolesByStudio = await rolesByStudioForCaller(req.user!);
+  const permissionChecks = await Promise.all(
+    [...rolesByStudio].map(async ([sid, role]) => [sid, await hasPermission(sid, role, "inquiries.view")] as const),
+  );
+  const allowedStudioIds = permissionChecks.filter(([, allowed]) => allowed).map(([sid]) => sid);
+
+  if (allowedStudioIds.length === 0) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   const scopeAll = req.query.scope === "all";
@@ -1126,22 +1170,23 @@ router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), requirePerm
   const inquiries = await prisma.inquiry.findMany({
     where: {
       assignedArtistId: artist.id,
+      studioId: { in: allowedStudioIds },
       ...(scopeAll ? NOT_ARCHIVED : { status: InquiryStatus.ARTIST_ASSIGNED }),
     },
     select: ARTIST_INQUIRY_SELECT,
     orderBy: scopeAll ? { updatedAt: "desc" } : { assignedAt: "desc" },
   });
 
-  // Phase 5: this route has no studio scoping at all (see its own comment
-  // above), so a single response can span several studios with different
-  // visibility settings -- batched per distinct studioId, not one lookup
+  // Phase 5: a single response can still span several studios with
+  // different visibility settings (every studio in allowedStudioIds
+  // above), so this stays batched per distinct studioId, not one lookup
   // per row.
   const visibilityByStudio = await getArtistFieldVisibilityForStudios(inquiries.map((i) => i.studio.id));
 
   // Same fromGuestStudio convention as GET / -- null for a project at the
   // caller's own home studio, { id, name } for one at a studio where
-  // they're only an active GUEST (this route has no studio scoping at all,
-  // see its own comment above, so both are always possible here).
+  // they're only an active GUEST (allowedStudioIds above spans both, so
+  // both are still possible here).
   res.json(
     inquiries.map(({ studio, ...rest }) => ({
       ...applyArtistFieldVisibility(rest, visibilityByStudio.get(studio.id)!),
