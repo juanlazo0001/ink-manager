@@ -1,17 +1,25 @@
-import type { ConversationListItem } from '@ink-manager/shared-types';
+import type { ConversationListItem, ConversationViewerState } from '@ink-manager/shared-types';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
 import { ConversationRow } from '@/components/ConversationRow';
+import { ConversationSwipe } from '@/components/ConversationSwipe';
 import { TopBar } from '@/components/TopBar';
 import { ThreadListControls } from '@/components/ThreadListControls';
 import { SkeletonList } from '@/components/Skeleton';
 import { Appear } from '@/components/Appear';
 import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
-import { fetchConversations } from '@/lib/conversations';
+import {
+  archiveConversation,
+  fetchConversations,
+  isMuted,
+  setConversationMuted,
+  setConversationViewerState,
+} from '@/lib/conversations';
+import { ApiError } from '@/lib/api';
 import {
   applyControls,
   isSearchable,
@@ -19,8 +27,8 @@ import {
   type ThreadSort,
 } from '@/lib/conversationListControls';
 import { screenErrorMessage } from '@/lib/screenError';
-import { LIST_LABEL_INSET, LIST_SEPARATOR_INSET } from '@/theme/listMetrics';
-import { colors, space, type } from '@/theme';
+import { LIST_INSET, LIST_LABEL_INSET, LIST_SEPARATOR_INSET } from '@/theme/listMetrics';
+import { colors, fonts, space, type } from '@/theme';
 
 /**
  * Refresh strategy, decided in this session's investigation: poll, not
@@ -121,6 +129,101 @@ export default function ConversationsScreen() {
 
   useEffect(() => () => void ++requestRef.current, []);
 
+  /*
+   * A brief line under the controls, for the two things a swipe can say
+   * that a re-rendered row cannot: the pin cap, and a failure.
+   */
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const say = useCallback((message: string) => {
+    setNotice(message);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 3200);
+  }, []);
+  useEffect(() => () => void (noticeTimer.current && clearTimeout(noticeTimer.current)), []);
+
+  /**
+   * Apply the server's own answer to one row.
+   *
+   * The response carries the saved `viewerState`, so this writes what the
+   * server stored rather than what was asked for -- which is the whole
+   * reason there is no optimistic flip here. A pin that appears and then
+   * silently vanishes when the cap rejects it is worse than a pin that
+   * takes 200ms.
+   */
+  const applyViewerState = useCallback((id: string, viewerState: ConversationViewerState) => {
+    setItems((current) =>
+      current === null ? current : current.map((t) => (t.id === id ? { ...t, viewerState } : t)),
+    );
+  }, []);
+
+  const togglePin = useCallback(
+    async (item: ConversationListItem) => {
+      if (!token) return;
+      try {
+        const { viewerState } = await setConversationViewerState(token, item.id, {
+          isPinned: !item.viewerState.isPinned,
+        });
+        applyViewerState(item.id, viewerState);
+      } catch (err) {
+        // Matched on the CODE, never the message -- the API's own type
+        // documentation is explicit about that, because prose changes.
+        if (err instanceof ApiError && err.code === 'PIN_LIMIT') {
+          say('Three pinned threads is the limit. Unpin one first.');
+          return;
+        }
+        say(screenErrorMessage(err, 'that pin'));
+      }
+    },
+    [token, applyViewerState, say],
+  );
+
+  const toggleMute = useCallback(
+    async (item: ConversationListItem) => {
+      if (!token) return;
+      const muted = isMuted(item.viewerState);
+      try {
+        const { viewerState } = await setConversationMuted(token, item.id, !muted);
+        applyViewerState(item.id, viewerState);
+        // Worth saying out loud, because the row deliberately does NOT go
+        // quiet: a mute suppresses the interruption, not the indicator, so
+        // the unread dot keeps accruing and nothing else on screen changes.
+        say(muted ? 'Unmuted.' : 'Muted. You still see new messages, you just are not pinged.');
+      } catch (err) {
+        say(screenErrorMessage(err, 'that mute'));
+      }
+    },
+    [token, applyViewerState, say],
+  );
+
+  const archive = useCallback(
+    async (item: ConversationListItem) => {
+      if (!token) return;
+      try {
+        await archiveConversation(token, item.id);
+        // Studio-wide: it leaves everyone's default list, so it leaves
+        // this one immediately rather than waiting for the next poll.
+        setItems((current) => (current === null ? current : current.filter((t) => t.id !== item.id)));
+        say('Archived for the whole studio. Reversible from the archived filter.');
+      } catch (err) {
+        say(screenErrorMessage(err, 'that archive'));
+      }
+    },
+    [token, say],
+  );
+
+  // §8: archive is staff-only for anything but an artist's own STAFF
+  // thread, and the API answers 403 otherwise. Better to not draw the
+  // button than to draw one that fails.
+  const role = session?.profile.role;
+  const canArchive = useCallback(
+    (item: ConversationListItem) =>
+      role === 'OWNER' ||
+      role === 'FRONT_DESK' ||
+      (item.type === 'STAFF' && item.staffUserId === session?.profile.id),
+    [role, session?.profile.id],
+  );
+
   const unread = items?.reduce((n, c) => n + (c.unreadCount > 0 ? 1 : 0), 0) ?? 0;
   const visible = useMemo(() => applyControls(items ?? [], filter, sort), [items, filter, sort]);
 
@@ -171,6 +274,12 @@ export default function ConversationsScreen() {
         onSortChange={setSort}
       />
 
+      {notice ? (
+        <View style={styles.notice}>
+          <Text style={styles.noticeText}>{notice}</Text>
+        </View>
+      ) : null}
+
       {items === null && error === null ? (
         <SkeletonList rows={7} />
       ) : (
@@ -192,16 +301,25 @@ export default function ConversationsScreen() {
               <Text style={styles.sectionLabel}>{row.label}</Text>
             ) : (
               <Appear index={index}>
-              <ConversationRow
-                item={row.item}
-                viewerUserId={session?.profile.id}
-                // Object form, not a template string: typed routes describe a
-                // dynamic route by its literal `[id]` pathname plus params,
-                // so an interpolated href is (correctly) rejected.
-                onPress={() =>
-                  router.push({ pathname: '/conversation/[id]', params: { id: row.item.id } })
-                }
-              />
+              <ConversationSwipe
+                pinned={row.item.viewerState.isPinned}
+                muted={isMuted(row.item.viewerState)}
+                canArchive={canArchive(row.item)}
+                onTogglePin={() => togglePin(row.item)}
+                onToggleMute={() => toggleMute(row.item)}
+                onArchive={() => archive(row.item)}
+              >
+                <ConversationRow
+                  item={row.item}
+                  viewerUserId={session?.profile.id}
+                  // Object form, not a template string: typed routes describe a
+                  // dynamic route by its literal `[id]` pathname plus params,
+                  // so an interpolated href is (correctly) rejected.
+                  onPress={() =>
+                    router.push({ pathname: '/conversation/[id]', params: { id: row.item.id } })
+                  }
+                />
+              </ConversationSwipe>
               </Appear>
             )
           }
@@ -275,4 +393,11 @@ const styles = StyleSheet.create({
     paddingBottom: space.sm,
   },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
+
+  notice: {
+    paddingHorizontal: LIST_INSET,
+    paddingVertical: space.sm,
+    backgroundColor: colors.surfaceRaised,
+  },
+  noticeText: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.fgSecondary },
 });

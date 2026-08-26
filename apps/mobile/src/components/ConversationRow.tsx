@@ -7,6 +7,7 @@ import { ChannelBadge } from '@/components/ChannelBadge';
 import { LIST_AVATAR, LIST_INSET } from '@/theme/listMetrics';
 import { chat, colors, fonts, space } from '@/theme';
 import { relativeStamp } from '@/lib/time';
+import { isMuted } from '@/lib/conversations';
 
 const CHANNEL_LABELS: Record<string, string> = {
   IN_APP: 'In-app',
@@ -68,6 +69,7 @@ export function ConversationRow({
 }) {
   const name = item.counterpart?.name ?? 'Unknown';
   const unread = item.unreadCount > 0;
+  const muted = isMuted(item.viewerState);
   const preview = item.lastMessage?.body?.trim();
   // `lastMessage.attachments` now says so outright, instead of being
   // inferred from an empty body. That inference was wrong in both
@@ -126,6 +128,17 @@ export function ConversationRow({
           <Text style={styles.name} numberOfLines={1}>
             {name}
           </Text>
+          {/* §8: a small gold pin by the timestamp. The PINNED section
+              label says which GROUP a row is in; this says the row itself
+              is pinned, which still reads once you have scrolled the
+              label off the top. */}
+          {item.viewerState.isPinned ? (
+            <Feather name="bookmark" size={11} color={colors.accent} />
+          ) : null}
+          {/* §8: mute suppresses the interruption, not the indicator --
+              so this is the ONLY thing that changes on a muted row. The
+              unread dot and preview keep behaving exactly as before. */}
+          {muted ? <Feather name="bell-off" size={11} color={colors.fgMuted} /> : null}
           <Text style={styles.stamp}>{relativeStamp(item.lastMessageAt)}</Text>
         </View>
 
