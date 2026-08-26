@@ -18,15 +18,24 @@ import {
 } from 'react-native';
 
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useKeyboardHandler } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { S2 } from '@/theme/chatMotion';
+import { motion, S2, S4, useReducedMotion } from '@/theme/chatMotion';
+import { useChatDevToggles } from '@/lib/chatDevToggles';
 
 import { ScreenShell } from '@/components/ScreenShell';
 import { Composer, type ComposerSendState } from '@/components/Composer';
 import { MessageActions } from '@/components/MessageActions';
 import { RetrySheet } from '@/components/RetrySheet';
+import { FlyTarget } from '@/components/FlyTarget';
+import { SendFly, type Rect } from '@/components/SendFly';
 import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
 import { channelLabel } from '@/components/ConversationRow';
 import { MessageBubble, REVEAL_WIDTH, messageImages } from '@/components/MessageBubble';
@@ -92,6 +101,99 @@ export default function ConversationScreen() {
   const [editing, setEditing] = useState<DisplayMessage | null>(null);
   const listRef = useRef<FlatList<Row>>(null);
   const insets = useSafeAreaInsets();
+  const devToggles = useChatDevToggles();
+  const flyReduced = useReducedMotion();
+
+  /*
+   * §10 SEND-FLY. Three-step, because a bubble cannot be flown to a place
+   * that has not been laid out yet:
+   *
+   *   1. on submit, measure the composer field  → `from`
+   *   2. append the optimistic row as usual (silently — no animation)
+   *   3. that row measures itself on layout      → `to`, and the clone flies
+   *
+   * `pendingFly` holds steps 1–2; `fly` is the live animation. The real
+   * row is invisible while its clone is in the air, so the two never
+   * both show.
+   */
+  const [pendingFly, setPendingFly] = useState<{ id: string; body: string; from: Rect } | null>(null);
+  const [fly, setFly] = useState<{ id: string; body: string; from: Rect; to: Rect } | null>(null);
+  const composerRef = useRef<View>(null);
+
+  const measureComposer = useCallback(
+    () =>
+      new Promise<Rect | null>((resolve) => {
+        const node = composerRef.current;
+        if (!node) return resolve(null);
+        node.measureInWindow((x, y, width, height) => resolve({ x, y, width, height }));
+      }),
+    [],
+  );
+
+  const listBoxRef = useRef<View>(null);
+
+  /*
+   * The flight itself is driven from here, not from SendFly: the clone is
+   * mounted for the animation's own duration, and an animation started by
+   * a component that unmounts 380ms later is fragile by construction.
+   * These two live for the whole conversation.
+   */
+  const flyProgress = useSharedValue(0);
+  const flyFade = useSharedValue(1);
+
+  /**
+   * The optimistic row reports its SIZE; where it sits is derived from the
+   * list's own window rect and the fact that an inverted list is
+   * bottom-anchored. See FlyTarget's header for why the row is not asked
+   * for its position directly -- through the inverted list's scaleY(-1)
+   * that answer is the mirrored, pre-transform one.
+   */
+  const onFlyTargetMeasured = useCallback((id: string, size: { width: number; height: number }) => {
+    const node = listBoxRef.current;
+    if (!node) return;
+    node.measureInWindow((listX, listY, listWidth, listHeight) => {
+      if (listWidth === 0 && listHeight === 0) return;
+      const to: Rect = {
+        x: listX,
+        // LIST_CONTENT_PAD is the contentContainer's own paddingVertical,
+        // which an inverted list renders as the gap below the newest row.
+        y: listY + listHeight - LIST_CONTENT_PAD - size.height,
+        width: listWidth,
+        height: size.height,
+      };
+      setPendingFly((p) => {
+        if (!p || p.id !== id) return p;
+        setFly({ ...p, to });
+        return null;
+      });
+    });
+  }, []);
+
+  /*
+   * Take-off, once the destination is known. §10: an S4 spring for the
+   * travel, and the hand-off at ~70% -- the clone fades over the last
+   * third while the real row fades up underneath it, so there is never a
+   * frame with two bubbles or none, which is what a straight swap at the
+   * end looks like on a slow frame.
+   */
+  useEffect(() => {
+    if (!fly) return;
+    flyProgress.value = 0;
+    flyFade.value = 1;
+    if (flyReduced) {
+      // §10 reduced motion: no travel. The clone appears at the
+      // destination and cross-fades, so the message still visibly
+      // arrives -- it just does not fly there.
+      flyProgress.value = 1;
+      flyFade.value = withTiming(0, { duration: 150 });
+    } else {
+      flyProgress.value = motion(1, S4, false);
+      flyFade.value = withDelay(250, withTiming(0, { duration: 130 }));
+    }
+    const done = setTimeout(() => setFly(null), flyReduced ? 160 : 380);
+    return () => clearTimeout(done);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fly, flyReduced]);
 
   /*
    * ITEM 2 — drag the thread left to read the clock.
@@ -347,6 +449,17 @@ export default function ConversationScreen() {
       setReplyTo(null);
 
       const tempId = retryOf?.id ?? `local:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+
+      /*
+       * Measured BEFORE the optimistic row exists: once the list grows the
+       * composer has already been pushed, and the fly would start from
+       * where the field ended up rather than where the text was typed.
+       * A retry never flies — nothing was just committed.
+       */
+      if (!retryOf && body.trim() && devToggles.sendFly) {
+        const from = await measureComposer();
+        if (from) setPendingFly({ id: tempId, body: body.trim(), from });
+      }
       const optimistic: DisplayMessage = {
         id: tempId,
         channel: isClientThread ? sendState.channel : 'IN_APP',
@@ -540,6 +653,11 @@ export default function ConversationScreen() {
         requirement for this part.
       */}
       <Animated.View style={[styles.flex, { paddingBottom: insets.bottom }, ridesKeyboard]}>
+        {/*
+          Measured for the send-fly's destination. It sits OUTSIDE the
+          list's inverted transform, so its window rect is the honest one.
+        */}
+        <View ref={listBoxRef} collapsable={false} style={styles.flex}>
         <GestureDetector gesture={revealPan}>
         <FlatList
           ref={listRef}
@@ -566,6 +684,12 @@ export default function ConversationScreen() {
                 </Text>
               </View>
             ) : (
+              <FlyTarget
+                messageId={item.message.id}
+                active={pendingFly?.id === item.message.id}
+                hidden={fly?.id === item.message.id}
+                onMeasured={onFlyTargetMeasured}
+              >
               <MessageBubble
                 message={item.message}
                 own={item.own}
@@ -594,6 +718,7 @@ export default function ConversationScreen() {
                     : undefined
                 }
               />
+              </FlyTarget>
             )
           }
           contentContainerStyle={[styles.listContent, rows.length === 0 && styles.listEmpty]}
@@ -641,6 +766,7 @@ export default function ConversationScreen() {
           }
         />
         </GestureDetector>
+        </View>
 
         {saveNote ? (
           <View style={styles.toast} pointerEvents="none">
@@ -648,6 +774,7 @@ export default function ConversationScreen() {
           </View>
         ) : null}
 
+        <View ref={composerRef} collapsable={false}>
         <Composer
           isClientThread={isClientThread}
           sendState={sendState}
@@ -674,7 +801,18 @@ export default function ConversationScreen() {
           editingInitialBody={editing?.body ?? ''}
           onCancelEdit={() => setEditing(null)}
         />
+        </View>
       </Animated.View>
+
+      {/*
+        §10: a sibling of the keyboard-translated container, in screen
+        coordinates. Inside it, the clone would inherit the keyboard's
+        translateY and fly to the wrong place whenever the keyboard was
+        open — which is every send.
+      */}
+      {fly ? (
+        <SendFly body={fly.body} from={fly.from} to={fly.to} progress={flyProgress} fade={flyFade} />
+      ) : null}
 
       <MessageActions
         visible={!!actionFor}
@@ -757,6 +895,9 @@ export default function ConversationScreen() {
     </ScreenShell>
   );
 }
+
+/** Mirrors styles.listContent's paddingVertical -- see onFlyTargetMeasured. */
+const LIST_CONTENT_PAD = space.md;
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
