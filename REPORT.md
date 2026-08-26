@@ -28605,3 +28605,195 @@ there is no client photo to render. The initials path is what was verified.
 **No database changes, no migration, no backfill.** The only database
 contact was a READ against **dev**, reusing AF's client-name length
 sampling.
+
+# Mobile session AH — the Clients filter control, and the recency field that isn't there
+
+Base: **`mobile/session-ag` at `bd1cfd8`**, the stack head. Both AF and AG
+are still at the owner's device gate and unmerged (`origin/main` is
+`bb157da`). Branch `mobile/session-ah`, own worktree via
+`scripts/new-session.ps1`, reset onto AG.
+
+**Merge order: AF → AG → AH.** AH contains both.
+
+## 1. The control
+
+The Archived toggle pill, and the whole `PillRow` it sat on, are gone.
+In their place a **44×44 funnel button on the search row itself**:
+
+    [ Search name, email or phone        ] [▽]
+     16                             267  275  319
+     |<-------- 251 -------->|  gap 8  |<-44->|
+
+The screen gets back the ~40pt the pill row was spending on one control.
+
+### Matching Tasks "exactly" meant a variant, not a new control
+
+The brief asked for the active state to match how the Tasks filter shows
+activity. The only way to guarantee that is for both triggers to read the
+same stylesheet, so this is a new `iconOnly` prop on the **existing**
+`PillMenu` — the component Tasks itself uses — rather than a second
+control that looks like it. It drops the word and the chevron, keeps the
+glyph (Feather `filter`, the same funnel), and keeps `styles.triggerActive`
+untouched. A second implementation is how the two would drift.
+
+The one deliberate difference is glyph size: **18 rather than 13**. At 13
+the icon read as a speck in a 44pt square, where in the labelled pill it
+is one of three things sharing a line.
+
+Measured on the running screen, active state:
+
+| | value | source |
+| --- | --- | --- |
+| border | `rgb(201, 154, 91)` | `triggerActive.borderColor` — `colors.accent` |
+| fill | `rgba(201, 154, 91, 0.08)` | `triggerActive.backgroundColor` |
+| glyph | `colors.accent` | same ternary as the labelled trigger |
+| inactive border | `rgba(201, 154, 91, 0.38)` | `colors.borderStrong`, untouched |
+
+Byte-identical to what Tasks renders, because it is the same style object.
+
+## 2. RECENT WAS DROPPED — the path taken, and the evidence
+
+**Path taken: the payload has no usable recency field, so Recent is not
+shipped and is reported as a one-field backend ask.** The options are
+**All · Archived**.
+
+This was investigated, not assumed. What `GET /clients` actually returns
+per row:
+
+| field | what it is | can it answer "active in the last 30 days"? |
+| --- | --- | --- |
+| `createdAt` | when the RECORD was created | **No** — that is "new clients". A client who booked yesterday and was entered two years ago is old by this measure. |
+| `updatedAt` | Prisma `@updatedAt` on the Client ROW | **No** — see below. |
+| `activity.upcomingAppointmentAt` | next confirmed appointment, `startTime >= now` | **No** — forward-looking by construction |
+| `activity.hasActiveProject` | boolean | **No** — state, not time |
+| `activity.hasPendingDeposit` | boolean | **No** — state, not time |
+
+The route's own `activity` query parameter offers exactly
+`upcoming_appointment`, `active_project`, `no_activity` — again no recency
+condition — and `orderBy: { createdAt: "desc" }` is the only ordering.
+
+### `updatedAt` was the brief's own candidate, so it was measured
+
+The brief named `updatedAt` as acceptable, so rather than argue from the
+schema it was tested against the dev database — **187 real client rows**:
+
+| finding | number |
+| --- | --- |
+| rows where `updatedAt === createdAt` (record never edited since creation) | **125 / 187 = 67%** |
+| clients WITH real activity whose `updatedAt` is OLDER than that activity | **41 / 127 = 32%** |
+| **rows `updatedAt <= 30d` would get WRONG** vs. real activity | **41 / 187 = 21.9%** |
+| — of which false positives (not actually recent) | 26 |
+| — of which false negatives (recent, but missed) | 15 |
+
+The mechanism is in the distribution: `updatedAt` clusters hard at one
+age — **47 of 187 rows land on the same day** — because a migration
+stamped the table. `updatedAt` here is largely recording a **backfill**,
+not client behaviour. It moves when somebody EDITS the record; booking,
+messaging, paying a deposit and opening a project all write other tables,
+and a nested `connect` does not touch the parent's timestamp.
+
+A filter that is wrong about a fifth of the list is worse than no filter,
+and faking it per-client was explicitly ruled out. So Recent is absent.
+
+### The backend ask — genuinely one field, and no schema change
+
+`withActivity()` in `apps/api/src/routes/clients.ts` **already** runs three
+grouped aggregates over the page's client ids (it was built precisely to
+avoid an N+1). A fourth — `_max` of past appointment `startTime` and
+inquiry `updatedAt` — would put a real `lastActivityAt` on the same
+payload with **no new column, no backfill and no extra round trip per
+row**. That is the field Recent needs; the moment it exists, Recent is
+three lines here.
+
+## 3. Archived — same records, and a naming tension worth a ruling
+
+Item 4 said the archived behaviour is unchanged in substance, so it is
+byte-identical: selecting Archived still sends `includeArchived=true` and
+nothing else changed.
+
+**What that actually returns is worth stating, because the new label
+implies otherwise.** On the API, `includeArchived` only REMOVES the
+exclusion — `...(includeArchived ? {} : NOT_ARCHIVED)` — so the response
+is active clients **and** archived ones together, not archived alone.
+
+Proven on the dev database rather than read off the source (dev had no
+archived clients at all, so one was archived and restored, on a 12-client
+studio so the route's `take: 100` cap could not mask the difference):
+
+    BEFORE:              includeArchived=false -> 12 rows (12 active + 0 archived)
+                         includeArchived=true  -> 12 rows (12 active + 0 archived)
+    WITH one archived:   includeArchived=false -> 11 rows (11 active + 0 archived)
+                         includeArchived=true  -> 12 rows (11 active + 1 archived)
+    restored: archivedAt = null
+
+As a toggle labelled "Archived", "show me archived ones too" was a fair
+reading. As a **single-select filter option**, the same word now reads
+"archived only" — which is not what it does. Left as specified and flagged:
+if the owner wants archived-only, it is one clause on the client
+(`filter === 'archived' ? rows.filter(c => c.archivedAt) : rows`) or one
+new query parameter on the route. **Owner's call.**
+
+## 4. Verification
+
+Preview: the **real** `ClientsScreen` at a temporary route, against the
+scratchpad fixture, at a true 320pt content width (viewport 335, per AG's
+scrollbar correction). The fixture was taught to honour `includeArchived`
+the way the real route does — 6 rows without it, 8 with — because a
+fixture that ignores the parameter cannot verify the filter that sets it.
+
+Three states captured to `design-refs/session-ah/`: default, sheet open,
+Archived active.
+
+**Item 5, composition at 320pt:**
+
+| | measured |
+| --- | --- |
+| search field | x=16, **251×44** |
+| gap | **8pt** |
+| filter button | x=275, **44×44**, right edge 319 |
+| placeholder `"Search name, email or phone"` | **206.4pt in a 227pt inner width — fits, 20.6pt spare** |
+
+So it does not truncate at all, gracefully or otherwise. One honest caveat:
+the field has no `maxFontSizeMultiplier`, and `textOverflow` is `clip`, so
+at large Dynamic Type the placeholder starts clipping at **1.10×** where
+before this change it clipped at **1.28×**. Pre-existing behaviour made
+marginally worse; the one-line fix, if wanted, is a shorter placeholder
+("Search clients" measures 97.5pt and survives to 2.3×).
+
+**End-to-end through the real screen**, from the fixture's request log:
+
+    Filter: All       ->  GET /clients                          6 rows
+    Filter: Archived  ->  GET /clients?includeArchived=true      8 rows (6 active + 2 archived)
+
+and the count line follows: `6 clients` → `6 clients · 2 archived`.
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         built in 14.15s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean, matches schema.prisma
+    apps/api      test suite                   233/233 pass
+
+### A PRE-EXISTING bug found, attributed, and NOT introduced here
+
+Switching to Archived grows the list 6 → 8, and in the web preview the two
+new rows paint **on top of** rows 1 and 2 — a real DOM overlap
+(`transform: none`, `opacity: 1`, two rows 5pt apart), not an unfinished
+animation.
+
+It would have been easy to assume this session caused it. It did not, and
+that was checked rather than claimed: reverting all three changed files
+and driving the **old** Archived pill reproduces it identically — 8 rows,
+the same 2 overlaps, the same offsets. It lives in the `Appear` +
+`FlatList` refetch path, which this session did not touch.
+
+Not verified on a device, and it may well be a `react-native-web`
+VirtualizedList artifact that never appears on a phone. Worth a look at
+the gate: toggle the filter to Archived and see whether the list settles
+cleanly.
+
+## 5. Database
+
+**No schema change, no migration, no backfill.** Two READS against **dev**
+(the `updatedAt` recency measurements), plus one temporary write against
+**dev** — a single client archived and restored to `archivedAt = null`
+within the same script, confirmed by re-reading the row.

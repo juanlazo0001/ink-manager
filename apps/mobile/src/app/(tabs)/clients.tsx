@@ -6,14 +6,21 @@ import { ScreenShell } from '@/components/ScreenShell';
 import { countLine, ScreenTitle, TitleAction } from '@/components/ScreenTitle';
 import { Appear } from '@/components/Appear';
 import { Avatar, initialsOf } from '@/components/Avatar';
-import { Pill, PillRow } from '@/components/Pill';
+import { PillMenu } from '@/components/PillMenu';
 import { TopBar } from '@/components/TopBar';
 import { CardIconButton } from '@/components/CardIconButton';
 import { MessageIcon, PlusIcon } from '@/components/icons';
 import { SkeletonList } from '@/components/Skeleton';
 import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
-import { clientName, fetchClients, filterClients, type ClientListItem } from '@/lib/clients';
+import {
+  clientName,
+  CLIENT_FILTERS,
+  fetchClients,
+  filterClients,
+  type ClientFilter,
+  type ClientListItem,
+} from '@/lib/clients';
 import { screenErrorMessage } from '@/lib/screenError';
 import { colors, hairline, radius, space, type } from '@/theme';
 import { formatPhone } from '@/lib/format';
@@ -61,7 +68,17 @@ export default function ClientsScreen() {
    * and the other two signals are not.
    */
   const [upcoming, setUpcoming] = useState<Record<string, AppointmentListItem>>({});
-  const [showArchived, setShowArchived] = useState(false);
+  /*
+   * SESSION AH. Was `const [showArchived, setShowArchived] = useState(false)`
+   * behind a toggle pill; now one single-select filter, because the
+   * control moved into `PillMenu`, which is single-select by design.
+   *
+   * `includeArchived` is derived rather than stored so there is still
+   * exactly ONE source of truth for what the request asks for — the
+   * filter — and no way for a boolean and a filter value to disagree.
+   */
+  const [filter, setFilter] = useState<ClientFilter>('all');
+  const showArchived = filter === 'archived';
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(
@@ -165,6 +182,13 @@ export default function ClientsScreen() {
         }
       />
 
+      {/*
+        SESSION AH: the filter sits ON the search row, not on a pill row
+        below it. The search field takes what is left (`flex: 1`) and the
+        button is the app's one 44pt icon-button size, so the row has a
+        single height and the screen gives back the ~40pt the pill row
+        was spending on one control.
+      */}
       <View style={styles.controls}>
         <TextInput
           style={styles.search}
@@ -176,15 +200,16 @@ export default function ClientsScreen() {
           autoCorrect={false}
           accessibilityLabel="Search clients"
         />
-      </View>
-      <PillRow>
-        <Pill
-          label="Archived"
-          selected={showArchived}
-          onPress={() => setShowArchived((v) => !v)}
-          accessibilityLabel={showArchived ? 'Hide archived clients' : 'Show archived clients'}
+        <PillMenu
+          iconOnly
+          label="Filter"
+          icon="filter"
+          value={filter}
+          active={filter !== 'all'}
+          onChange={setFilter}
+          options={CLIENT_FILTERS}
         />
-      </PillRow>
+      </View>
 
       {rows === null && error === null ? (
         <SkeletonList rows={8} />
@@ -343,8 +368,16 @@ const styles = StyleSheet.create({
   /* ITEM 2: the same air Home puts above its eyebrow. */
   /* ITEM 3: the same token Home's "Welcome, Juan" uses, not a lookalike. */
 
-  controls: { paddingHorizontal: space.lg, paddingBottom: space.sm },
+  controls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.lg,
+    paddingBottom: space.sm,
+  },
   search: {
+    /* Session AH: the field yields to the filter button beside it. */
+    flex: 1,
     minHeight: 44,
     backgroundColor: colors.inputBg,
     borderWidth: hairline,
