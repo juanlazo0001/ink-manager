@@ -3,8 +3,8 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { ProfileSection } from '@/components/ProfileSection';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Chip, Eyebrow, ScreenLoading, StateMessage } from '@/components/ui';
@@ -24,6 +24,7 @@ import {
 } from '@/lib/artistProfile';
 import { saveWidgetLayout } from '@/lib/artists';
 import { colors, hairline, radius, space, type } from '@/theme';
+import { formatPhone } from '@/lib/format';
 
 /**
  * The artist's own profile, read-only.
@@ -79,29 +80,29 @@ export default function ProfileScreen() {
 
   if (data.loading && !artist) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Profile" onBack={() => router.back()} right={<View />} />
         <ScreenLoading />
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
   if (data.noArtistProfile) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Profile" onBack={() => router.back()} right={<View />} />
         <StateMessage
           eyebrow="No artist profile"
           title="This account isn't an artist profile"
           body="Bio, rates, specialties and portfolio belong to an artist profile. Yours doesn't have one, so there's nothing to show here."
         />
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
   if (!artist) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top']}>
+      <ScreenShell edges={['top']}>
         <ScreenHeader title="Profile" onBack={() => router.back()} right={<View />} />
         <StateMessage
           eyebrow="Not available"
@@ -110,7 +111,7 @@ export default function ProfileScreen() {
           body={data.error ?? undefined}
           action={{ label: 'Try again', onPress: data.reload }}
         />
-      </SafeAreaView>
+      </ScreenShell>
     );
   }
 
@@ -118,7 +119,7 @@ export default function ProfileScreen() {
   const isCollapsed = (id: ArtistSectionId) => data.collapsed.includes(id);
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <ScreenHeader
         title="Profile"
         subtitle={session?.studio?.name ?? undefined}
@@ -150,7 +151,7 @@ export default function ProfileScreen() {
               {displayName}
             </Text>
             <Text style={styles.contact}>{artist.user.email}</Text>
-            {artist.user.phone ? <Text style={styles.contact}>{artist.user.phone}</Text> : null}
+            {artist.user.phone ? <Text style={styles.contact}>{formatPhone(artist.user.phone)}</Text> : null}
             <View style={styles.badges}>
               {session?.profile.role ? <Chip label={session.profile.role.replace('_', ' ')} /> : null}
               {/* Derived ONLY from the real membership row. Artist.isGuest
@@ -185,7 +186,7 @@ export default function ProfileScreen() {
           </ProfileSection>
         ))}
       </ScrollView>
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
@@ -411,7 +412,6 @@ function LinkOut({ label, url }: { label: string; url: string }) {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   content: { paddingHorizontal: space.lg, paddingBottom: space.xxxl },
 
   editButton: {

@@ -3,8 +3,8 @@ import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'ex
 import { useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { OpaqueScreenShell } from '@/components/ScreenShell';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Eyebrow } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -80,7 +80,7 @@ export default function ScanScreen() {
   const granted = permission?.granted ?? false;
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <OpaqueScreenShell edges={['top']}>
       <ScreenHeader title="Scan" onBack={() => router.back()} />
 
       <View style={styles.body}>
@@ -155,12 +155,11 @@ export default function ScanScreen() {
           </View>
         ) : null}
       </View>
-    </SafeAreaView>
+    </OpaqueScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
   body: { paddingHorizontal: space.lg, gap: space.md },
   lede: { ...type.body, color: colors.fgSecondary },
 
@@ -196,7 +195,7 @@ const styles = StyleSheet.create({
   },
   allowLabel: { ...type.button, color: colors.accent },
 
-  eyebrow: { color: colors.accent, marginTop: space.sm },
+  eyebrow: { marginTop: space.sm },
   manualRow: { flexDirection: 'row', gap: space.sm, alignItems: 'center' },
   input: {
     flex: 1,

@@ -2,8 +2,8 @@ import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Eyebrow, ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -69,7 +69,7 @@ export default function StaffInquiryScreen() {
     : 'Inquiry';
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <ScreenHeader title={clientLabel} onBack={() => router.back()} />
 
       {error ? (
@@ -240,14 +240,14 @@ export default function StaffInquiryScreen() {
           </View>
         </ScrollView>
       )}
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <View style={styles.section}>
-      <Eyebrow tone="accent">{title}</Eyebrow>
+      <Eyebrow>{title}</Eyebrow>
       <View style={styles.sectionBody}>{children}</View>
     </View>
   );
@@ -283,7 +283,6 @@ function stamp(iso: string): string {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
   content: { padding: space.lg, gap: space.lg, paddingBottom: space.xxl },
 
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },

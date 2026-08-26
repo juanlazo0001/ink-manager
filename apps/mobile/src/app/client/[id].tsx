@@ -1,30 +1,58 @@
+import type { AppointmentListItem } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
+import { Card } from '@/components/editorial';
 import { ChannelGlyph, channelLabelFor } from '@/components/ChannelGlyph';
-import { InquiryStatusChip, StatusChip } from '@/components/StatusChip';
+import { InquiryStatusChip, StatusChip, type ChipTone } from '@/components/StatusChip';
 import {
   DownloadIcon,
   GiftCardIcon,
-  MailPlusIcon,
-  PhonePlusIcon,
   PlusIcon,
   SearchIcon,
   SendIcon,
+  StarIcon,
   TrashIcon,
 } from '@/components/icons';
+import { ContactAddSheet } from '@/components/ContactAddSheet';
+import { ClientMoreSheet } from '@/components/ClientMoreSheet';
+import { MergeClientSheet } from '@/components/MergeClientSheet';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
-import { buildCustomerDetailsText, clientName, fetchClient, type ClientDetail, type ClientInquiry } from '@/lib/clients';
+import {
+  buildCustomerDetailsText,
+  clientName,
+  fetchClient,
+  type ClientDepositForm,
+  type ClientDetail,
+  type ClientInquiry,
+  type ClientPlannedSession,
+} from '@/lib/clients';
 import { fetchConversations } from '@/lib/conversations';
+import { fetchWidgetLayout } from '@/lib/artists';
+import { shareDocument, type DocumentRef } from '@/lib/documents';
+import {
+  addClientEmail,
+  addClientPhone,
+  archiveClient,
+  makeClientEmailPrimary,
+  makeClientPhonePrimary,
+  removeClientEmail,
+  removeClientPhone,
+  unarchiveClient,
+} from '@/lib/clientWrites';
+import { appointmentBadge, type AppointmentTone } from '@/lib/appointmentDisplay';
+import { fetchAppointments } from '@/lib/appointments';
+import { giftCardTone } from '@/lib/giftCardDisplay';
+import { calendarDate as dateOnly, formatPhone, stamp } from '@/lib/format';
 import { formatMoney } from '@/lib/giftCards';
 import { statusLabel } from '@/lib/inquiryDisplay';
 import { tabForStatus } from '@/lib/inquiryTabs';
@@ -59,6 +87,36 @@ import { colors, hairline, radius, space, tones, type } from '@/theme';
  * sends something to a client or moves money, which this run's contract
  * keeps out of unattended hands.
  */
+/**
+ * Web's `CLIENT_WIDGET_ORDER`, id for id — the fallback for a user who has
+ * never reordered this page.
+ */
+const CLIENT_SECTION_ORDER = [
+  'contact-info',
+  'inquiries',
+  'projects',
+  'gift-cards',
+  'deposit-forms',
+  'appointments',
+  'waivers',
+  'notes',
+  'activity-history',
+];
+
+/**
+ * A saved order, reconciled against the sections this build actually has.
+ *
+ * Same job as web's `computeOrder`: honour what the user arranged, drop
+ * ids that no longer exist, and append any section added since they last
+ * touched it — in the default order's own relative positions, so a new
+ * card lands where it was designed to rather than at the bottom.
+ */
+function mergeOrder(saved: string[]): string[] {
+  const known = saved.filter((id) => CLIENT_SECTION_ORDER.includes(id));
+  const missing = CLIENT_SECTION_ORDER.filter((id) => !known.includes(id));
+  return [...known, ...missing];
+}
+
 export default function ClientScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -72,6 +130,58 @@ export default function ClientScreen() {
   const [codeCopied, setCodeCopied] = useState(false);
   /** The client's existing thread, if they have one. Null until looked up. */
   const [threadId, setThreadId] = useState<string | null>(null);
+  /** The Contact Info card's "+" sheet. Opening is free; writing is not. */
+  const [addContactOpen, setAddContactOpen] = useState(false);
+  /**
+   * Rows mid-write, so a control shows a spinner rather than lying about
+   * having finished. Keyed by the row's own id.
+   */
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  /** A write that failed, said once, above the card it failed in. */
+  const [writeError, setWriteError] = useState<string | null>(null);
+  /** The one document currently being fetched, so its own row can spin. */
+  const [sharingId, setSharingId] = useState<string | null>(null);
+  /**
+   * ITEM 5. Web's client detail fires `GET /appointments?clientId=` right
+   * beside `GET /clients/:id` — the appointments were never on the client
+   * payload for either client, and mobile simply never made the second
+   * call. Null until it lands; `[]` is a real "none".
+   */
+  const [appointments, setAppointments] = useState<AppointmentListItem[] | null>(null);
+  /**
+   * ITEM 3. The card order, and whether the move controls are showing.
+   *
+   * `client-detail` is WEB'S OWN pageKey for this screen, and
+   * `PUT /widget-layouts/:pageKey` is the endpoint web's `useWidgetLayout`
+   * writes to — per-user, not per-studio. Mobile already had both halves
+   * from session B's artist profile editor (`fetchWidgetLayout` /
+   * `saveWidgetLayout`); nothing new was needed on either side, and
+   * because the key matches, a reorder here shows up on web for the same
+   * person and vice versa.
+   */
+  const [order, setOrder] = useState<string[]>(CLIENT_SECTION_ORDER);
+  /**
+   * REMOVED IN SESSION AA, on the owner's verdict: drag-to-reorder was
+   * not smooth enough to keep. Cards render in the saved order and that
+   * is all.
+   *
+   * THE PERSISTENCE IS DELIBERATELY LEFT WIRED. `fetchWidgetLayout` still
+   * reads the order on load, `mergeOrder` still reconciles it against the
+   * sections this build has, and the key is still web's own
+   * `client-detail` — so an order arranged ON WEB is honoured here, and
+   * whatever the owner had already arranged survives. What is gone is the
+   * gesture, the handles and the write. `saveWidgetLayout` has no caller
+   * on this screen any more; that is intentional, not an oversight.
+   */
+  /**
+   * Whatever the server currently holds for collapse, carried through
+   * untouched on every write. Mobile keeps its own collapse in local
+   * state, so sending [] would silently clear what the same person
+   * collapsed on web.
+   */
+  const savedCollapsed = useRef<string[]>([]);
 
   // Which sections start open. Contact and the client's work are what a
   // person came for; the paperwork below folds until asked for.
@@ -118,6 +228,46 @@ export default function ClientScreen() {
     };
   }, [token, id]);
 
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    fetchWidgetLayout(token, 'client-detail')
+      .then((layout) => {
+        if (cancelled) return;
+        setOrder(mergeOrder(layout.widgetOrder ?? []));
+        savedCollapsed.current = layout.collapsedWidgetIds ?? [];
+      })
+      .catch(() => {
+        // No saved layout, or the read failed. The default order is
+        // already on screen; a missing preference is not an error.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  /**
+   * Optimistic and best-effort, exactly as web's `persist` is: the move
+   * lands on screen immediately and a failed PUT only means it does not
+   * survive a relaunch. Never worth blocking a drag over.
+   */
+  useEffect(() => {
+    if (!token || !id) return;
+    let cancelled = false;
+    fetchAppointments(token, { clientId: id })
+      .then((rows) => {
+        if (!cancelled) setAppointments(rows);
+      })
+      .catch(() => {
+        // A failed secondary fetch must not take the screen down; the
+        // card says it could not load rather than claiming there are none.
+        if (!cancelled) setAppointments(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, id]);
+
   const { inquiries, projects } = useMemo(() => {
     const all = client?.inquiries ?? [];
     return {
@@ -130,6 +280,145 @@ export default function ClientScreen() {
     () => (client?.inquiries ?? []).flatMap((i) => i.depositForms ?? []),
     [client],
   );
+
+  /**
+   * ITEM 5 — deposit forms and waivers, out through the share sheet.
+   *
+   * Both PDFs come from the same shape of authenticated route; see
+   * `lib/documents.ts` for why a share sheet is the honest reading of
+   * "download" on a phone. Failures land in the same `writeError` line
+   * the contact writes use, so this card has one place that reports
+   * trouble rather than two.
+   */
+  async function share(doc: DocumentRef) {
+    if (!token) return;
+    setSharingId(doc.id);
+    setWriteError(null);
+    try {
+      await shareDocument(token, doc);
+    } catch (err) {
+      setWriteError(err instanceof Error ? err.message : 'The document could not be downloaded.');
+    } finally {
+      setSharingId(null);
+    }
+  }
+
+  function markBusy(key: string, busy: boolean) {
+    setBusyIds((current) => {
+      const next = new Set(current);
+      if (busy) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }
+
+  /**
+   * Every contact write goes through here.
+   *
+   * OPTIMISTIC, WITH A VISIBLE REVERT. The row changes immediately; if
+   * the request fails the previous client object is put back exactly as
+   * it was and the reason is shown. A write that silently didn't happen
+   * is the one outcome worth engineering against — the screen would keep
+   * claiming a number the studio no longer has.
+   */
+  async function contactWrite(
+    key: string,
+    optimistic: (current: ClientDetail) => ClientDetail,
+    request: () => Promise<unknown>,
+  ) {
+    if (!client) return;
+    const previous = client;
+    markBusy(key, true);
+    setWriteError(null);
+    setClient(optimistic(previous));
+    try {
+      await request();
+      // Re-read rather than trust the optimistic shape: adding a phone can
+      // also change which row is primary, and the server decides that.
+      if (token && id) setClient(await fetchClient(token, id));
+    } catch (err) {
+      setClient(previous);
+      setWriteError(screenErrorMessage(err, 'That change did not save.'));
+    } finally {
+      markBusy(key, false);
+    }
+  }
+
+  function addPhone(phone: string, label: string | null) {
+    if (!token || !id) return;
+    void contactWrite(
+      'add-phone',
+      (c) => ({
+        ...c,
+        phones: [...c.phones, { id: `pending-${Date.now()}`, phone, label, isPrimary: c.phones.length === 0 }],
+      }),
+      () => addClientPhone(token, id, { phone, label }),
+    );
+  }
+
+  function addEmail(email: string, label: string | null) {
+    if (!token || !id) return;
+    void contactWrite(
+      'add-email',
+      (c) => ({
+        ...c,
+        emails: [...c.emails, { id: `pending-${Date.now()}`, email, label, isPrimary: c.emails.length === 0 }],
+      }),
+      () => addClientEmail(token, id, { email, label }),
+    );
+  }
+
+  function removePhone(phoneId: string) {
+    if (!token || !id) return;
+    void contactWrite(
+      phoneId,
+      (c) => ({ ...c, phones: c.phones.filter((row) => row.id !== phoneId) }),
+      () => removeClientPhone(token, id, phoneId),
+    );
+  }
+
+  function removeEmail(emailId: string) {
+    if (!token || !id) return;
+    void contactWrite(
+      emailId,
+      (c) => ({ ...c, emails: c.emails.filter((row) => row.id !== emailId) }),
+      () => removeClientEmail(token, id, emailId),
+    );
+  }
+
+  function makePhonePrimary(phoneId: string) {
+    if (!token || !id) return;
+    void contactWrite(
+      phoneId,
+      (c) => ({ ...c, phones: c.phones.map((row) => ({ ...row, isPrimary: row.id === phoneId })) }),
+      () => makeClientPhonePrimary(token, id, phoneId),
+    );
+  }
+
+  function makeEmailPrimary(emailId: string) {
+    if (!token || !id) return;
+    void contactWrite(
+      emailId,
+      (c) => ({ ...c, emails: c.emails.map((row) => ({ ...row, isPrimary: row.id === emailId })) }),
+      () => makeClientEmailPrimary(token, id, emailId),
+    );
+  }
+
+  /** Archive and unarchive, web's own reversible pair. */
+  async function toggleArchive() {
+    if (!token || !id || !client) return;
+    const archiving = client.archivedAt === null;
+    markBusy('archive', true);
+    setWriteError(null);
+    try {
+      const updated = archiving ? await archiveClient(token, id) : await unarchiveClient(token, id);
+      setClient((current) => (current ? { ...current, archivedAt: updated.archivedAt } : current));
+    } catch (err) {
+      setWriteError(screenErrorMessage(err, 'That change did not save.'));
+    } finally {
+      markBusy('archive', false);
+    }
+  }
 
   async function copyCode(code: string) {
     await Clipboard.setStringAsync(code);
@@ -148,8 +437,14 @@ export default function ClientScreen() {
   const name = client ? clientName(client) : 'Client';
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
-      <ScreenHeader title={name} onBack={() => router.back()} />
+    <ScreenShell edges={['top']}>
+      {/*
+        ITEM 2: no title. The header card directly below carries the name
+        at full size, and repeating it in the nav row said the same thing
+        twice in two type sizes. The back button and the rest of the nav
+        anatomy are unchanged.
+      */}
+      <ScreenHeader onBack={() => router.back()} />
 
       {error ? (
         <StateMessage
@@ -163,11 +458,12 @@ export default function ClientScreen() {
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           {/*
-            Web's header card: the avatar, the name, the contact lines
-            under it, the short client code as a chip with its own copy
-            button, and the quick actions to the right.
+            ITEM 5: a `Card`, not a bare bordered box. Every other section
+            on this screen is one; this was the only surface rendering
+            without the card fill and its top highlight, which is exactly
+            why it read darker than the rest.
           */}
-          <View style={styles.headerCard}>
+          <Card>
             <View style={styles.headerTop}>
               <Avatar url={null} initials={initialsOf(name)} size={44} labelStyle={styles.headerInitials} />
               <View style={styles.headerText}>
@@ -181,21 +477,29 @@ export default function ClientScreen() {
                 ) : null}
                 {client.phones[0]?.phone ?? client.phone ? (
                   <Text style={styles.headerContact} numberOfLines={1}>
-                    {client.phones[0]?.phone ?? client.phone}
+                    {formatPhone(client.phones[0]?.phone ?? client.phone)}
                   </Text>
                 ) : null}
-                {client.referralCode ? (
-                  <Pressable
-                    onPress={() => void copyCode(client.referralCode!)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Copy client code ${client.referralCode}`}
-                    style={({ pressed }) => [styles.codeChip, pressed && styles.pressed]}
-                  >
-                    <Text style={styles.codeChipText}>{client.referralCode}</Text>
-                    <Feather name={codeCopied ? 'check' : 'copy'} size={11} color={colors.fgMuted} />
-                  </Pressable>
-                ) : null}
               </View>
+
+              {/*
+                ITEM 1: the client code sits at the card's TOP RIGHT,
+                across from the avatar, rather than under the contact
+                lines. It identifies the record rather than describing the
+                person, so it belongs at the edge of the box, not in the
+                run of their details.
+              */}
+              {client.referralCode ? (
+                <Pressable
+                  onPress={() => void copyCode(client.referralCode!)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Copy client code ${client.referralCode}`}
+                  style={({ pressed }) => [styles.codeChip, pressed && styles.pressed]}
+                >
+                  <Text style={styles.codeChipText}>{client.referralCode}</Text>
+                  <Feather name={codeCopied ? 'check' : 'copy'} size={11} color={colors.fgMuted} />
+                </Pressable>
+              ) : null}
             </View>
 
           <View style={styles.quickRow}>
@@ -217,13 +521,24 @@ export default function ClientScreen() {
             <QuickAction
               icon="edit-2"
               label="Edit"
-              note="Editing a client is done in the portal."
+              onPress={() => router.push({ pathname: '/client-edit', params: { id: id! } })}
             />
-            {/* Web's overflow (…) holds archive and delete — both
-                destructive, neither built. */}
-            <QuickAction icon="more-horizontal" label="More" note="Archive and delete live in the portal." />
+            {/*
+              ITEM 6d. Web's overflow holds Archive/Unarchive and Delete.
+              Archive is live — it is soft and reversible, and web's own
+              route comment says so. DELETE IS NOT: it is permanent, it is
+              OWNER-only, and it is not in the set this session was
+              cleared for. Web also guards it with a typed confirmation
+              over a server-rendered preview of what would be destroyed,
+              which is its own piece of work.
+            */}
+            <QuickAction
+              icon="more-horizontal"
+              label="More"
+              onPress={() => setMoreOpen(true)}
+            />
           </View>
-          </View>
+          </Card>
 
           {copyOpen ? (
             <View style={styles.copyMenu}>
@@ -251,9 +566,45 @@ export default function ClientScreen() {
             <Banner icon="log-out" text={`Transferred to ${client.transferredToStudio.name}.`} />
           ) : null}
 
-          {/* Web's Widget gives this section NO header action, so neither
-              does this one. Its controls all live in the body. */}
-          <CollapsibleSection title="Contact info" open={!!open.contact} onToggle={() => toggle('contact')}>
+          {/*
+            The Inquiries card's header anatomy exactly: chevron, title,
+            then a pair of icon actions on the right, same component and
+            same size.
+
+            DIVERGENCE FROM WEB, owner-directed. Web's Widget gives this
+            section no header action at all and scatters its controls
+            through the body — a text link per group plus a merge pill at
+            the foot. Both are gone; `+` opens the add sheet and the
+            magnifier is merge.
+          */}
+          {/*
+            ITEM 3: the cards render in the SAVED order, keyed by web's own
+            widget ids so the two clients agree about what moved. Built
+            here rather than above the return because every one of them
+            reads `client`, which is only non-null inside this branch.
+          */}
+          {(() => {
+            const SECTIONS: Record<string, React.ReactNode> = {
+    'contact-info': (
+          <CollapsibleSection
+            title="Contact info"
+            open={!!open.contact}
+            onToggle={() => toggle('contact')}
+            headerActions={
+              <CardActionRow>
+                <CardIconButton
+                  Icon={PlusIcon}
+                  label="Add contact info"
+                  onPress={() => setAddContactOpen(true)}
+                />
+                <CardIconButton
+                  Icon={SearchIcon}
+                  label="Merge with another client"
+                  onPress={() => setMergeOpen(true)}
+                />
+              </CardActionRow>
+            }
+          >
             {/* Web leads this card with the consent line, before the
                 numbers it governs — label, then the state in its own
                 colour, with the date it was given. */}
@@ -275,15 +626,20 @@ export default function ClientScreen() {
               </Text>
             ) : null}
 
-            <GroupHead
-              title="Phones"
-              addIcon={PhonePlusIcon}
-              addLabel="Add phone"
-              addNote="Adding a number is done in the portal."
-            />
+            <SubHead>Phones</SubHead>
             {client.phones.length > 0 ? (
               client.phones.map((p) => (
-                <ContactLine key={p.id} value={p.phone} label={p.label} primary={p.isPrimary} kind="phone" />
+                <ContactLine
+                  key={p.id}
+                  value={p.phone}
+                  label={p.label}
+                  primary={p.isPrimary}
+                  kind="phone"
+                  busy={busyIds.has(p.id)}
+                  removable={!p.isPrimary || client.phones.length === 1}
+                  onRemove={() => removePhone(p.id)}
+                  onMakePrimary={() => makePhonePrimary(p.id)}
+                />
               ))
             ) : client.phone ? (
               <ContactLine value={client.phone} label={null} primary kind="phone" />
@@ -291,15 +647,20 @@ export default function ClientScreen() {
               <Empty text="No phone on file." />
             )}
 
-            <GroupHead
-              title="Emails"
-              addIcon={MailPlusIcon}
-              addLabel="Add email"
-              addNote="Adding an address is done in the portal."
-            />
+            <SubHead>Emails</SubHead>
             {client.emails.length > 0 ? (
               client.emails.map((e) => (
-                <ContactLine key={e.id} value={e.email} label={e.label} primary={e.isPrimary} kind="email" />
+                <ContactLine
+                  key={e.id}
+                  value={e.email}
+                  label={e.label}
+                  primary={e.isPrimary}
+                  kind="email"
+                  busy={busyIds.has(e.id)}
+                  removable={!e.isPrimary || client.emails.length === 1}
+                  onRemove={() => removeEmail(e.id)}
+                  onMakePrimary={() => makeEmailPrimary(e.id)}
+                />
               ))
             ) : client.email ? (
               <ContactLine value={client.email} label={null} primary kind="email" />
@@ -310,12 +671,9 @@ export default function ClientScreen() {
             {client.instagramHandle ? <Fact label="Instagram" value={client.instagramHandle} /> : null}
             {client.address ? <Fact label="Address" value={client.address} /> : null}
             {client.referredBy ? <Fact label="Referred by" value={clientName(client.referredBy)} /> : null}
-
-            {/* The card's one primary action, and the one place web gives
-                a control WORDS rather than a glyph — so it keeps them. */}
-            <MergeButton />
           </CollapsibleSection>
-
+    ),
+    'inquiries': (
           <CollapsibleSection
             title="Inquiries"
             open={!!open.inquiries}
@@ -352,7 +710,8 @@ export default function ClientScreen() {
               </>
             )}
           </CollapsibleSection>
-
+    ),
+    'projects': (
           <CollapsibleSection
             title="Projects"
             open={!!open.projects}
@@ -361,10 +720,18 @@ export default function ClientScreen() {
             {projects.length === 0 ? (
               <Empty text="No projects." />
             ) : (
-              projects.map((i) => <ProjectLine key={i.id} inquiry={i} />)
+              projects.map((i, index) => (
+                <ProjectLine
+                  key={i.id}
+                  inquiry={i}
+                  first={index === 0}
+                  last={index === projects.length - 1}
+                />
+              ))
             )}
           </CollapsibleSection>
-
+    ),
+    'gift-cards': (
           <CollapsibleSection
             title="Gift cards"
             open={!!open.gift}
@@ -393,10 +760,12 @@ export default function ClientScreen() {
                     <Text style={styles.lineTitle}>{formatMoney(g.amountCents)}</Text>
                     {/* Web's columns: code, expiry, and whether it is
                         attached to an appointment. */}
+                    {/* ITEM 2: the code, and only the code. Expiry and
+                        attachment are on the card's own screen, one tap
+                        away, and were crowding the row that exists to say
+                        which card this is. */}
                     <Text style={styles.lineMeta} numberOfLines={1}>
                       {g.code}
-                      {g.expiresAt ? ` · expires ${dateOnly(g.expiresAt)}` : ''}
-                      {` · ${g.appointmentId ? 'Attached' : 'Unattached'}`}
                     </Text>
                   </View>
                   <StatusChip label={g.status} tone={giftCardTone(g.status)} />
@@ -405,7 +774,8 @@ export default function ClientScreen() {
               ))
             )}
           </CollapsibleSection>
-
+    ),
+    'deposit-forms': (
           <CollapsibleSection
             title="Deposit forms"
             open={!!open.deposits}
@@ -429,14 +799,15 @@ export default function ClientScreen() {
                     <Text style={styles.lineTitle}>
                       Session {d.sessionNumber ?? 1} — {formatMoney(Math.round(d.totalCharged * 100))}
                     </Text>
-                    {/* Web's columns: deposit vs total, signed, paid,
-                        and the gift card it was settled with. */}
-                    <Text style={styles.lineMeta} numberOfLines={2}>
-                      {`deposit ${formatMoney(Math.round(d.depositAmount * 100))}`}
-                      {` · signed ${d.signedAt ? stamp(d.signedAt) : 'Pending'}`}
-                      {` · paid ${d.paidAt ? stamp(d.paidAt) : 'Not yet'}`}
-                      {d.giftCard ? ` · ${d.giftCard.code}` : ''}
-                    </Text>
+                    {/* The meta line is gone entirely (session W). The
+                        title says which session and for how much; the
+                        chip says where it stands. The dates and the
+                        deposit split are on the form itself, and on a
+                        phone they were three quiet clauses nobody reads
+                        under a title that already answers the question. */}
+                    <View style={styles.belowChips}>
+                      <StatusChip label={depositState(d).label} tone={depositState(d).tone} />
+                    </View>
                   </View>
                   {/* Web ends each row with a download, and ONLY when the
                       form is signed — an unsigned one has no PDF. Same
@@ -446,24 +817,36 @@ export default function ClientScreen() {
                   {d.signedAt ? (
                     <CardIconButton
                       Icon={DownloadIcon}
-                      size="row"
                       label="Download deposit form"
-                      unavailableNote="Downloading a PDF is a portal action for now."
+                      busy={sharingId === d.id}
+                      onPress={() =>
+                        void share({
+                          kind: 'deposit-forms',
+                          id: d.id,
+                          filename: `deposit-form-session-${d.sessionNumber ?? 1}.pdf`,
+                        })
+                      }
                     />
                   ) : null}
                 </View>
               ))
             )}
           </CollapsibleSection>
-
-          {/* Web has this section; the client endpoint does not return
-              appointments, and this run does not invent API surface. The
-              card keeps web's shape and says why it is empty rather than
-              pretending the client has none. */}
+    ),
+    'appointments': (
           <CollapsibleSection title="Appointments" open={!!open.appointments} onToggle={() => toggle('appointments')}>
-            <Empty text="Appointments aren't part of this client's payload yet — see them on the schedule." />
+            {appointments === null ? (
+              <Empty text="Loading appointments…" />
+            ) : appointments.length === 0 ? (
+              <Empty text="No appointments yet." />
+            ) : (
+              appointments.map((a, index) => (
+                <AppointmentLine key={a.id} appointment={a} last={index === appointments.length - 1} />
+              ))
+            )}
           </CollapsibleSection>
-
+    ),
+    'waivers': (
           <CollapsibleSection
             title="Waivers"
             open={!!open.waivers}
@@ -493,9 +876,9 @@ export default function ClientScreen() {
                   {w.signedAt ? (
                     <CardIconButton
                       Icon={DownloadIcon}
-                      size="row"
                       label="Download waiver"
-                      unavailableNote="Downloading a PDF is a portal action for now."
+                      busy={sharingId === w.id}
+                      onPress={() => void share({ kind: 'waivers', id: w.id, filename: `waiver-${w.id}.pdf` })}
                     />
                   ) : null}
                   <StatusChip label={w.signedAt ? 'Signed' : (w.status ?? 'Pending')}
@@ -505,7 +888,8 @@ export default function ClientScreen() {
               ))
             )}
           </CollapsibleSection>
-
+    ),
+    'notes': (
           <CollapsibleSection title="Notes" open={!!open.notes} onToggle={() => toggle('notes')}>
             {/* Web's explainer, verbatim. */}
             <Text style={styles.explainer}>
@@ -515,16 +899,63 @@ export default function ClientScreen() {
             </Text>
             <Empty text="Writing a note is done in the portal." />
           </CollapsibleSection>
-
+    ),
+    'activity-history': (
           <CollapsibleSection title="Activity history" open={!!open.activity} onToggle={() => toggle('activity')}>
             {/* Web groups this by date with a description per change. The
                 client payload carries no audit trail, so the card keeps
                 web's place and says so rather than showing nothing. */}
             <Empty text="No activity recorded yet." />
           </CollapsibleSection>
+    ),
+  };
+            return order.map((sectionId) => (
+              <View key={sectionId}>{SECTIONS[sectionId]}</View>
+            ));
+          })()}
         </ScrollView>
       )}
-    </SafeAreaView>
+
+      <ClientMoreSheet
+        visible={moreOpen}
+        archived={!!client?.archivedAt}
+        busy={busyIds.has('archive')}
+        onClose={() => setMoreOpen(false)}
+        onToggleArchive={() => {
+          setMoreOpen(false);
+          void toggleArchive();
+        }}
+      />
+
+      {client ? (
+        <MergeClientSheet
+          visible={mergeOpen}
+          survivor={client}
+          token={token}
+          onClose={() => setMergeOpen(false)}
+          onMerged={(updated) => {
+            setMergeOpen(false);
+            setClient(updated);
+            // Everything moved: inquiries, appointments, gift cards and
+            // the threads. Re-read rather than patch nine lists by hand.
+            if (token && id) void fetchClient(token, id).then(setClient).catch(() => {});
+          }}
+        />
+      ) : null}
+
+      <ContactAddSheet
+        visible={addContactOpen}
+        onClose={() => setAddContactOpen(false)}
+        onAddPhone={(phone, label) => {
+          setAddContactOpen(false);
+          addPhone(phone, label);
+        }}
+        onAddEmail={(email, label) => {
+          setAddContactOpen(false);
+          addEmail(email, label);
+        }}
+      />
+    </ScreenShell>
   );
 }
 
@@ -534,7 +965,7 @@ function QuickAction({
   onPress,
   note,
 }: {
-  icon: 'message-circle' | 'copy' | 'check' | 'edit-2' | 'more-horizontal';
+  icon: 'message-circle' | 'copy' | 'check' | 'edit-2' | 'more-horizontal' | 'move';
   label: string;
   onPress?: () => void;
   note?: string;
@@ -591,18 +1022,33 @@ function InquiryRowLine({ inquiry, last }: { inquiry: ClientInquiry; last?: bool
 
 /**
  * Web's projects rows: the title with its status chip, then a line per
- * planned session carrying a deposit chip and a booking chip.
+ * planned session carrying BOTH of web's badges — deposit and booking.
  *
- * The BOOKING chip ("Scheduled" / "Not yet booked" / "Completed") needs
- * appointment state, which this payload does not carry — so the session
- * line shows what it can and the report logs the gap rather than
- * guessing a booking status.
+ * The booking badge was reported as blocked in three earlier sessions.
+ * It never was: `GET /clients/:id` returns `plannedSessions[].appointmentId`
+ * and `.appointment.checkedOutAt`, and mobile's own type was dropping
+ * them. See `ClientPlannedSession`.
  */
-function ProjectLine({ inquiry }: { inquiry: ClientInquiry }) {
+function ProjectLine({
+  inquiry,
+  first,
+  last,
+}: {
+  inquiry: ClientInquiry;
+  first?: boolean;
+  last?: boolean;
+}) {
   const sessions = inquiry.plannedSessions ?? [];
   const deposits = inquiry.depositForms ?? [];
   return (
-    <View style={styles.project}>
+    <View
+      style={[
+        styles.project,
+        !last && styles.projectDivider,
+        first && styles.projectFirst,
+        last && styles.projectLast,
+      ]}
+    >
       <View style={styles.line}>
         <View style={styles.lineText}>
           <Text style={styles.lineTitle} numberOfLines={2}>
@@ -619,18 +1065,33 @@ function ProjectLine({ inquiry }: { inquiry: ClientInquiry }) {
         <InquiryStatusChip status={inquiry.status} />
       </View>
 
-      {(sessions.length > 0 ? sessions : deposits.length > 0 ? deposits : [null]).map((_, index) => {
-        const number = index + 1;
-        const deposit = deposits.find((d) => (d.sessionNumber ?? 1) === number);
-        return (
-          <View key={number} style={styles.sessionLine}>
-            <Text style={styles.sessionLabel}>Session {number}</Text>
-            <StatusChip label={deposit ? (deposit.paidAt ? 'Deposit paid' : 'Deposit sent') : 'Deposit not yet generated'}
-              tone={deposit?.paidAt ? 'success' : 'neutral'}
-            />
-          </View>
-        );
-      })}
+      <View style={styles.sessions}>
+        {(sessions.length > 0 ? sessions : deposits.length > 0 ? deposits : [null]).map((row, index) => {
+          const session = sessions.length > 0 ? sessions[index] : null;
+          const number = session?.sessionNumber ?? index + 1;
+          // Web resolves the deposit form by sessionNumber, newest first —
+          // never by PlannedSession.depositFormId, which its own comment
+          // records as a fixed linkage bug.
+          const deposit =
+            deposits
+              .filter((d) => (d.sessionNumber ?? 1) === number)
+              .sort((a, b) => (a.signedAt ?? '') < (b.signedAt ?? '') ? 1 : -1)[0] ?? null;
+          const dep = sessionDepositBadge(deposit);
+          const booking = sessionBookingBadge(session);
+          // ITEM 1: the chips sit BELOW their session line and are
+          // left-aligned under it, so a session reads as one block rather
+          // than as a label with two things trailing off the right edge.
+          return (
+            <View key={session?.id ?? number} style={styles.sessionBlock}>
+              <Text style={styles.sessionLabel}>{sessionLabelFor(number, session)}</Text>
+              <View style={styles.belowChips}>
+                <StatusChip label={dep.label} tone={dep.tone} />
+                <StatusChip label={booking.label} tone={booking.tone} />
+              </View>
+            </View>
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -662,32 +1123,67 @@ function ContactLine({
   label,
   primary,
   kind,
+  busy,
+  onRemove,
+  onMakePrimary,
+  removable,
 }: {
   value: string;
   label: string | null;
   primary: boolean;
   kind: 'phone' | 'email';
+  busy?: boolean;
+  onRemove?: () => void;
+  /** Absent on the row that is already primary — web hides it there too. */
+  onMakePrimary?: () => void;
+  /**
+   * False when the server would refuse this delete.
+   *
+   * FOUND BY EXERCISING THE REAL API, not by reading the route: deleting
+   * the PRIMARY row 400s with "Make another phone primary before removing
+   * this one" — unless it is the only row, in which case it is allowed
+   * and the client's own `phone`/`email` column is nulled with it. The
+   * button would have been permanently broken on exactly one row per
+   * group, and only on records with more than one.
+   */
+  removable?: boolean;
 }) {
+  // Formatted once: the row shows it, and the remove button SPEAKS it.
+  // A screen reader announcing "Remove 3052997957" while the screen reads
+  // "(305) 299-7957" is the same number described two ways.
+  const shown = kind === 'phone' ? formatPhone(value) : value;
+
   return (
     <View style={styles.contactLine}>
       <Text style={styles.contactValue} selectable numberOfLines={1} ellipsizeMode="middle">
-        {value}
+        {shown}
         {label ? <Text style={styles.contactLabel}> ({label})</Text> : null}
       </Text>
-      <View style={styles.contactActions}>
-        {primary ? <PrimaryTag /> : null}
+      {primary ? <PrimaryTag /> : null}
+
+      {/* Web offers "Make primary" on every row that is not already it —
+          same rule here. */}
+      {!primary && onMakePrimary ? (
         <CardIconButton
-          Icon={TrashIcon}
-          size="row"
-          tone="danger"
-          label={`Remove ${value}`}
-          unavailableNote={
-            kind === 'phone'
-              ? 'Removing a number is done in the portal.'
-              : 'Removing an address is done in the portal.'
-          }
+          Icon={StarIcon}
+          label={`Make ${shown} primary`}
+          onPress={busy ? undefined : onMakePrimary}
+          unavailableNote="Saving…"
         />
-      </View>
+      ) : null}
+
+      <CardIconButton
+        Icon={TrashIcon}
+        tone="danger"
+        style={styles.contactRemove}
+        label={`Remove ${shown}`}
+        onPress={busy || removable === false ? undefined : onRemove}
+        unavailableNote={
+          removable === false
+            ? `Make another ${kind === 'phone' ? 'number' : 'address'} primary before removing this one.`
+            : 'Saving…'
+        }
+      />
     </View>
   );
 }
@@ -711,57 +1207,11 @@ function PrimaryTag() {
   );
 }
 
-/**
- * A contact group's heading: web's eyebrow on the left, its add control
- * on the right.
- *
- * OWNER-DIRECTED DIVERGENCE: web writes these as the text links
- * "+ Add phone" / "+ Add email"; here they are icon-only, at the same
- * 32pt row size the download buttons use.
- */
-function GroupHead({
-  title,
-  addIcon,
-  addLabel,
-  addNote,
-}: {
-  title: string;
-  addIcon: (props: { size?: number; color: string }) => React.ReactElement;
-  addLabel: string;
-  addNote: string;
-}) {
-  return (
-    <View style={styles.groupHead}>
-      <Text style={styles.subHead}>{title.toUpperCase()}</Text>
-      <CardIconButton Icon={addIcon} size="row" label={addLabel} unavailableNote={addNote} />
-    </View>
-  );
+/** A contact group's heading. Its add control now lives in the card header. */
+function SubHead({ children }: { children: string }) {
+  return <Text style={styles.subHead}>{children.toUpperCase()}</Text>;
 }
 
-/**
- * Web's merge control: `rounded-full border border-border px-4 py-2` with
- * a 16px search glyph and the words. It is the one control on this card
- * web gives words rather than a glyph, so it keeps them.
- *
- * Web right-aligns it (`flex justify-end`); centred here, per the owner.
- */
-function MergeButton() {
-  return (
-    <View style={styles.mergeRow}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Merge with another client"
-        accessibilityState={{ disabled: true }}
-        accessibilityHint="Merging is destructive — portal only."
-        onPress={() => Alert.alert('Merge with another client', 'Merging is destructive — portal only.')}
-        style={({ pressed }) => [styles.merge, pressed && styles.pressed]}
-      >
-        <SearchIcon size={16} color={colors.fgMuted} />
-        <Text style={styles.mergeLabel}>Merge with another client</Text>
-      </Pressable>
-    </View>
-  );
-}
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
@@ -787,50 +1237,120 @@ function Banner({ icon, text }: { icon: 'archive' | 'git-merge' | 'log-out'; tex
   );
 }
 
-/** Web's gift-card colours: active green, void red, redeemed neutral. */
-function giftCardTone(status: string): keyof typeof tones {
-  const s = status.toUpperCase();
-  if (s === 'ACTIVE') return 'success';
-  if (s === 'VOID' || s === 'EXPIRED') return 'danger';
-  return 'neutral';
-}
-
-/** A real instant, as web writes it in these tables. */
-function stamp(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+/**
+ * Web's session badges, `sessionDepositBadge` and `sessionAppointmentBadge`
+ * from `ClientDetail.tsx`, label for label.
+ *
+ * One wording fix falls out of the extraction: mobile said "Deposit sent"
+ * for an unpaid form. Web says **"Deposit pending"**.
+ */
+function sessionDepositBadge(deposit: ClientDepositForm | null): { label: string; tone: ChipTone } {
+  if (!deposit) return { label: 'Deposit not yet generated', tone: 'neutral' };
+  if (deposit.paidAt) return { label: 'Deposit paid', tone: 'success' };
+  return { label: 'Deposit pending', tone: 'warning' };
 }
 
 /**
- * Waiver dates are calendar dates at UTC midnight — read back with UTC
- * forced, per CLAUDE.md's timezone rule.
+ * Web's is `text-accent` for Scheduled, which is the brand gold and not
+ * one of the eight status tones. `highlight` is the warm tone closest to
+ * it in this palette; noted rather than silently substituted.
  */
-function dateOnly(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    timeZone: 'UTC',
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
+function sessionBookingBadge(session: ClientPlannedSession | null): { label: string; tone: ChipTone } {
+  if (!session?.appointmentId || !session.appointment) {
+    return { label: 'Not yet booked', tone: 'neutral' };
+  }
+  if (session.appointment.checkedOutAt) return { label: 'Completed', tone: 'success' };
+  return { label: 'Scheduled', tone: 'highlight' };
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: space.lg, gap: space.md, paddingBottom: space.xxl },
+/** Web's session line: "Session 1 — estimated 3-5 hrs ($400-$600)". */
+function sessionLabelFor(number: number, session: ClientPlannedSession | null): string {
+  if (!session) return `Session ${number}`;
+  const { estimatedHoursMin: lo, estimatedHoursMax: hi } = session;
+  const hours = lo != null && hi != null ? ` — estimated ${lo}-${hi} hrs` : '';
+  const { estimatedPriceLow: pLo, estimatedPriceHigh: pHi } = session;
+  const price =
+    pLo != null && pHi != null ? ` (${pLo === pHi ? `$${pLo}` : `$${pLo}-$${pHi}`})` : '';
+  return `Session ${number}${hours}${price}`;
+}
 
-  headerCard: {
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.card,
-    padding: space.lg,
-    gap: space.md,
-  },
-  headerTop: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },
+/**
+ * ITEM 4's chip. Web's Deposit Forms table renders "Signed"/"Pending" and
+ * a paid column as prose; on a phone the row's STATE is what a person
+ * scans for, so it becomes the chip and the dates stay as meta.
+ */
+function depositState(d: ClientDepositForm): { label: string; tone: ChipTone } {
+  if (d.paidAt) return { label: 'Paid', tone: 'success' };
+  if (d.signedAt) return { label: 'Signed, not paid', tone: 'warning' };
+  return { label: 'Not signed', tone: 'neutral' };
+}
+
+/** One of the client's appointments, as web's Appointments table shows it. */
+function AppointmentLine({
+  appointment,
+  last,
+}: {
+  appointment: AppointmentListItem;
+  last?: boolean;
+}) {
+  const badge = appointmentBadge(appointment);
+  const artist = appointment.artist?.name ?? null;
+  return (
+    <View style={[styles.line, last && styles.lineLast]}>
+      {/*
+        ITEM 2: the artist becomes their FACE. A name repeated down a
+        column is the same width of grey text as the date beside it;
+        an avatar is scannable at a glance and is how web renders this
+        very column (`<Avatar name avatarUrl />` before the name).
+      */}
+      <Avatar
+        url={appointment.artist?.avatarUrl ?? null}
+        initials={initialsOf(artist ?? '?')}
+        size={28}
+        labelStyle={styles.apptInitials}
+      />
+      <Text style={[styles.lineTitle, styles.apptWhen]} numberOfLines={1}>
+        {stamp(appointment.startTime)}
+      </Text>
+      {/* Chip right-aligned on the row, not below it. */}
+      <StatusChip label={badge.label} tone={APPOINTMENT_CHIP_TONES[badge.tone]} style={styles.apptChip} />
+    </View>
+  );
+}
+
+/**
+ * The Schedule tab's three-value tone vocabulary, translated into the
+ * chip's eight.
+ *
+ * `appointmentBadge` speaks `accent | neutral | alert` — a palette built
+ * for the schedule's dot-and-label badges, not for status chips. Casting
+ * one to the other is what a first pass did here, and every appointment
+ * chip rendered GREY, because `tones` has no `accent` or `alert` key and
+ * the lookup fell through its neutral default. Caught in the render.
+ *
+ * The mapping follows web's own reading of the same states:
+ * `accent` marks "needs an action soon" (Requested, Needs checkout,
+ * Waiver pending), which web tones `warning`; `alert` is a session
+ * actually lost, which web tones `danger` for NO_SHOW.
+ */
+const APPOINTMENT_CHIP_TONES: Record<AppointmentTone, ChipTone> = {
+  accent: 'warning',
+  neutral: 'neutral',
+  alert: 'danger',
+};
+
+/** A real instant, as web writes it in these tables. */
+
+const styles = StyleSheet.create({
+  /*
+   * ITEM 8. Web's widget list is `flex flex-col gap-6`
+   * (`ReorderableWidgetList.tsx`) -- 24px between boxes. Mobile had 12.
+   */
+  content: { padding: space.lg, gap: space.xl, paddingBottom: space.xxl },
+  /* The lifted card, while its handle is held. */
+  dragging: { opacity: 0.85, transform: [{ scale: 0.99 }] },
+
+  headerTop: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start', marginBottom: space.md },
   headerText: { flex: 1, gap: 2 },
   headerInitials: { ...type.label, fontSize: 14, color: colors.fgMuted },
   headerName: { ...type.heading, color: colors.fg },
@@ -839,8 +1359,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.xs,
+    // Top right of the header card, level with the avatar.
     alignSelf: 'flex-start',
-    marginTop: space.xs,
     borderWidth: hairline,
     borderColor: colors.borderStrong,
     borderRadius: radius.pill,
@@ -892,15 +1412,7 @@ const styles = StyleSheet.create({
   /* Web: `flex items-center justify-between`, the eyebrow left and the
      add control right. The eyebrow keeps its own vertical rhythm; the
      32pt button is taller than it, so the row centres on the button. */
-  groupHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: space.sm,
-    marginTop: space.md,
-    marginBottom: space.xs,
-  },
-  subHead: { ...type.meta, color: colors.accent },
+  subHead: { ...type.meta, color: colors.accent, marginTop: space.md, marginBottom: space.xs },
 
   fact: {
     flexDirection: 'row',
@@ -922,6 +1434,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: hairline,
     borderBottomColor: colors.borderSoft,
   },
+  lineLast: { borderBottomWidth: 0 },
+  /* ITEM 2: avatar + when on the left, chip held to the right edge. */
+  apptInitials: { ...type.label, fontSize: 10, color: colors.fgMuted },
+  apptWhen: { flexShrink: 1 },
+  apptChip: { marginLeft: 'auto' },
   lineText: { flex: 1 },
   lineTitle: { ...type.body, color: colors.fg },
   lineMeta: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
@@ -956,7 +1473,18 @@ const styles = StyleSheet.create({
      */
     flexWrap: 'wrap',
     gap: space.md,
-    paddingVertical: space.md,
+    /*
+     * ITEM 3, and the extraction disagreed with the brief. Web's `<td>` is
+     * `py-3` -- 12px -- which is EXACTLY what this already was, so there
+     * was no web value to import. The scrunch is real but its cause is
+     * that a mobile row is two lines (description, then the meta line)
+     * where web's is one, so the same 12px has twice as much to separate.
+     *
+     * Raised to 16 on the owner's instruction. That is a deliberate step
+     * AWAY from web's number, recorded as such rather than dressed up as
+     * parity.
+     */
+    paddingVertical: space.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
@@ -969,8 +1497,9 @@ const styles = StyleSheet.create({
   /* Web's td: 14px over a 20px line. */
   inquiryTitle: { ...type.body, fontSize: 14, lineHeight: 20, color: colors.fg },
   metaLine: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: 3 },
-  metaDot: { ...type.meta, color: colors.fgMuted },
-  metaText: { ...type.meta, color: colors.fgMuted },
+  // ITEM 4: one step below `fgMuted` -- see the token's own note.
+  metaDot: { ...type.meta, color: colors.fgFaint },
+  metaText: { ...type.meta, color: colors.fgFaint },
 
   /* Web: `text-xs font-medium text-fg-secondary`, with the state in its
      own colour -- success when given, muted when not, warning on an
@@ -981,35 +1510,30 @@ const styles = StyleSheet.create({
   consentMissing: { color: colors.fgMuted },
   consentOptedOut: { ...type.small, color: tones.warning, marginBottom: space.xs },
 
+  /*
+   * ONE LINE, NEVER WRAPPING. The Primary tag belongs to the value it
+   * marks, so it sits immediately after it with a single gap; the remove
+   * button is the row's own control and holds the right edge, in line
+   * with the add button in the group heading above.
+   *
+   * Session T wrapped this row instead, to keep a long address whole.
+   * The owner's call reverses that: the VALUE gives way, truncating
+   * before the tag can ever wrap or collide with it. `flexShrink` on the
+   * value and nothing else is what enforces it.
+   */
   contactLine: {
     flexDirection: 'row',
     alignItems: 'center',
-    /*
-     * Web's own `li` is `flex flex-wrap items-center justify-between
-     * gap-2`, and the wrap is load-bearing at phone width: a 30-character
-     * address plus the Primary tag plus the remove button needs ~250pt,
-     * and a 320pt phone gives this row 236. Without it the address
-     * truncated at "yoanliz.guzman.ta..." -- losing the domain, which is
-     * the half that identifies it.
-     *
-     * With it, the value keeps the first line whole and the tag and
-     * button drop to a second, right-aligned. At 390 nothing wraps.
-     */
-    flexWrap: 'wrap',
     gap: space.sm,
-    paddingVertical: space.sm,
+    paddingVertical: space.xs,
     borderBottomWidth: hairline,
     borderBottomColor: colors.borderSoft,
   },
-  contactValue: { ...type.body, color: colors.fg, flex: 1, minWidth: 150 },
-  /* Tag and remove travel together, and stay at the row's right edge on
-     whichever line they land. */
-  contactActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    marginLeft: 'auto',
-  },
+  // The only shrinkable thing in the row.
+  contactValue: { ...type.body, color: colors.fg, flexShrink: 1 },
+  // Holds the right edge, in one column with the group heading's add button.
+  contactRemove: { marginLeft: 'auto' },
+  writeError: { ...type.small, color: tones.danger, marginTop: space.sm },
   contactLabel: { ...type.meta, color: colors.fgMuted },
 
   /* Web's Primary tag, verbatim:
@@ -1029,31 +1553,43 @@ const styles = StyleSheet.create({
     color: colors.accent,
   },
 
-  /* Web: `mt-6 flex justify-end` around a
-     `rounded-full border border-border px-4 py-2 text-sm font-semibold`.
-     Centred rather than right-aligned, per the owner. */
-  mergeRow: { marginTop: space.lg, alignItems: 'center' },
-  merge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.sm,
-  },
-  mergeLabel: { ...type.small, color: colors.fgSecondary },
 
-  project: { paddingVertical: space.xs },
-  sessionLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    paddingLeft: space.md,
-    paddingBottom: space.sm,
-  },
-  sessionLabel: { ...type.meta, color: colors.fgMuted, flex: 1 },
+  /*
+   * ITEM 6, extracted from web's projects widget:
+   *
+   *   project block   `py-3 first:pt-0 last:pb-0`   -> 12, divided
+   *   sessions start  `mt-2`                        -> 8 below the title
+   *   between rows    `space-y-1.5`                 -> 6
+   *
+   * Mobile had 4px around the whole project and 8px under each session,
+   * with nothing separating the title row from the first session -- which
+   * is the scrunch: the sessions read as part of the title rather than as
+   * a list beneath it.
+   */
+  project: { paddingVertical: space.md },
+  projectFirst: { paddingTop: 0 },
+  projectLast: { paddingBottom: 0, borderBottomWidth: 0 },
+  projectDivider: { borderBottomWidth: hairline, borderBottomColor: colors.border },
+  sessions: { marginTop: space.sm, gap: 10 },
+  /*
+   * A session line carries a label and TWO badges, which is three things
+   * on one row — one more than the inquiry row that already needed this.
+   * Same rule as everywhere else on this screen: the row wraps, the label
+   * keeps a readable floor, and the badges travel together to the right
+   * edge of whichever line they land on.
+   */
+  /*
+   * ITEM 1. A session is a title with its chips underneath, left-aligned,
+   * and `sessions`' own 6px gap is no longer enough to separate two of
+   * those blocks — web's `space-y-1.5` was spacing single lines. 10px
+   * between blocks, 4px between a line and its own chips: the gap inside
+   * a block stays visibly smaller than the gap between blocks, which is
+   * what makes them read as blocks at all.
+   */
+  sessionBlock: { gap: space.xs },
+  sessionLabel: { ...type.meta, color: colors.fgSecondary },
+  /* Chips that sit under the line they belong to, not beside it. */
+  belowChips: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: space.xs },
 
   disabledInline: { paddingVertical: space.sm, opacity: 0.55 },
   disabledInlineLabel: { ...type.small, color: colors.fgMuted },

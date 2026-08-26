@@ -157,15 +157,50 @@ export function GiftCardIcon({ size = 20, color }: IconProps) {
   );
 }
 
-/**
- * Download — web's `DownloadIcon`, on the signed deposit-form and waiver
- * rows. Web renders it at the ROW size (32pt circle), not the header's 44.
- */
+/** Download — web's `DownloadIcon`, on signed deposit-form and waiver rows. */
 export function DownloadIcon({ size = 20, color }: IconProps) {
   return (
     <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
       <Path d="M10 3v9.5m0 0 3.5-3.5M10 12.5 6.5 9" strokeLinecap="round" strokeLinejoin="round" />
       <Path d="M4 14v1.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V14" strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+/**
+ * The six-dot drag handle — web's `DragHandleIcon`, dot for dot.
+ *
+ * FILLED, not stroked: this is the one glyph in the set web draws with
+ * `fill="currentColor" stroke="none"`, and stroking six 1.4r circles
+ * would render six rings.
+ */
+export function DragHandleIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill={color} stroke="none">
+      <Circle cx="7" cy="5" r="1.4" />
+      <Circle cx="13" cy="5" r="1.4" />
+      <Circle cx="7" cy="10" r="1.4" />
+      <Circle cx="13" cy="10" r="1.4" />
+      <Circle cx="7" cy="15" r="1.4" />
+      <Circle cx="13" cy="15" r="1.4" />
+    </Svg>
+  );
+}
+
+/**
+ * Star — "make primary" on a contact row.
+ *
+ * DRAWN, not borrowed: web renders that action as a text link ("Make
+ * primary") and has no glyph for it. Same 20-box, same 1.5 stroke as the
+ * rest of the set.
+ */
+export function StarIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Path
+        d="M10 2.8l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5L2.8 8.1l5-.7L10 2.8Z"
+        strokeLinejoin="round"
+      />
     </Svg>
   );
 }
@@ -191,6 +226,56 @@ export function SearchIcon({ size = 20, color }: IconProps) {
     <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
       <Circle cx="9" cy="9" r="6" />
       <Line x1="17" y1="17" x2="13.2" y2="13.2" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Gift card actions -- web's own glyphs, path for path.
+ * ------------------------------------------------------------------ */
+
+/** Copy -- web's `CopyIcon`. */
+export function CopyIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Rect x="7.5" y="7.5" width="9" height="9" rx="1.5" />
+      <Path
+        d="M5.5 12.5h-1A1.5 1.5 0 0 1 3 11V4.5A1.5 1.5 0 0 1 4.5 3H11a1.5 1.5 0 0 1 1.5 1.5v1"
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
+/** Calendar -- web's `CalendarIcon`, on "Edit expiration". */
+export function CalendarIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Rect x="2.5" y="4" width="15" height="13.5" rx="2" />
+      <Path d="M2.5 8h15" strokeLinecap="round" />
+      <Path d="M6.5 2.5v3M13.5 2.5v3" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+/** Ban -- web's `BanIcon`, on "Void card". Always drawn in danger. */
+export function BanIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Circle cx="10" cy="10" r="7.5" />
+      <Line x1="4.7" y1="15.3" x2="15.3" y2="4.7" />
+    </Svg>
+  );
+}
+
+/** Transfer -- web's `TransferIcon`, on "Transfer to Client". */
+export function TransferIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Circle cx="7" cy="6" r="2.5" />
+      <Path d="M2.5 16c0-3 2-4.5 4.5-4.5" strokeLinecap="round" />
+      <Path d="M11 11.5h6.5" strokeLinecap="round" />
+      <Path d="M14.5 8.5 17.5 11.5 14.5 14.5" strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }

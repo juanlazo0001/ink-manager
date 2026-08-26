@@ -28,6 +28,7 @@ export {
   WaiverStatus,
   FlashReviewMode,
   FlashPieceStatus,
+  GiftCardStatus,
   NotificationType,
 } from './enums.generated';
 

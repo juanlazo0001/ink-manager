@@ -1,33 +1,44 @@
-import Feather from '@expo/vector-icons/Feather';
+import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { ScreenShell } from '@/components/ScreenShell';
+import { ActivityHistory } from '@/components/ActivityHistory';
+import { AttachSessionSheet } from '@/components/AttachSessionSheet';
+import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
+import { CollapsibleSection } from '@/components/CollapsibleSection';
+import { QrCode } from '@/components/QrCode';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { EditorialCard } from '@/components/editorial';
+import { StatusChip } from '@/components/StatusChip';
+import { BanIcon, CalendarIcon, CopyIcon, TransferIcon } from '@/components/icons';
+import { Card } from '@/components/editorial';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
+import { calendarDate, stamp } from '@/lib/format';
+import { giftCardTone } from '@/lib/giftCardDisplay';
 import { fetchGiftCard, formatMoney, type GiftCard } from '@/lib/giftCards';
 import { screenErrorMessage } from '@/lib/screenError';
-import { colors, hairline, radius, space, type } from '@/theme';
+import { colors, space, type } from '@/theme';
 
 /**
- * A gift card, as the scanner opens it.
+ * A gift card, as apps/web's `GiftCardDetail` shows one.
  *
- * **READ-ONLY, deliberately.** `GET /gift-cards/:id` is the only call
- * here. The API also offers redeem, void, exempt, re-issue and holder
- * edits — every one of them moves money or changes what a client is owed,
- * and this run's contract is explicit that money gets no unattended
- * creativity. Mirroring web's redemption flow needs its own investigation
- * of web's confirm steps and partial-redemption semantics; until that
- * happens, showing the card truthfully and doing nothing to it is the
- * honest half.
+ * WEB'S ANATOMY, section by section: a header card carrying the amount as
+ * its title, the holder, the code, then a two-column fact grid (status,
+ * expires, attached, issued by, payment method, and origin when the card
+ * came from redeeming another) with the QR beside it; an action row under
+ * a divider; then the activity history.
  *
- * Logged as a deliberate gap in the session report, not an oversight.
+ * WHAT THIS REPLACED: a flat fact list under an explainer paragraph that
+ * apologised for the screen being read-only. The disabled actions carry
+ * that message now, one line each, at the moment someone reaches for
+ * them — which is the pattern every other card on this app uses.
  *
- * A single record of unknown height, so it gets a spinner rather than a
- * skeleton — see LOADING_POLICY in theme/motion.
+ * WRITES ARE STILL NOT BUILT. Every action here moves money or changes
+ * what a client is owed, and the standing contract keeps those out of
+ * unattended hands. They render, they say why, they do nothing.
  */
 export default function GiftCardScreen() {
   const router = useRouter();
@@ -37,6 +48,29 @@ export default function GiftCardScreen() {
 
   const [card, setCard] = useState<GiftCard | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [open, setOpen] = useState<Record<string, boolean>>({ activity: true });
+  const [attaching, setAttaching] = useState(false);
+
+  /**
+   * The one live action here, and the reasons it can be refused are the
+   * server's own, said in its words rather than a generic "not allowed":
+   *
+   *   - `giftCards.issue` gates the route (evaluated at the CARD's
+   *     studio, not the caller's home studio);
+   *   - only an ACTIVE or EXEMPT card can be moved;
+   *   - a card with no holder has no appointments to choose from.
+   */
+  const canIssue = session?.profile.permissions.includes('giftCards.issue') ?? false;
+  const attachBlockedReason = !canIssue
+    ? "You don't have permission to move gift cards."
+    : card && card.status !== 'ACTIVE' && card.status !== 'EXEMPT'
+      ? `Only an active card can be attached to a session — this one is ${card.status.toLowerCase()}.`
+      : card && !(card.client?.id ?? card.clientId)
+        ? 'This card has no holder yet, so there are no sessions to attach it to.'
+        : null;
+  const canAttach = attachBlockedReason === null;
 
   const load = useCallback(async () => {
     if (!token || !id) return;
@@ -53,10 +87,36 @@ export default function GiftCardScreen() {
   }, [load]);
 
   const holder = card?.client ? `${card.client.firstName} ${card.client.lastName}` : null;
+  // Web's own condition: an exemption is not a spendable card, so it gets
+  // neither a public link nor a QR.
+  const isExempt = card?.status === 'EXEMPT';
+
+  /**
+   * ITEM 4 — the code itself is copyable.
+   *
+   * It is the one thing on this screen someone reads down a phone line or
+   * pastes into a checkout, and copying it touches no record at all. The
+   * haptic is the point: a tap whose entire result lives in an invisible
+   * clipboard needs to be felt, not inferred from a label that changes
+   * for two seconds.
+   */
+  async function copyCode(code: string) {
+    await Clipboard.setStringAsync(code);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 2000);
+  }
+
+  async function copyLink(url: string) {
+    await Clipboard.setStringAsync(url);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
-      <ScreenHeader title="Gift card" onBack={() => router.back()} />
+    <ScreenShell edges={['top']}>
+      <ScreenHeader onBack={() => router.back()} />
 
       {error ? (
         <StateMessage
@@ -69,95 +129,187 @@ export default function GiftCardScreen() {
         <ScreenLoading />
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          <EditorialCard title={formatMoney(card.amountCents)} caption={card.status.toUpperCase()}>
-            <View style={styles.codeRow}>
-              <Feather name="tag" size={13} color={colors.fgMuted} />
-              <Text style={styles.code} selectable>
-                {card.code}
-              </Text>
+          <Card>
+            <View style={styles.headTop}>
+              <View style={styles.headText}>
+                <Text style={styles.title}>
+                  {isExempt ? 'Deposit Exemption' : `${formatMoney(card.amountCents)} Gift Card`}
+                </Text>
+                {card.exemptionReason ? (
+                  <Text style={styles.subtitle}>{card.exemptionReason}</Text>
+                ) : null}
+                {holder ? (
+                  <Text style={styles.subtitle} numberOfLines={1}>
+                    {holder}
+                  </Text>
+                ) : null}
+                <Pressable
+                  onPress={() => void copyCode(card.code)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Copy gift card code ${card.code}`}
+                  accessibilityHint="Copies the code to the clipboard"
+                  hitSlop={6}
+                  style={({ pressed }) => [styles.codeRow, pressed && styles.codePressed]}
+                >
+                  <Text style={styles.code} selectable>
+                    {card.code}
+                  </Text>
+                  <CopyIcon size={13} color={codeCopied ? colors.accent : colors.fgMuted} />
+                </Pressable>
+              </View>
+
+              {/* Web renders the QR from the card's `publicUrl`, and hides
+                  it entirely on an exemption. */}
+              {!isExempt && card.publicUrl ? <QrCode value={card.publicUrl} size={110} /> : null}
             </View>
-          </EditorialCard>
 
-          <View style={styles.facts}>
-            <Fact label="Status" value={card.status} />
-            {holder ? <Fact label="Holder" value={holder} /> : null}
-            <Fact label="Issued" value={dateOnly(card.createdAt)} />
-            {card.paidAt ? <Fact label="Paid" value={dateOnly(card.paidAt)} /> : null}
-            {card.paymentMethod ? <Fact label="Paid via" value={card.paymentMethod} /> : null}
-            {card.expiresAt ? <Fact label="Expires" value={dateOnly(card.expiresAt)} /> : null}
-            {card.redeemedAt ? <Fact label="Redeemed" value={dateOnly(card.redeemedAt)} /> : null}
-            {card.exemptionReason ? <Fact label="Exempt" value={card.exemptionReason} /> : null}
-            {card.issuedBy ? (
-              <Fact label="Issued by" value={card.issuedBy.name ?? card.issuedBy.email} />
-            ) : null}
-            {card.derivedFromGiftCard ? (
-              <Fact label="Replaces" value={card.derivedFromGiftCard.code} />
-            ) : null}
-          </View>
+            {/* Web's `grid grid-cols-2 gap-4` of labelled facts. */}
+            <View style={styles.grid}>
+              <Fact label="Status">
+                <StatusChip label={card.status} tone={giftCardTone(card.status)} />
+              </Fact>
+              <Fact label="Expires">
+                <Text style={styles.factValue}>
+                  {card.expiresAt ? calendarDate(card.expiresAt) : 'Never'}
+                </Text>
+              </Fact>
+              <Fact label="Attached">
+                <Text style={styles.factValue}>
+                  {card.appointment ? stamp(card.appointment.startAt) : 'Unattached'}
+                </Text>
+              </Fact>
+              <Fact label="Issued by">
+                <Text style={styles.factValue} numberOfLines={1}>
+                  {card.issuedBy ? (card.issuedBy.name ?? card.issuedBy.email) : 'Deleted user'}
+                </Text>
+              </Fact>
+              <Fact label="Payment method">
+                <Text style={styles.factValue}>{paymentMethodLabel(card.paymentMethod)}</Text>
+              </Fact>
+              {card.derivedFromGiftCard ? (
+                <Fact label="Origin">
+                  <Text style={styles.factValue} numberOfLines={1}>
+                    From redeeming {card.derivedFromGiftCard.code.slice(0, 8)}…
+                  </Text>
+                </Fact>
+              ) : null}
+            </View>
 
-          <View style={styles.note}>
-            <Feather name="info" size={13} color={colors.fgMuted} />
-            <Text style={styles.noteText}>
-              Redeeming and voiding are done in the portal. This screen shows the card; it
-              doesn&apos;t change it.
-            </Text>
-          </View>
+            {/* Web: `mt-5 border-t border-border pt-4` above its actions,
+                and the row wraps rather than overflowing. */}
+            <View style={styles.actionsDivider} />
+            <CardActionRow wrap>
+              {!isExempt ? (
+                <CardIconButton
+                  Icon={CopyIcon}
+                  label={copied ? 'Copied' : 'Copy link'}
+                  onPress={card.publicUrl ? () => void copyLink(card.publicUrl!) : undefined}
+                  unavailableNote="This card has no public link."
+                />
+              ) : null}
+              {card.status !== 'VOID' ? (
+                <CardIconButton
+                  Icon={CalendarIcon}
+                  label={card.appointmentId ? 'Move to another session' : 'Attach to a session'}
+                  onPress={canAttach ? () => setAttaching(true) : undefined}
+                  unavailableNote={attachBlockedReason ?? undefined}
+                />
+              ) : null}
+              {card.status !== 'VOID' ? (
+                <CardIconButton
+                  Icon={TransferIcon}
+                  label="Transfer to client"
+                  unavailableNote="Coming soon. Moving a card between clients lives in the portal for now."
+                />
+              ) : null}
+              {card.status !== 'VOID' ? (
+                <CardIconButton
+                  Icon={BanIcon}
+                  tone="danger"
+                  label="Void card"
+                  unavailableNote="Coming soon. Voiding destroys the card's value, so it stays in the portal for now."
+                />
+              ) : null}
+            </CardActionRow>
+          </Card>
+
+          <AttachSessionSheet
+            visible={attaching}
+            card={card}
+            token={token}
+            onClose={() => setAttaching(false)}
+            onAttached={(updated) => {
+              setAttaching(false);
+              // The server decides the resulting shape; take what it
+              // returned rather than patching the local copy, then re-read
+              // so the activity history picks up the new `rollover` row.
+              setCard(updated);
+              void load();
+            }}
+          />
+
+          <CollapsibleSection
+            title="Activity history"
+            open={!!open.activity}
+            onToggle={() => setOpen((o) => ({ ...o, activity: !o.activity }))}
+          >
+            {token ? (
+              <ActivityHistory token={token} entityType="GiftCard" entityId={card.id} />
+            ) : null}
+          </CollapsibleSection>
         </ScrollView>
       )}
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+/** One cell of web's fact grid: an uppercase label over its value. */
+function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <View style={styles.fact}>
       <Text style={styles.factLabel}>{label.toUpperCase()}</Text>
-      <Text style={styles.factValue}>{value}</Text>
+      {children}
     </View>
   );
 }
 
-/**
- * A gift card's `expiresAt` is a pure calendar date stored at UTC
- * midnight, so it is read back with UTC forced — a bare
- * `toLocaleDateString()` re-interprets that midnight in the viewer's zone
- * and can show the previous day. The repo has hit this exact bug before;
- * see CLAUDE.md's timezone rule.
- */
-function dateOnly(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    timeZone: 'UTC',
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
+
+/** Web's own wording for each `paymentMethod` value. */
+function paymentMethodLabel(method: string | null): string {
+  if (method === 'STRIPE') return 'Stripe';
+  if (method === 'CASH') return 'Cash';
+  if (method === 'EXEMPT') return 'Exempt (no payment)';
+  return 'Unknown';
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: space.lg, gap: space.lg },
+  content: { padding: space.lg, gap: space.xl, paddingBottom: space.xxl },
 
+  headTop: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start' },
+  headText: { flex: 1, gap: 2 },
+  title: { ...type.heading, color: colors.fg },
+  subtitle: { ...type.small, color: colors.fgSecondary },
+  // Web: `mt-3 font-mono text-xs text-fg-muted`.
   codeRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.sm },
-  code: { ...type.meta, color: colors.fgSecondary, letterSpacing: 1 },
+  code: { ...type.meta, color: colors.fgMuted, letterSpacing: 1 },
+  codePressed: { opacity: 0.6 },
 
-  facts: {
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.card,
-    paddingHorizontal: space.lg,
-  },
-  fact: {
+  // Web: `grid grid-cols-2 gap-4`.
+  grid: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: space.md,
-    paddingVertical: space.md,
-    borderBottomWidth: hairline,
-    borderBottomColor: colors.borderSoft,
+    flexWrap: 'wrap',
+    marginTop: space.lg,
+    rowGap: space.lg,
+    columnGap: space.lg,
   },
-  factLabel: { ...type.meta, color: colors.fgMuted },
-  factValue: { ...type.body, color: colors.fg, flexShrink: 1, textAlign: 'right' },
+  fact: { width: '45%', gap: space.xs },
+  factLabel: { ...type.meta, color: colors.fgMuted, letterSpacing: 1 },
+  factValue: { ...type.small, color: colors.fg },
 
-  note: { flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' },
-  noteText: { ...type.small, color: colors.fgMuted, flex: 1 },
+  actionsDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginTop: space.lg,
+    marginBottom: space.md,
+  },
 });

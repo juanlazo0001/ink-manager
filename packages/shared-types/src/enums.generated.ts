@@ -106,6 +106,17 @@ export const FlashPieceStatus = {
 export type FlashPieceStatus = (typeof FlashPieceStatus)[keyof typeof FlashPieceStatus];
 
 
+export const GiftCardStatus = {
+  PENDING: 'PENDING',
+  ACTIVE: 'ACTIVE',
+  REDEEMED: 'REDEEMED',
+  EXPIRED: 'EXPIRED',
+  VOID: 'VOID',
+  EXEMPT: 'EXEMPT',
+} as const;
+export type GiftCardStatus = (typeof GiftCardStatus)[keyof typeof GiftCardStatus];
+
+
 export const NotificationType = {
   MESSAGE_CREATED: 'MESSAGE_CREATED',
   INQUIRY_ASSIGNED: 'INQUIRY_ASSIGNED',

@@ -10,8 +10,34 @@ export interface DisplayMessage extends Message {
 }
 
 export type Row =
-  | { kind: 'message'; message: DisplayMessage; showMeta: boolean; showAuthor: boolean; own: boolean }
+  | {
+      kind: 'message';
+      message: DisplayMessage;
+      showMeta: boolean;
+      showAuthor: boolean;
+      own: boolean;
+      /**
+       * This bubble continues a run from the same side, so it sits tight
+       * under the one above it. False starts a new run and takes the
+       * larger gap. iOS Messages' rhythm, and the thing that makes a
+       * thread read as a conversation rather than a list.
+       */
+      grouped: boolean;
+    }
   | { kind: 'day'; label: string; key: string };
+
+/**
+ * How long a pause breaks a visual run, even from the same person.
+ *
+ * Five minutes: long enough that two texts fired off together stay
+ * together, short enough that "…and one more thing" an hour later reads
+ * as a new thought. Messages uses a comparable window.
+ *
+ * NOTE this is a different question from `showMeta`'s "same burst", which
+ * is same-MINUTE and governs the timestamp. A run can span several
+ * minutes; a burst cannot.
+ */
+const GROUP_GAP_MS = 5 * 60 * 1000;
 
 /**
  * Which side a message sits on.
@@ -66,12 +92,29 @@ export function buildThreadRows(params: {
     const earlier = messages[i - 1];
     const startsNewDay = earlier === undefined || dayKey(earlier.createdAt) !== dayKey(message.createdAt);
 
+    /*
+     * Grouped with the bubble ABOVE — which, in an inverted list, is the
+     * message EARLIER in time. Same side, same author, same day, and
+     * within the gap.
+     *
+     * The author check matters only on GROUP threads, where two
+     * colleagues are both "not the viewer" and would otherwise merge into
+     * one run.
+     */
+    const grouped =
+      earlier !== undefined &&
+      !startsNewDay &&
+      isOwnSide(earlier, viewerUserId, isClientThread) === own &&
+      earlier.authorUserId === message.authorUserId &&
+      new Date(message.createdAt).getTime() - new Date(earlier.createdAt).getTime() < GROUP_GAP_MS;
+
     rows.push({
       kind: 'message',
       message,
       own,
       showMeta: !sameBurstAsLater,
       showAuthor: isGroupThread && !own && (earlier === undefined || earlier.authorUserId !== message.authorUserId),
+      grouped,
     });
 
     if (startsNewDay) {

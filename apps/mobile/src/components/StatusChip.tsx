@@ -68,6 +68,21 @@ export function StatusChip({
 }) {
   const color = tones[tone] ?? tones.neutral;
 
+  /*
+   * A CHIP WITH NOTHING TO SAY RENDERS NOTHING.
+   *
+   * The dot is drawn unconditionally, before the label — so an empty or
+   * whitespace label produced exactly "a bare coloured dot with no chip",
+   * which is what the owner photographed. Any call site handing this a
+   * blank status could do it: `label={g.status}` on a gift card row,
+   * `label={w.status ?? 'Pending'}` on a waiver, a status string the API
+   * returns as "".
+   *
+   * Guarding at the component rather than at each call site, because the
+   * next call site would have the same hole.
+   */
+  if (!label || !label.trim()) return null;
+
   // Web's own exception: the danger dot uses the stronger red.
   const dotColor = tone === 'danger' ? colors.dangerStrong : color;
 

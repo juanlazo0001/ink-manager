@@ -2,8 +2,8 @@ import type { ConversationListItem } from '@ink-manager/shared-types';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { ConversationRow } from '@/components/ConversationRow';
 import { FrequentStrip } from '@/components/FrequentStrip';
 import { TopBar } from '@/components/TopBar';
@@ -122,7 +122,7 @@ export default function ConversationsScreen() {
   const searching = isSearchable(search) && search.trim() !== activeSearch;
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <TopBar />
 
       <ThreadListControls
@@ -212,12 +212,11 @@ export default function ConversationsScreen() {
           }
         />
       )}
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   separator: { height: 1, backgroundColor: colors.borderSoft, marginLeft: space.lg },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
 });

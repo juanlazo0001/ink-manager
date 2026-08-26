@@ -72,5 +72,14 @@ export function useBadgeCounts(): BadgeCounts & { refresh: () => void } {
 
 /** Web's `taskBadgeCount`, verbatim. Exported so it is checkable on its own. */
 export function taskBadgeCount(data: TasksResponse): number {
-  return data.system.length + data.personal.filter((t) => !t.completedAt).length;
+  // Defensive on purpose. This sum now runs inside `TopBarActions`, which
+  // renders on EVERY screen, so a `/tasks` response missing either array
+  // -- a proxy returning a bare list, a partial error body -- would throw
+  // and take the whole top bar down app-wide behind an error boundary,
+  // not just blank a badge. A badge is chrome; it fails to zero.
+  const system = Array.isArray(data?.system) ? data.system.length : 0;
+  const personal = Array.isArray(data?.personal)
+    ? data.personal.filter((t) => !t.completedAt).length
+    : 0;
+  return system + personal;
 }

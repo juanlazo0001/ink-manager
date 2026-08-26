@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { StateMessage } from '@/components/ui';
 import { colors } from '@/theme';
@@ -34,18 +34,17 @@ export default function NotificationsScreen() {
   const router = useRouter();
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <ScreenHeader title="Notifications" onBack={() => router.back()} right={<View style={styles.spacer} />} />
       <StateMessage
         eyebrow="Nothing yet"
         title="No mentions yet"
         body="Internal mentions are coming to Conversations. When someone tags you, it will show up here."
       />
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   spacer: { width: 36 },
 });

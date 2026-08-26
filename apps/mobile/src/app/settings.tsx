@@ -2,8 +2,8 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScreenShell } from '@/components/ScreenShell';
 import { EditorialCard } from '@/components/editorial';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading } from '@/components/ui';
@@ -69,7 +69,7 @@ export default function SettingsScreen() {
   }, [load]);
 
   return (
-    <SafeAreaView style={styles.screen} edges={['top']}>
+    <ScreenShell edges={['top']}>
       <ScreenHeader title="Settings" onBack={() => router.back()} right={<View style={styles.spacer} />} />
 
       <ScrollView contentContainerStyle={styles.content}>
@@ -120,12 +120,11 @@ export default function SettingsScreen() {
           an owner.
         </Text>
       </ScrollView>
-    </SafeAreaView>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: 'transparent' },
   spacer: { width: 36 },
   content: { paddingBottom: space.xxxl },
   card: { marginHorizontal: space.lg, marginTop: space.lg },
