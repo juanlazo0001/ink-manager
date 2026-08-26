@@ -126,6 +126,15 @@ Concise operating rules, not a project history — see REPORT.md for history.
   real error (`ConversationsPanel.tsx`'s separate `Record<Tone, string>` maps needing a new `hold`
   key) that only the real `vite build` caught, after passing silently all session.
 
+## Verifying mobile UI on the web harness
+
+- **P3-class animation travel is device-gate-only under the web harness** — a reanimated animation
+  that runs fine elsewhere does not advance inside the conversation screen's subtree there (proven
+  with a control component that animates in a sibling route and stays flat at 0 inside the screen;
+  `useKeyboardHandler` ruled out). Verify geometry with printed numbers instead, and never let
+  "it rendered" stand in for "it moved". Gesture-handler is likewise inert to synthetic input, so
+  Pan/Pinch behaviour is device-gate too — its silence there proves nothing in either direction.
+
 ## Design
 
 - Frosted glass (`backdrop-filter: blur(...)`) only on discrete cards/panels — never on lists or
