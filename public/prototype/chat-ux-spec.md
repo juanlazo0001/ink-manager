@@ -1,7 +1,7 @@
 # Ink Manager — Chat UX Specification (Edition 02)
 
-**Status:** Draft for architect review → becomes `docs/chat-ux-spec.md` once approved.
-**Edition note:** E02 re-grounds every visual rule in the **current dark mobile UI** (screenshot of the live Chat tab, Aug 26). Behavior rulings from E01 are unchanged unless marked. The mobile chat surface is the **dark Editorial Gold treatment**; the light/paper treatment belongs to the web portal and returns in the web-parity pass (§15). **Rev A (post-review):** the per-row channel chip line is retired — channel renders as an avatar badge (§1.1, §8). **Rev B (cleanliness pass, from E01/E02 side-by-side):** person names are never set in Fraunces (§1.2); the channel badge is lettered, not color-coded (§1.1); list rows adopt E01's spacing rhythm (§8). **Rev C:** the FREQUENT strip is removed; the filter chips consolidate into a Filter dropdown (left) mirroring Sort (right); list order is search → controls → PINNED → CONVERSATIONS (§8). Presence now surfaces only on the IN-APP thread-header avatar (§9).
+**Status:** Draft for architect review → becomes `public/prototype/chat-ux-spec.md` once approved.
+**Edition note:** E02 re-grounds every visual rule in the **current dark mobile UI** (screenshot of the live Chat tab, Aug 26). Behavior rulings from E01 are unchanged unless marked. The mobile chat surface is the **dark Editorial Gold treatment**; the light/paper treatment belongs to the web portal and returns in the web-parity pass (§15). **Rev A (post-review):** the per-row channel chip line is retired — channel renders as an avatar badge (§1.1, §8). **Rev B (cleanliness pass, from E01/E02 side-by-side):** person names are never set in Fraunces (§1.2); the channel badge is lettered, not color-coded (§1.1); list rows adopt E01's spacing rhythm (§8). **Rev C:** the FREQUENT strip is removed; the filter chips consolidate into a Filter dropdown (left) mirroring Sort (right); list order is search → controls → PINNED → CONVERSATIONS (§8). Presence now surfaces only on the IN-APP thread-header avatar (§9). **Rev D (post-investigation + owner ruling, Aug 26):** red own-bubbles confirmed by owner ruling with the surface-anchored-failure rule (§1, §2.4); reactions retained and restyled (§0, §7); Part 4 descoped pending `UserConversationState` (§8, §14); archive adopts shipped studio-wide semantics (§8); typing dormant (§6); internal notes parked (§2.6); header/chips assigned to Part 1 with expo-blur (§9, §13, §14); baseline branch is main after the `mobile/session-ae` and `chat-ux/00-investigation` merges (§0).
 **Companion:** `chat-ux-prototype.html` (Edition 02) — interactive ground truth. Prototype wins on *feel*, this document wins on *rules*.
 **Scope:** `apps/mobile`, Expo SDK 54, Expo Go only.
 **Source model:** iOS Messages interaction anatomy, adapted to Ink Manager's existing chat surface: multi-channel client threads **and** internal team/IN-APP threads (including group threads) in one list.
@@ -16,8 +16,10 @@
 
 - Schema changes without architect sign-off. Missing fields (e.g. `isPinned`) → the session **stops and reports**, never migrates.
 - Live provider behavior (external typing signals, SMS delivery receipts) — Phase D. States are designed now, rendered only when truthful.
-- iMessage features cut for v1: tapbacks/reactions, message effects, inline reply threading, edit/unsend, audio messages, FaceTime affordances. (Group *threads* are in scope — they already exist for IN-APP.)
+- iMessage features cut for v1: message effects, inline reply threading, edit/unsend, audio messages, FaceTime affordances. (Group *threads* are in scope — they already exist for IN-APP. **Reactions are NOT cut**: they shipped in session-ae as a stored, deliberately-promoted feature; this series retains them and restyles their entry point per §7.)
 - A light theme for mobile chat. The dark treatment in the screenshot is canonical for this surface; do not invent a light variant.
+
+**Baseline:** Parts 1–5 branch from `main` after `mobile/session-ae` and `chat-ux/00-investigation` are merged. The investigation report's evidence cites the AE lineage; where spec and shipped code differ, each part **reconciles the shipped implementation to spec** rather than building a duplicate.
 
 **Sensitive writes:** chat send is not on the sensitive-writes list; sessions may run unattended. Money/scheduling/permissions endpoints remain attended-only per `CLAUDE.md`.
 
@@ -31,14 +33,14 @@ Values marked ★ are **sampled from the screenshot** — the investigation sess
 |---|---|---|
 | `chat.surface` | ★ `#1A1410` | Screen background (warm near-black espresso) |
 | `chat.surface.raised` | ★ `#251E17` | Search field, header blur tint, composer, sheets, keyboard, avatar fill |
-| `chat.bubble.own.bg` | `#C2402F` (exact) | Outgoing bubble — the chat brand fill |
+| `chat.bubble.own.bg` | `#C2402F` (exact) | Outgoing bubble — the chat brand fill. **Owner ruling 2026-08-26**: sanctioned second red fill alongside the CHAT tab; Part 1 records the amendment in `CLAUDE.md`. Current code renders gold (`MessageBubble.tsx:319`) — Part 1 changes it. |
 | `chat.bubble.own.text` | `#FFFFFF` | Outgoing bubble text |
 | `chat.bubble.in.bg` | ★ `#2B231B` | Incoming bubble (elevated espresso) |
 | `chat.text.primary` | ★ `#E7DCC4` | Names, bubble text incoming, icons (warm cream) |
 | `chat.text.muted` | ★ `#9A8C74` | Previews, timestamps, meta, placeholders |
 | `chat.accent.gold` | ★ `#C9A961` | Active filter chip, context chips, pin, READ MORE, internal-note accent |
 | `chat.note.bg` | ★ `rgba(201,169,97,.10)` | Internal note fill (gold tint on dark) |
-| `chat.alert.red` | `#C2402F` | Unread dot, failed sends, destructive confirm, CHAT tab fill — **red appears nowhere else** |
+| `chat.alert.red` | `#C2402F` | Unread dot, failed sends, destructive confirm, CHAT tab fill — **red appears nowhere else**. Failure affordances are always **surface-anchored** (§2.4): rendered on the espresso surface beside/below the bubble, never as a recolor of the fill, so alert-red stays legible against brand-red. |
 | `chat.presence.on` | ★ `#5CB36E` | Presence dot online; also the SMS channel swatch (see §1.1) |
 | `chat.presence.off` | ★ `#6E675E` | Presence dot offline |
 | `chat.hairline` | ★ `rgba(231,220,196,.09)` | Row separators, field borders, header divider |
@@ -83,7 +85,7 @@ Pan left anywhere on the list → all bubbles shift left in unison, max travel *
 |---|---|---|
 | `QUEUED` | yes | Bubble 60% opacity, `SENDING…` |
 | `SENT` | yes | `SENT`, Jura 10 caps muted, under last outgoing only |
-| `FAILED` | yes | Red ⚠ badge (18pt) left of own bubble + `NOT DELIVERED · TAP TO RETRY` in red; tap → retry sheet (Retry / Copy text / Discard) |
+| `FAILED` | yes | Red ⚠ badge (18pt) on the **surface** at the bubble's outer-left edge + `NOT DELIVERED · TAP TO RETRY` in red **below** the bubble; the red fill itself never changes color to carry state (surface-anchored rule, §1). Tap → retry sheet (Retry / Copy text / Discard) |
 | `DELIVERED` / `READ` | **dormant** | Designed; rendered only when a Phase D provider reports it |
 
 No fake states. If the API only knows "persisted," render `SENT`.
@@ -97,7 +99,7 @@ Image bubble: radius 18, no padding, max height 280, blurhash/skeleton via `expo
 - Header carries the channel chip (§1.1). Bubbles never change color by channel.
 - **Email:** > 6 lines collapses with fade-to-`chat.bubble.in.bg` mask + `READ MORE` (Jura caps, gold). Subject renders above body, Outfit 14/600.
 - **IN-APP** (team) threads: presence-aware header (§9), group naming per §2.1; otherwise identical anatomy.
-- **Internal notes** on client threads (only if the message type exists — investigation confirms): `chat.note.bg` fill, 3pt gold left border, `INTERNAL` gold Jura tag, radius 12, no tail, excluded from delivery logic.
+- **Internal notes** on client threads — **parked**: the investigation confirmed no such message type exists in the data model. The styling above stands as designed (`chat.note.bg` fill, 3pt gold left border, `INTERNAL` gold Jura tag, radius 12, no tail, excluded from delivery logic) for whenever the type lands via a future backend addendum; no part of this series builds it.
 
 ---
 
@@ -115,27 +117,27 @@ List primitive ratified by investigation (installed FlashList preferred; LegendL
 
 ## 6. Typing indicator (unchanged)
 
-Incoming-style bubble, 3 dots 7pt, 150ms stagger, 1.3s loop, S1 pop in/out, real list row. Wired **only** to real signals: internal WebSocket typing events if they exist (investigation); external channels wait for Phase D. Never simulated.
+Incoming-style bubble, 3 dots 7pt, 150ms stagger, 1.3s loop, S1 pop in/out, real list row. Wired **only** to real signals: internal WebSocket typing events if they exist (investigation); external channels wait for Phase D. Never simulated. **Rev D:** the investigation found no typing event anywhere on the socket layer, so Part 3 ships the component dormant behind a `__DEV__` prop; the WS typing event joins the Phase D backlog alongside the provider work.
 
 ## 7. Long-press message actions (unchanged)
 
-No native context menus in Expo Go → bespoke overlay: 350ms press (cancel at >8pt movement), `impactMedium`, `expo-blur` dark scrim (intensity ~40 + 45% dim), bubble clone springs to 1.04, sheet (raised espresso, radius 16, cream text): **Copy** · **Message details** · FAILED adds **Retry** (first) and **Discard** (red). Dismiss reverses with S2.
+No native context menus in Expo Go → bespoke overlay: 350ms press (cancel at >8pt movement), `impactMedium`, `expo-blur` dark scrim (intensity ~40 + 45% dim), bubble clone springs to 1.04, sheet (raised espresso, radius 16, cream text): **Copy** · **Message details** · FAILED adds **Retry** (first) and **Discard** (red). Dismiss reverses with S2. **Reactions (rev D):** the shipped reactions feature is retained — its entry point restyles into an iMessage-style tapback row springing in **above the lifted bubble** (action sheet below); existing reaction storage and rendering are reused, re-treated to this spec's tokens. Part 5 owns the restyle.
 
 ## 8. Conversation list
 
-Screen furniture (rev C): top cluster (drawer · tasks badge · bell · avatar), search field, then a **controls row** — **Filter dropdown left-aligned, Sort dropdown right-aligned**, both in the chevron + Jura-caps style. Filter options: All / Unread / Needs Action; when a non-default filter is active the control shows the selection in gold (the active-state language the old chips used). Sort menu contents are TBD pending Q14/product ruling. The **FREQUENT strip is removed** — pinned threads are this screen's quick access. Bottom tab bar with the raised red CHAT button is retained. This series adds behavior beneath that furniture:
+Screen furniture (rev C): top cluster (drawer · tasks badge · bell · avatar), search field, then a **controls row** — **Filter dropdown left-aligned, Sort dropdown right-aligned**, both in the chevron + Jura-caps style. Filter options: All / Unread / Needs Action; when a non-default filter is active the control shows the selection in gold (the active-state language the old chips used). Sort menu adopts the options already shipped in the app (per investigation Q14) — no new sort semantics are invented in this series. The **FREQUENT strip is removed** — pinned threads are this screen's quick access. Bottom tab bar with the raised red CHAT button is retained. This series adds behavior beneath that furniture:
 
 - **Row anatomy** (E01 rhythm, dark values): 20pt horizontal inset · inline unread dot in flex flow (not edge-pinned) · avatar **44** (espresso fill, hairline ring, Fraunces monogram) carrying the lettered **channel badge** (§1.1) bottom-right · name **Outfit 16/600** cream · timestamp Jura 11 muted right (`7h` < 24h, weekday ≤ 7d, else `Aug 10`) · preview Outfit **14, two-line clamp** (`You:` / `{Name}:` prefix; media as inline icon + `Image`). Section labels (`PINNED`, `CONVERSATIONS`) Jura 10, .2em tracking, 22pt inset. Hairline separators inset 76.
 - **Preview authorship** depends on `lastMessage.author` (backend queue item) — the current UI already renders `You:` / `LouieG:`, so the investigation confirms whether that's live data or client-side inference, and standardizes on the backend field.
 - **Unread:** 8pt red dot leading the row; name stays cream, preview lifts to `chat.text.primary`. Feeds the `UNREAD` filter chip and the CHAT tab badge from the same source of truth (investigation Q).
-- **Swipe right → Pin/Unpin** (gold panel, pin glyph): pinned threads sort to top under a `PINNED` Jura label, directly beneath the controls row, with a small gold pin glyph by the timestamp — **no iMessage avatar grid**; pins are the screen's quick access. Max 3.
-- **Swipe left → Mute · Archive:** mute = muted-brown panel (suppresses badge/push); archive = near-black panel, full-swipe commits. **No Delete** — client conversations are business records; archive is reversible from a filter. IN-APP team threads: archive hides locally, never destroys history.
-- Persistence: `isPinned` / `mutedUntil` / `archivedAt` (or equivalents) — investigation inventories; anything missing → gesture ships behind local state only if trivially wireable, else escalated for a schema decision. No silent migrations.
+- **Swipe right → Pin/Unpin** (gold panel, pin glyph): pinned threads sort to top under a `PINNED` Jura label, directly beneath the controls row, with a small gold pin glyph by the timestamp — **no iMessage avatar grid**; pins are the screen's quick access. Max 3, server-enforced. **Deferred to Part 4b**: requires the `UserConversationState` backend addendum (per-user `isPinned`).
+- **Swipe left → Mute · Archive:** mute = muted-brown panel (suppresses badge/push) — **deferred to Part 4b** (per-user `mutedUntil` on `UserConversationState`). Archive = near-black panel, full-swipe commits, and adopts the **shipped studio-wide semantics**: `archivedAt` hides the thread for everyone in the studio by explicit existing design (the earlier "hides locally" claim is amended out). Reversible from a filter. **No Delete** — client conversations are business records.
+- Persistence (resolved by investigation): `archivedAt` exists (studio-wide); `isPinned` and `mutedUntil` do not. Part 4 therefore ships **unread rendering, preview authorship, and archive** only; pin + mute UI arrive as **Part 4b** once `UserConversationState` lands (see the backend work-order addendum). No local-state stand-ins for per-user prefs — a pin that vanishes on reinstall is a broken promise.
 - Row press → thread. **Edge-swipe back** must work.
 
 ## 9. Thread header and context
 
-Translucent raised-espresso header (`expo-blur` dark + tint), hairline bottom, content scrolls beneath. Left: back chevron (**cream**, not red). Cluster: avatar 32 · name **Outfit 17/600** cream (per §1.2, names are never Fraunces) · beneath: channel swatch + full channel name + handle/number in Jura 10 caps muted. IN-APP threads: presence dot on the avatar; group threads list member names in the sub-line. Right: ⓘ cream → details.
+Translucent raised-espresso header (`expo-blur` dark + tint), hairline bottom, content scrolls beneath. Left: back chevron (**cream**, not red). Cluster: avatar 32 · name **Outfit 17/600** cream (per §1.2, names are never Fraunces) · beneath: channel swatch + full channel name + handle/number in Jura 10 caps muted. IN-APP threads: presence dot on the avatar — wired **only if** the existing server-side presence signal is consumable purely client-side (the investigation found mobile subscribes to nothing today); otherwise the dot ships dormant. Group threads list member names in the sub-line. Right: ⓘ cream → details.
 
 **Context chip row** (client threads — the thing iMessage doesn't have): gold-outline chips in the exact style of the active filter chip — `INQ-0247 · BLACKWORK SLEEVE · ESTIMATE ACCEPTED`, `DEPOSIT · PAID` — tap → linked inquiry/project. Horizontally scrolls; part of the header blur unit; collapses on scroll-down, returns on scroll-up (44pt, S2).
 
@@ -157,7 +159,7 @@ Bubble `accessibilityLabel` = "{sender}, {time}: {text}"; FAILED announced. The 
 
 ## 13. Library rulings (unchanged)
 
-**Allowed:** reanimated, gesture-handler, expo-haptics, expo-blur, expo-image, expo-image-picker, react-native-keyboard-controller (SDK 54 Go-bundled), date-fns, FlashList/LegendList (JS-only).
+**Allowed:** reanimated, gesture-handler, expo-haptics, expo-blur (not yet installed — **install sanctioned in Part 1** via `npx expo install`), expo-image, expo-image-picker, react-native-keyboard-controller (SDK 54 Go-bundled), date-fns, FlashList/LegendList (JS-only).
 **Forbidden:** gifted-chat; Zeego / native context menus / anything needing a dev build; hand-retyped enums (codegen only). All installs via `npx expo install`; every dependency addition listed in the session report.
 
 ## 14. Build plan mapping (unchanged)
@@ -166,17 +168,18 @@ Investigation first, then five parts, commit-and-push per part, device gate per 
 
 | Part | Delivers | Gate evidence |
 |---|---|---|
-| 1 | Thread anatomy: grouping, tails, separators, attribution, delivery states, email collapse, dark tokens wired | Grouped-thread scroll; failed-state tap |
+| 1 | Reconcile + build thread anatomy: tokens wired incl. **red own-bubble ruling + CLAUDE.md amendment**, grouping/tails/separators/attribution (reconciling AE's shipped version), surface-anchored delivery states, email collapse, **§9 header + context chips (expo-blur install)** | Grouped-thread scroll with red bubbles; failed-state tap; header chip-row collapse |
 | 2 | Composer + keyboard choreography | Interactive dismiss; growth; bottom-anchor |
-| 3 | Motion + haptics: send-fly, presets, typing, pill, drag-to-reveal | Send-fly; timestamp drag; pill w/ badge |
-| 4 | List behaviors on existing furniture: unread, swipes, pins, previews | Both swipes; pin persistence or report |
+| 3 | Motion + haptics: send-fly, presets, typing (dormant, `__DEV__`-toggled), pill, drag-to-reveal (**reconcile** AE's shipped version: travel 68→84, add 0.55 resistance curve + per-message fade) | Send-fly; timestamp drag; pill w/ badge |
+| 4 | List behaviors: unread rendering, preview authorship, archive swipe (studio-wide semantics) | Archive swipe; unread dot + filter agreement; `You:`/name prefixes |
+| 4b | Pin + mute swipes on `UserConversationState` (**blocked on the backend addendum**) | Pin survives app restart; mute suppresses badge |
 | 5 | Long-press overlay + attachments + image viewer | Sheet; full-screen dismiss |
 
 Reports state: shipped, cut + why, deps touched, commit hash, escalations.
 
 ## 15. Web parity (deferred)
 
-`ConversationsPanel.tsx` adopts anatomy, states, and row rules in the **light** Editorial Gold treatment — separate edition when scheduled.
+`ConversationsPanel.tsx` adopts anatomy, states, and row rules in the **light** Editorial Gold treatment — separate edition when scheduled. A light-token twin of the prototype lives at `public/prototype/chat-ux-prototype-light.html` (identical DOM/JS to the dark file; only the token block and ~12 literals differ) as the parity reference and proof that the theme is a token layer.
 
 ## 16. Open questions for the investigation session
 
