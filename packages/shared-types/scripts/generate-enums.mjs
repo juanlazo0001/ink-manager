@@ -46,6 +46,7 @@ const WANTED = [
   { prisma: 'LiabilityWaiverStatus', as: 'WaiverStatus' },
   { prisma: 'FlashReviewMode' },
   { prisma: 'FlashPieceStatus' },
+  { prisma: 'NotificationType' },
 ];
 
 function parseEnum(schema, name) {

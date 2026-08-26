@@ -8,5 +8,6 @@ import "./coldLeadSweep";
 import "./reminderTicker";
 import "./emailPoller";
 import "./smsDeliveryStatusReconcile";
+import "./pushReceiptCheck";
 
 export { startScheduler, runJob, getJob, listJobs } from "./registry";

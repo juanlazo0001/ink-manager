@@ -29,6 +29,7 @@ import { getStripe } from "../lib/stripe";
 import { issueGiftCardForPaidDeposit } from "../lib/deposits";
 import { getConnectedAccountStatus, registerPaymentMethodDomainForAccount } from "../lib/stripeConnect";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { notifyMessageCreated } from "../lib/notifications";
 
 const router = Router();
 
@@ -365,6 +366,21 @@ router.post("/twilio/sms", async (req, res) => {
   // client message arrive live, regardless of how well every other route
   // in the app is wired.
   emitInvalidation({ type: "conversation.updated", studioId, conversationId: conversation.id });
+
+  // Notification v1. An inbound client text is the case this whole system
+  // is most worth having for: it is entirely out-of-band from any staff
+  // action, so nobody is looking when it lands. authorUserId is null --
+  // there is no logged-in author -- which notifyMessageCreated renders by
+  // naming the client rather than "Someone", and which means nobody is
+  // excluded from the recipient list as the actor.
+  await notifyMessageCreated({
+    conversationId: conversation.id,
+    messageId: message.id,
+    studioId,
+    authorUserId: null,
+    body: messageBody,
+    hasAttachments: attachments.length > 0,
+  });
 
   return twiml(res);
 });

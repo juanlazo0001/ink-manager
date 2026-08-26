@@ -14,6 +14,7 @@ import { findMatchingClientForImportRow } from "../duplicateDetection";
 import { generateUniqueReferralCode } from "../referrals";
 import { logAudit } from "../audit";
 import { emitInvalidation } from "../realtime/registry";
+import { notifyMessageCreated } from "../notifications";
 
 export const EMAIL_POLL_JOB_NAME = "emailInboxPoll";
 
@@ -174,6 +175,19 @@ async function run(scheduledFor: Date): Promise<JobDetails> {
       // background job, not a staff action, so nothing else in the app
       // would ever tell a connected client this message arrived.
       emitInvalidation({ type: "conversation.updated", studioId: integration.studioId, conversationId: conversation.id });
+
+      // Notification v1, same reasoning as the inbound-SMS webhook: this
+      // is a background job, so nobody performed an action that would
+      // otherwise surface it. authorUserId null -- an inbound client email
+      // has no logged-in author.
+      await notifyMessageCreated({
+        conversationId: conversation.id,
+        messageId: message.id,
+        studioId: integration.studioId,
+        authorUserId: null,
+        body: message.body,
+        hasAttachments: false,
+      });
 
       // Best-effort inbox hygiene, not the correctness mechanism (see
       // lib/gmail.ts's own comment on markMessageRead) -- a failure here

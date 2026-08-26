@@ -47,6 +47,8 @@ import { publicRouter as smsConsentPublicRouter } from "./routes/smsConsent";
 import schedulingRouter from "./routes/scheduling";
 import themeRouter from "./routes/theme";
 import reportsRouter from "./routes/reports";
+import notificationsRouter from "./routes/notifications";
+import pushTokensRouter from "./routes/pushTokens";
 import { startScheduler } from "./lib/jobs";
 import { requireAuth } from "./middleware/auth";
 import { initRealtime } from "./lib/realtime/io";
@@ -156,6 +158,10 @@ app.use("/nav-counts", navCountsRouter);
 app.use("/widget-layouts", widgetLayoutsRouter);
 app.use("/calendar-preferences", calendarPreferencesRouter);
 app.use("/conversations", conversationsRouter);
+// Personal, per-recipient feeds -- no permission key gates either
+// router; see routes/notifications.ts for why.
+app.use("/notifications", notificationsRouter);
+app.use("/push-tokens", pushTokensRouter);
 app.use("/prefill-drafts", prefillDraftsRouter);
 app.use("/intake-forms", intakeFormsRouter);
 app.use("/services", servicesRouter);

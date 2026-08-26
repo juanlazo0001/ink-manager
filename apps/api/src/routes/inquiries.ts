@@ -27,6 +27,7 @@ import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { findBufferConflict, formatBufferWarning, resolveSchedulingBufferMs } from "../lib/schedulingConflict";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { emitInvalidation, emitUserInvalidation } from "../lib/realtime/registry";
+import { notifyInquiryAssigned } from "../lib/notifications";
 import { approveFlashRequest } from "../lib/flashApproval";
 import { resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
 import { generateAndSendDepositForm } from "../lib/deposits";
@@ -1539,6 +1540,18 @@ router.patch("/:id/assign", requireAuth, async (req, res) => {
   });
 
   emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
+
+  // Notification v1, emitted from the same call site as the live-update
+  // event above. Scoped to the INQUIRY's own studio, not the caller's --
+  // a front desk can assign a project to a guest artist whose home studio
+  // is elsewhere, and the notification belongs where the work is, which is
+  // the same rule the audit log entry right above already follows.
+  await notifyInquiryAssigned({
+    inquiryId: id,
+    studioId: inquiry.studioId,
+    artistId,
+    actorUserId: req.user!.userId,
+  });
 
   res.json(updated);
 });

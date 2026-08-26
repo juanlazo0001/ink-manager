@@ -28,6 +28,7 @@ export {
   WaiverStatus,
   FlashReviewMode,
   FlashPieceStatus,
+  NotificationType,
 } from './enums.generated';
 
 import { MessageChannel } from './enums.generated';

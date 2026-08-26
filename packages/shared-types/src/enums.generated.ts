@@ -104,3 +104,11 @@ export const FlashPieceStatus = {
   RETIRED: 'RETIRED',
 } as const;
 export type FlashPieceStatus = (typeof FlashPieceStatus)[keyof typeof FlashPieceStatus];
+
+
+export const NotificationType = {
+  MESSAGE_CREATED: 'MESSAGE_CREATED',
+  INQUIRY_ASSIGNED: 'INQUIRY_ASSIGNED',
+  TASK_ASSIGNED: 'TASK_ASSIGNED',
+} as const;
+export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];

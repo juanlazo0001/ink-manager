@@ -14,6 +14,7 @@ import {
 import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { notifyMessageCreated } from "../lib/notifications";
 import {
   canViewConversation,
   getOrCreateStaffConversation,
@@ -887,6 +888,18 @@ router.post("/:id/messages", async (req, res) => {
         include: MESSAGE_INCLUDE,
       });
       emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
+      // Notification v1, at the same call site as the live-update event.
+      // One of three exits from this route (real SMS, real email, log-only)
+      // -- each gets its own call rather than one at the bottom, because
+      // each returns early.
+      await notifyMessageCreated({
+        conversationId: id,
+        messageId: result.messageId,
+        studioId,
+        authorUserId: userId,
+        body: bodyText,
+        hasAttachments: !!attachments && attachments.length > 0,
+      });
       return res.status(201).json(created);
     }
   }
@@ -1009,6 +1022,14 @@ router.post("/:id/messages", async (req, res) => {
       });
 
       emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
+      await notifyMessageCreated({
+        conversationId: id,
+        messageId: created.id,
+        studioId,
+        authorUserId: userId,
+        body: bodyText,
+        hasAttachments: !!attachments && attachments.length > 0,
+      });
       return res.status(201).json(created);
     }
   }
@@ -1117,6 +1138,20 @@ router.post("/:id/messages", async (req, res) => {
   }
 
   emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
+
+  // The third and last exit -- and the only one a STAFF/GROUP message
+  // ever takes, so this is the call that carries team chat. Placed after
+  // the participant createMany above, deliberately: an @mention that
+  // upgrades a thread must notify the person it just added, and reading
+  // participants before that write would miss them.
+  await notifyMessageCreated({
+    conversationId: id,
+    messageId: message.id,
+    studioId,
+    authorUserId: userId,
+    body: bodyText,
+    hasAttachments: !!attachments && attachments.length > 0,
+  });
 
   res.status(201).json(message);
 });

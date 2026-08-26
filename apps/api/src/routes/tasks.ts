@@ -9,6 +9,7 @@ import { artistTransferPendingSource } from "../lib/tasks/artistTransferPending"
 import { flashRequestArtistPendingSource } from "../lib/tasks/flashRequestArtistPending";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { hasPermission, requirePermission } from "../lib/permissions";
+import { notifyTaskAssigned } from "../lib/notifications";
 
 const router = Router();
 router.use(requireAuth);
@@ -184,6 +185,19 @@ router.post("/personal", requirePermission("tasks.manageOwn"), async (req, res) 
   });
 
   emitInvalidation({ type: "task.changed", studioId });
+
+  // Notification v1: emitted from the same place the live-update event
+  // already fires. Self-assignment is silent without a check here --
+  // notify() drops the actor from its own recipient list, so a task you
+  // make for yourself produces nothing.
+  await notifyTaskAssigned({
+    taskId: task.id,
+    studioId,
+    assigneeUserId: assigneeId,
+    actorUserId: userId,
+    title: task.title,
+    dueAt: task.dueAt,
+  });
 
   res.status(201).json(task);
 });

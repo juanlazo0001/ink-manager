@@ -9,10 +9,11 @@ import { useUserProfile } from '../context/useUserProfile'
 import { formatStatus } from '../lib/format'
 import { tasksQueryKey } from '../lib/queryKeys'
 import { formatBubbleCount } from '../lib/useNavCounts'
-import { BellIcon, ChevronDownIcon, LogoutIcon, SearchIcon, SettingsIcon, TasksIcon, ViewIcon } from './icons'
+import { ChevronDownIcon, LogoutIcon, SearchIcon, SettingsIcon, TasksIcon, ViewIcon } from './icons'
 import ViewAsPicker from './ViewAsPicker'
 import SearchPalette from './SearchPalette'
 import ConnectionStatusIndicator from './ConnectionStatusIndicator'
+import NotificationBell from './NotificationBell'
 import { useThemePreset } from '../lib/useThemePreset'
 import appBgBlurred from '../assets/app-bg-blurred-amber.jpg'
 
@@ -38,7 +39,7 @@ export default function TopBar() {
   const { target: viewAsTarget } = useViewAs()
   const { profile } = useUserProfile()
   const navigate = useNavigate()
-  const [showMentions, setShowMentions] = useState(false)
+  const [showNotifications, setShowNotifications] = useState(false)
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [showViewAsPicker, setShowViewAsPicker] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -76,7 +77,7 @@ export default function TopBar() {
   }
 
   function closeMenus() {
-    setShowMentions(false)
+    setShowNotifications(false)
     setShowAccountMenu(false)
   }
 
@@ -102,6 +103,15 @@ export default function TopBar() {
   const iconBtnClass = isEditorial
     ? 'flex h-11 w-11 items-center justify-center rounded-full border border-border-soft bg-surface-inset/80 text-fg-muted shadow-lg backdrop-blur-sm transition hover:text-fg hover:border-border-strong'
     : 'flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary shadow-lg transition hover:text-fg'
+  // Shared by the Tasks count and the notification count, so the two
+  // bubbles sitting next to each other can never drift apart. Matches the
+  // Welcome header's own "Welcome," text color (--color-fg, cream) -- not
+  // the italic accent-hover name beneath it. Every notification bubble in
+  // the app (Tasks, the bell, Sidebar, the Conversations FAB) uses this
+  // same pairing.
+  const badgeClass = isEditorial
+    ? 'absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-fg px-1 text-[11px] font-medium text-accent-fg'
+    : 'absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-semibold text-bg'
   const menuPanelClass = isEditorial
     ? 'rounded-card border border-border bg-surface-raised shadow-xl'
     : 'rounded-2xl border border-border bg-surface-raised shadow-xl'
@@ -140,57 +150,31 @@ export default function TopBar() {
         {canSeeTasks && (
           <Link to="/tasks" onClick={closeMenus} aria-label="My Tasks" className={`relative ${iconBtnClass}`}>
             <TasksIcon className="h-5 w-5" />
-            {taskBadgeCount > 0 && (
-              <span
-                className={
-                  isEditorial
-                    ? // Matches the Welcome header's own "Welcome," text
-                      // color (--color-fg, cream) -- not the italic
-                      // accent-hover name beneath it -- per this session's
-                      // own instruction. Every notification bubble
-                      // (Tasks here, Sidebar, the Conversations FAB) uses
-                      // this same pairing.
-                      'absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-fg px-1 text-[11px] font-medium text-accent-fg'
-                    : 'absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-semibold text-bg'
-                }
-              >
-                {formatBubbleCount(taskBadgeCount)}
-              </span>
-            )}
+            {taskBadgeCount > 0 && <span className={badgeClass}>{formatBubbleCount(taskBadgeCount)}</span>}
           </Link>
         )}
 
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => {
-              setShowMentions((v) => !v)
-              setShowAccountMenu(false)
-            }}
-            aria-label="Mentions"
-            className={iconBtnClass}
-          >
-            <BellIcon className="h-5 w-5" />
-          </button>
-
-          {showMentions && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setShowMentions(false)} aria-hidden="true" />
-              <div className={`absolute right-0 top-12 z-20 w-64 p-4 ${menuPanelClass}`}>
-                <p className="text-sm text-fg-secondary">
-                  No mentions yet — internal mentions are coming to Conversations.
-                </p>
-              </div>
-            </>
-          )}
-        </div>
+        {/* Was a hardcoded "No mentions yet" sentence with no model and no
+            endpoint behind it. Now a real feed over GET /notifications --
+            see NotificationBell.tsx. Open state stays owned here so
+            opening the bell closes the account menu, exactly as before. */}
+        <NotificationBell
+          open={showNotifications}
+          onOpenChange={(next) => {
+            setShowNotifications(next)
+            if (next) setShowAccountMenu(false)
+          }}
+          buttonClass={iconBtnClass}
+          panelClass={menuPanelClass}
+          badgeClass={badgeClass}
+        />
 
         <div className="relative">
           <button
             type="button"
             onClick={() => {
               setShowAccountMenu((v) => !v)
-              setShowMentions(false)
+              setShowNotifications(false)
             }}
             aria-label="Account menu"
             className={

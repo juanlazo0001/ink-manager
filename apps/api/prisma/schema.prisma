@@ -327,6 +327,7 @@ model Studio {
   flashPieces             FlashPiece[]
   artistMemberships       StudioMembership[]
   artistMembershipInvites ArtistMembershipInvite[]
+  notifications           Notification[]
 
   // Transfer-to-artist epic: this studio as either side of a transfer, or
   // as the recorded destination on a moved Client/Inquiry.
@@ -526,6 +527,20 @@ model User {
   uploadedImportBatches     ImportBatch[]
   widgetLayouts             UserWidgetLayout[]
   calendarPreference        UserCalendarPreference?
+
+  // Notification system. One switch, per person, covering PUSH only --
+  // the in-app bell feed is never suppressed by it (a notification you
+  // can go and look at is not an interruption, and hiding a record you
+  // still hold is how people end up not knowing something happened).
+  // Defaults true so existing accounts behave as though they had opted
+  // in, which is the behaviour they get today from nothing at all.
+  pushEnabled   Boolean        @default(true)
+  notifications Notification[] @relation("NotificationRecipient")
+  // The other side: things this person DID that notified someone else.
+  // Kept so "who assigned this to me" survives on the row rather than
+  // only in the rendered sentence.
+  actedNotifications Notification[] @relation("NotificationActor")
+  pushTokens         PushToken[]
 
   initiatedTransfers        ArtistTransfer[]          @relation("TransferInitiatedBy")
   respondedTransfers        ArtistTransfer[]          @relation("TransferRespondedBy")
@@ -3203,4 +3218,123 @@ model ShortLink {
   createdAt DateTime @default(now())
 
   @@index([targetUrl])
+}
+
+// ---------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------
+
+// v1 deliberately has three types and no more. Each one corresponds to a
+// place the WebSocket layer already fires (see lib/realtime/registry.ts),
+// so nothing here invents a new "something happened" signal -- it
+// persists one that until now existed only for the duration of a socket
+// frame, and only for whoever happened to be connected.
+enum NotificationType {
+  // Someone wrote in a conversation you take part in.
+  MESSAGE_CREATED
+  // A project was assigned to you.
+  INQUIRY_ASSIGNED
+  // Someone created a personal task with you as the assignee.
+  TASK_ASSIGNED
+}
+
+model Notification {
+  id   String           @id @default(cuid())
+  type NotificationType
+
+  // Rendered as written by both bells. Composed server-side rather than
+  // by each client from the payload, so web and mobile cannot phrase the
+  // same event differently -- the mistake the "You:" preview bug was.
+  title String
+  body  String
+
+  // The deep link, as two plain columns rather than something to dig out
+  // of `payload`: what kind of thing to open, and which one. Both clients
+  // route on exactly this pair.
+  entityType String
+  entityId   String
+
+  // Anything a specific type needs beyond the link -- e.g. a
+  // MESSAGE_CREATED carries its conversationId here even though
+  // entityId is already the conversation, so a future per-message deep
+  // link does not need a migration. Never required to render the row.
+  payload Json?
+
+  // Null until read. Nullable-timestamp rather than a boolean for the
+  // same reason every other state in this schema is: WHEN is free.
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  // The RECIPIENT. Notifications are per-person, never per-studio: two
+  // people at one studio have different feeds and different unread counts.
+  userId String
+  user   User   @relation("NotificationRecipient", fields: [userId], references: [id])
+
+  // Who caused it. Null for anything system-generated. Never equal to
+  // userId -- every emitter drops the actor from its own recipient list,
+  // because being told about a thing you just did is noise.
+  actorUserId String?
+  actor       User?   @relation("NotificationActor", fields: [actorUserId], references: [id])
+
+  // The feed query (userId, newest first) and the unread count (userId +
+  // readAt null) are the only two reads there are, and this index serves
+  // both.
+  @@index([userId, readAt, createdAt])
+  @@index([studioId])
+}
+
+// An Expo push token for one device. Registered by apps/mobile at login
+// and refreshed on every launch -- Expo rotates these, and a stale one is
+// not an error, just a token that will come back DeviceNotRegistered and
+// be pruned (see lib/jobs/pushReceiptCheck.ts).
+model PushToken {
+  id String @id @default(cuid())
+
+  // Unique on the TOKEN, not on (user, token): a physical device handed
+  // to a different person must move to that person rather than exist
+  // twice, or the previous owner keeps receiving pushes on hardware they
+  // no longer hold. POST /push-tokens upserts on this.
+  token String @unique
+
+  // "ios" | "android". Free text rather than an enum -- it is diagnostic,
+  // never branched on.
+  platform   String
+  deviceName String?
+
+  createdAt  DateTime @default(now())
+  // Bumped on every re-registration, so a device that has stopped calling
+  // in is visible as such without waiting for a failed send to prove it.
+  lastSeenAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// One Expo push TICKET awaiting its receipt.
+//
+// Expo's send call returns a ticket, not a delivery result: the real
+// outcome (including DeviceNotRegistered, the only signal that a token is
+// dead) arrives minutes later from a separate receipts endpoint. Rows are
+// written at send time and deleted once checked, so this table is a queue
+// and stays small.
+model PushReceipt {
+  id       String @id @default(cuid())
+  ticketId String @unique
+
+  // The Expo token this ticket was for, as a plain string rather than a
+  // relation: the entire purpose of checking is to DELETE that PushToken
+  // row when Expo reports the device is gone, and a foreign key would
+  // only be in the way of that.
+  token String
+
+  createdAt DateTime @default(now())
+
+  // Receipts are not ready immediately -- the checker only picks up rows
+  // that have had time to settle, so it queries on this.
+  @@index([createdAt])
 }
