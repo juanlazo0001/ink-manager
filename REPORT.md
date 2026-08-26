@@ -25788,3 +25788,70 @@ type; and all client UI. Mobile ships Part 4b against
 `viewerState`, the `PIN_LIMIT` code, and the one trap worth naming: a
 non-null `mutedUntil` does **not** mean muted — it has to be compared to
 the current time, because nothing sweeps expired rows.
+
+# Backend addendum follow-up — `UserConversationState`: order re-issued, two records
+
+The work order was re-issued on 2026-08-26 with the scoping ruling
+ratified and a new **Session conventions** section. Two things came out of
+reconciling it against what had already shipped.
+
+## The scoping ruling matches what shipped
+
+The re-issued order now prescribes `canViewConversation` and records the
+architect ruling that `conversation.studioId === jwt.studioId` was wrong.
+That is exactly what commit `00713fa` implements, so nothing changed —
+but the reasoning now has a concrete test behind it rather than only an
+argument.
+
+The original acceptance line asks for **"cross-studio and non-member"**
+requests to 404. Those are two distinct cases and only the first had
+coverage: the outsider test uses a real OWNER of a different studio, which
+a bare `studioId` equality check would also have caught. The second case
+is the one that separates the two approaches.
+
+Added: an ARTIST of the **same** studio targeting another staff member's
+1:1 STAFF thread. Every studio check passes — same `studioId`, real active
+membership, genuine member of that studio — and they must still be
+refused, because `canViewConversation` keeps ARTIST's "-own" scoping on
+STAFF/GROUP threads (their own 1:1, plus groups they were added to, never
+a colleague's). **A bare `studioId === jwt.studioId` check would have let
+this straight through.** 404, nothing written, and the thread is absent
+from their list too — so the read and write sides cannot disagree about
+membership, which is the reason both go through the one helper rather than
+two separate checks.
+
+Suite for this file: 12/12.
+
+## Branch and commit-split convention — deviation, recorded
+
+The new conventions section specifies branch `feat/user-conversation-state`
+cut from `main`, with the migration and the endpoint as separate commits.
+This shipped instead as a single commit (`00713fa`) on
+`session/api-integrity-notifications`. Recorded rather than restructured,
+for a reason that is structural, not preference:
+
+**A branch cut from `main` cannot carry this work.** 29 lines of it modify
+`apps/api/src/lib/notifications.ts` — the mute→push suppression — and that
+file does not exist on `main`. The notification pipeline it hooks into is
+itself unmerged, on the same branch. So on a branch cut from `main`, the
+acceptance criterion *"muted conversations stop pushing for the muted user
+only"* is not merely unverified, it is unimplementable: there is nothing
+there to suppress.
+
+Checked rather than assumed: `main` (now `307b11e`) has not touched
+`conversations.ts`, `schema.prisma`, `lib/conversations.ts` or
+`shared-types/conversations.ts` since this branch's base — its whole delta
+is mobile sessions AA–AE and the chat-UX investigation. So six of the
+seven files would have applied cleanly to `main`; only the mute wiring
+could not. Splitting on that line would have satisfied the letter of the
+convention while leaving the feature half-built across two branches and
+its headline behaviour undemonstrable.
+
+The options were put to the owner with that constraint stated, and the
+ruling (2026-08-26) was to leave it in place and record the deviation —
+the same treatment the scoping correction received.
+
+**Consequence for merge order:** this work is inseparable from the
+notification system it mutes. `session/api-integrity-notifications` must
+land as one unit; there is no way to take the pin/mute half without the
+notification half, or vice versa.

@@ -40,6 +40,7 @@ let baseUrl: string;
 const studioIds: string[] = [];
 const userIds: string[] = [];
 const clientIds: string[] = [];
+const artistIds: string[] = [];
 const conversationIds: string[] = [];
 
 let studioId: string;
@@ -48,6 +49,8 @@ let outsiderStudioId: string;
 let ownerUserId: string;
 let frontDeskUserId: string;
 let outsiderUserId: string;
+let insiderArtistUserId: string;
+let foreignStaffThread: string;
 
 let threadA: string;
 let threadB: string;
@@ -155,6 +158,28 @@ before(async () => {
       },
     });
   }
+  // A real ARTIST of the SAME studio, and a STAFF thread that is NOT
+  // theirs. "Non-member" is a distinct case from "cross-studio": this
+  // caller passes every studio check and still must not reach the thread,
+  // because canViewConversation keeps ARTIST's "-own" scoping on
+  // STAFF/GROUP threads -- their own 1:1 plus groups they were added to,
+  // never a colleague's.
+  const insiderArtistUser = await prisma.user.create({
+    data: { email: `${suffix}-artist@test.invalid`, role: Role.ARTIST, studioId },
+  });
+  insiderArtistUserId = insiderArtistUser.id;
+  userIds.push(insiderArtistUserId);
+  const insiderArtist = await prisma.artist.create({
+    data: { userId: insiderArtistUserId, specialties: [], portfolioImages: [] },
+  });
+  artistIds.push(insiderArtist.id);
+
+  const othersStaffThread = await prisma.conversation.create({
+    data: { studioId, type: ConversationType.STAFF, staffUserId: frontDeskUserId, lastMessageAt: new Date() },
+  });
+  foreignStaffThread = othersStaffThread.id;
+  conversationIds.push(foreignStaffThread);
+
   threadB = await makeClientThread(studioId, "b");
   threadC = await makeClientThread(studioId, "c");
   threadD = await makeClientThread(studioId, "d");
@@ -180,6 +205,7 @@ after(async () => {
   await prisma.conversationParticipant.deleteMany({ where: { conversationId: { in: conversationIds } } });
   await prisma.conversation.deleteMany({ where: { id: { in: conversationIds } } });
   await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
+  await prisma.artist.deleteMany({ where: { id: { in: artistIds } } });
   await prisma.auditLog.deleteMany({ where: { studioId: { in: studioIds } } });
   await prisma.rolePermission.deleteMany({ where: { studioId: { in: studioIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
@@ -398,4 +424,35 @@ test("a bad body is rejected before anything is written", async () => {
     where: { userId_conversationId: { userId: outsiderUserId, conversationId: threadB } },
   });
   assert.equal(forged, null, "userId came from the JWT, not the body");
+});
+
+test("a NON-MEMBER inside the same studio also gets 404 -- distinct from the cross-studio case", async () => {
+  // Everything about this caller's studio checks out: same studioId, real
+  // active membership, a genuine ARTIST of this studio. What they are not
+  // is a member of THIS thread -- it is another staff member's 1:1.
+  // canViewConversation's "-own" scoping is what stops them, and this is
+  // the case a bare `conversation.studioId === jwt.studioId` check (the
+  // work order's original draft) would have let straight through.
+  const headers = {
+    Authorization: `Bearer ${tokenFor(insiderArtistUserId, studioId, Role.ARTIST)}`,
+    "Content-Type": "application/json",
+  };
+
+  const write = await setState(headers, foreignStaffThread, { isPinned: true });
+  assert.equal(write.status, 404, "same studio, not a member of this thread -- still 404, never 403");
+
+  const stored = await prisma.userConversationState.findUnique({
+    where: { userId_conversationId: { userId: insiderArtistUserId, conversationId: foreignStaffThread } },
+  });
+  assert.equal(stored, null, "and nothing was written");
+
+  // Their own list does not contain it either -- the read side and the
+  // write side agree about membership, which is the whole reason both go
+  // through canViewConversation rather than two separate checks.
+  const rows = await list(headers);
+  assert.equal(
+    rows.find((r) => r.id === foreignStaffThread),
+    undefined,
+    "not in their list, so the read and write sides cannot disagree",
+  );
 });
