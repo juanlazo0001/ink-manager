@@ -43,6 +43,27 @@ import { isMuted } from '@/lib/conversations';
  * number rather than a confident, wrong `0`. The app opens on CHAT, so
  * that window is one request wide in practice.
  */
+/*
+ * ─── KNOWN BLOCKER, SESSION 07 TASK F (server-side) ─────────────────
+ *
+ * None of this fires for a LIVE arrival, and the cause is not here.
+ *
+ * `apps/api/src/lib/conversations.ts:152` counts unread with
+ * `authorUserId: { not: userId }`. On a NULLABLE column that predicate
+ * EXCLUDES NULL rows -- and a real inbound SMS has no author, because
+ * nobody was logged in to write it. So an arriving text is never counted,
+ * `unreadCount` stays 0, and the row dot, the UNREAD filter and this
+ * badge all faithfully render the zero they are given.
+ *
+ * Measured on the dev database: with `lastReadAt` fresh, inserting one
+ * INBOUND message with `authorUserId: null` left the count at 0, while
+ * the same query with a NULL-safe predicate returned 1.
+ *
+ * The fix is one predicate in `apps/api` (and the identical one at :181,
+ * which feeds `/nav-counts`). Session 07 is mobile-scoped, so it is
+ * reported as a backend addendum rather than changed here. Nothing on
+ * this side needs to move when it lands.
+ */
 let count: number | null = null;
 const listeners = new Set<() => void>();
 
