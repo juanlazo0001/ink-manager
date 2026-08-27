@@ -231,6 +231,16 @@ Concise operating rules, not a project history — see REPORT.md for history.
   `transform`/`filter` — a fixed-position layer nested inside a `backdrop-filter` ancestor gets
   sized/clipped to that ancestor's box, not the viewport. Portal full-viewport fixed layers
   (background photo/wash, etc.) to `document.body` when they might end up nested inside one.
+- **A floating layer positioned relative to an anchor must be clamped against every sibling that
+  can move under it — an offset from the anchor is not a position.** The long-press tapback row
+  was `translateY: -52` from the bubble and nothing else, while the action sheet, for a bubble low
+  on screen, re-anchors to `bottom: 0` and grows upward by its own content height. Both rules were
+  individually correct and they collided: the sheet re-anchors precisely for low bubbles, which is
+  precisely when the row occupies the band the sheet moved into, and the sheet paints later
+  (measured 393x852, `rect.y` 712: row `[660, 710]`, sheet top 674 — 36 of 50pt buried). Derive the
+  position, clamp it into the band between the safe area and the other layer's **measured** edge,
+  and remember that a content-sized sibling's height is not knowable before layout — measure it,
+  don't assume it.
 
 ## Shared types
 

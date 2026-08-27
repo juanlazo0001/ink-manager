@@ -1,7 +1,8 @@
 import { BlurView } from 'expo-blur';
-import { type ReactNode, useEffect } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { Modal, Platform, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { Rect } from '@/components/SendFly';
 import { motion, REDUCED_MS, S1, S2 } from '@/theme/chatMotion';
@@ -39,6 +40,30 @@ import { space } from '@/theme';
  * Android gets the dim alone. `expo-blur` there is an approximation with a
  * real cost, and 45% dim over an already-dark thread reads as "the thread
  * is behind this" perfectly well.
+ *
+ * ─── WHY THE TAPBACK ROW IS PLACED, NOT OFFSET (session 14) ─────
+ *
+ * The row used to be pinned to the bubble by a fixed `translateY` of -52
+ * and nothing else. It was therefore ALWAYS above, always exactly there,
+ * and never compared against anything — while the sheet, for a bubble low
+ * on screen, moves to `bottom: 0` and grows upward by its own content
+ * height. Those two rules meet: `sheetAtBottom` fires precisely for low
+ * bubbles, which is precisely when the row sits in the band the sheet has
+ * moved into, and the sheet is the later sibling, so it paints over it.
+ *
+ * Measured at 393x852, rect.y = 712: row [660, 710], sheet top 674 — 36 of
+ * the row's 50pt buried, 14 left. From rect.y >= 726 the row is gone
+ * entirely.
+ *
+ * Note what was NOT wrong, since it was the first suspect: no in-list
+ * coordinate is read here. The clone and the row are placed from the SAME
+ * `rect`, which `rowScreenRect` has already resolved out of the inverted
+ * list's mirrored y. A mirrored value would have moved both of them.
+ *
+ * So placement is computed rather than offset, and clamped, so the row
+ * cannot land under the sheet or above the safe area wherever the bubble
+ * is. The row and the sheet both report their real heights through
+ * `onLayout`: both are content-sized and neither is knowable in advance.
  */
 export function MessageOverlay({
   rect,
@@ -60,6 +85,14 @@ export function MessageOverlay({
   below: ReactNode;
 }) {
   const { height: screenHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+
+  /*
+   * Both are content-sized, so both must be measured. Until they are, the
+   * row is held invisible for a frame rather than placed from a guess.
+   */
+  const [rowHeight, setRowHeight] = useState(0);
+  const [sheetHeight, setSheetHeight] = useState(0);
 
   // 0 at rest, 1 lifted. Drives the scale and everything's opacity.
   const lift = useSharedValue(0);
@@ -88,7 +121,8 @@ export function MessageOverlay({
     opacity: lift.value,
     // Rises into place rather than appearing: the same lift, read as
     // movement instead of scale.
-    transform: [{ translateY: -TAPBACK_GAP - 6 * (1 - lift.value) }],
+    // The RESTING position is no longer in here — this is the entrance.
+    transform: [{ translateY: -6 * (1 - lift.value) }],
   }));
 
   /*
@@ -97,6 +131,33 @@ export function MessageOverlay({
    * case, and a bubble near the bottom has no room under it at all.
    */
   const sheetAtBottom = screenHeight - (rect.y + rect.height) < SHEET_MIN_ROOM;
+
+  /*
+   * ─── THE ROW'S PLACEMENT CONTRACT ───────────────────────────
+   *
+   * Above the bubble when there is room, below when there is not, and in
+   * both cases clamped into the band between the safe area and the
+   * sheet's top edge. The clamp is what makes "the row is visible" a
+   * property of the code rather than of where the bubble happened to be.
+   *
+   * Every input is a WINDOW coordinate: `rect` is the clone's own rect,
+   * the measurement already proven right, and the sheet's top comes from
+   * its measured height. Nothing here reads the list.
+   */
+  const sheetTop = sheetAtBottom ? screenHeight - sheetHeight : rect.y + rect.height + space.md;
+
+  const measured = rowHeight > 0 && (!sheetAtBottom || sheetHeight > 0);
+  const minRowTop = insets.top + ROW_GAP;
+  const maxRowTop = sheetTop - rowHeight - ROW_GAP;
+  const spaceAbove = rect.y - minRowTop;
+  const preferred =
+    spaceAbove >= rowHeight + ROW_GAP
+      ? rect.y - ROW_GAP - rowHeight // above, the §7 default
+      : rect.y + rect.height + ROW_GAP; // below, when the bubble is near the top
+  /* Math.max on the upper bound itself: if the sheet is tall enough that
+     the band inverts, the safe-area floor wins and the row stays on
+     screen rather than being clamped off the top of it. */
+  const rowTop = Math.min(Math.max(preferred, minRowTop), Math.max(minRowTop, maxRowTop));
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={dismiss} statusBarTranslucent>
@@ -110,7 +171,16 @@ export function MessageOverlay({
 
       {above ? (
         <Animated.View
-          style={[styles.layer, { top: rect.y, left: rect.x, width: rect.width }, tapback]}
+          onLayout={(e) => setRowHeight(e.nativeEvent.layout.height)}
+          style={[
+            styles.layer,
+            styles.rowLayer,
+            { top: rowTop, left: rect.x, width: rect.width },
+            tapback,
+            // One frame, before the two heights exist. Placing from a
+            // guess and correcting it is a visible jump; this is not.
+            measured ? null : styles.preMeasure,
+          ]}
           pointerEvents="box-none"
         >
           {above}
@@ -125,6 +195,7 @@ export function MessageOverlay({
       </Animated.View>
 
       <Animated.View
+        onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}
         style={[
           styles.layer,
           sheetAtBottom
@@ -141,11 +212,20 @@ export function MessageOverlay({
 
 /** Below this much room under the bubble, the sheet goes to the foot. */
 const SHEET_MIN_ROOM = 260;
-/** How far above the bubble the tapback row sits. */
-const TAPBACK_GAP = 52;
+/**
+ * §7: the row's gap from the bubble, and its minimum clearance from the
+ * safe area and from the sheet. Replaces `TAPBACK_GAP = 52`, which was
+ * not a gap at all — it was the row's own height plus two, written as an
+ * offset, which is why the row read as flush against the bubble.
+ */
+const ROW_GAP = 12;
 
 const styles = StyleSheet.create({
   // §7: ~45% dim, over the blur.
   dim: { backgroundColor: 'rgba(0, 0, 0, 0.45)' },
   layer: { position: 'absolute' },
+  /* Above the sheet, so that a frame of overlap during a re-measure can
+     never bury the row even though the clamp already rules it out. */
+  rowLayer: { zIndex: 2 },
+  preMeasure: { opacity: 0 },
 });
