@@ -99,6 +99,40 @@ export function Sheet({
         if (finished && !visible) runOnJS(setMounted)(false);
       },
     );
+
+    if (visible) return;
+
+    /*
+     * ─── THE BACKSTOP, AND THE BUG IT EXISTS FOR ──────────────────
+     *
+     * The callback above only unmounts when the close animation reports
+     * `finished === true`. An INTERRUPTED animation reports false, and
+     * then nothing ever unmounts the Modal — which is not a cosmetic
+     * problem: this Modal is transparent and full-screen, so a mounted
+     * one that should be gone sits there swallowing every touch while the
+     * app renders normally underneath. The screen looks alive and is
+     * completely dead to the finger.
+     *
+     * That is the session 09 attachment "hang", and the path is exact:
+     * `Composer.addFromLibrary` calls `setSourceOpen(false)` and then
+     * launches the native image picker a few lines later, while this
+     * 300ms dismissal is still running. The native modal takes the
+     * screen, the timing animation never lands, `finished` is false, and
+     * the sheet's Modal is still mounted when the picker returns. Nothing
+     * threw, so there was no error UI to show — which is exactly why it
+     * read as a freeze rather than a crash.
+     *
+     * So the unmount cannot depend on the animation completing. This
+     * fires on the animation's own duration regardless, and the effect
+     * cleanup cancels it if the sheet re-opens first. The callback above
+     * stays as the fast path; this is the one that cannot be skipped.
+     *
+     * It is a shared component: every sheet in the app had this, and any
+     * of them could have stuck. The attach flow is simply the one place
+     * that reliably races a native modal against the dismissal.
+     */
+    const backstop = setTimeout(() => setMounted(false), duration.slow + 80);
+    return () => clearTimeout(backstop);
   }, [visible, scrim, slide]);
 
   const scrimStyle = useAnimatedStyle(() => ({ opacity: scrim.value }));
