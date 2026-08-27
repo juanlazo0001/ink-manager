@@ -167,6 +167,9 @@ Concise operating rules, not a project history — see REPORT.md for history.
   provides it under `tools/motion-probe/recordings/`, run motion-probe and include the verdict
   before recommending merge. The web harness freezes animation travel in app subtrees — geometry
   proves in preview, feel proves on frames or on device, never by assertion.
+- The harness freeze is animation-specific, not universal — when feasible run the same probe on the
+  before state; a flat after-line is evidence only if the probe moved when it should have (Session 12
+  precedent).
 
 ## Merge verification
 
