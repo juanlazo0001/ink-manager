@@ -29899,3 +29899,202 @@ rides along on main that was already there —
 and it has **not** been applied to production. It will run on the next
 Railway deploy of main. Additive, no backfill required. Flagged in Part 1
 because the owner believed that work was still held.
+
+# Chat UX 07 — Gate Round 2 (gold reversal · header · groups · reactions · two diagnostics)
+
+Branch `chat-ux/07-gate-2`, cut from `main` at `82c4aed` (session AK's consolidation),
+worktree per `CLAUDE.md`. Mobile-scoped throughout: no `apps/api` or `apps/web` writes,
+no dependencies added. Complies with AK's new one-unmerged-line rule — this branched from
+current main with nothing else outstanding.
+
+| | commit |
+|---|---|
+| spec rev G, nine edits | `540e954` |
+| A — gold reversal | `78eeb5c` |
+| F — live unread (FINDING) | `9a30a59` |
+| G — attachment path | `9c81668` |
+| E — remove DIRECTION | `f4bab9a` |
+| B — header + duo-stack | `6a9bd93` |
+| C — reaction balloons | `548637d` |
+| D — reveal gap | `ade510a` |
+
+## The two diagnostics
+
+### F — live unread: ROOT CAUSE IS SERVER-SIDE. Stop condition hit.
+
+    apps/api/src/lib/conversations.ts:152   getUnreadCountForConversation
+    apps/api/src/lib/conversations.ts:181   getUnreadConversationCount
+
+Both count unread with `authorUserId: { not: userId }`. On a NULLABLE column that
+predicate **excludes NULL rows** — and a real inbound SMS has `authorUserId = null`,
+because nobody was logged in to write it. An arriving text is never counted as unread, by
+either function: not for the row, not for `/nav-counts`.
+
+Measured on the dev database, thread marked read seconds earlier:
+
+    lastReadAt                       2026-08-27T01:25:54.809Z
+    unread BEFORE                    0
+    inserted INBOUND, author = null  cmtauf5ul0000kki2g5emdosx
+    unread AFTER                     0      <- the arrival is invisible
+    same query, NULL-safe predicate  1      <- what it should be
+    rows with author NULL            2
+    rows matching {not: me}          0      <- excludes NULLs, proven
+
+The insert is exactly the shape the Twilio webhook writes; the webhook itself needs a
+CONNECTED integration and a valid signature, so it cannot be driven locally.
+
+**Every client-side suspect in the brief is ruled out.** The list polls every 30s while
+focused and refetches on focus; `unreadCount > 0` drives the row dot, the UNREAD filter
+and the 06-g2 badge from one shared predicate; the 06-g1 gutter refactor changed only
+where the dot sits, not what decides it. All three faithfully render the zero they are
+given. Nothing on the mobile side needs to move when the predicate is fixed — recorded at
+the consumer (`lib/chatUnread.ts`) so the next reader is not left hunting the client for a
+server bug.
+
+### G — attachment crash: no stack captured, one strong candidate, several ruled out.
+
+**No stack trace exists.** The crash does not reproduce in the web harness. Said plainly
+rather than dressed up.
+
+Ruled out with evidence:
+
+- **SDK drift** — `expo-image-picker` 17.0.11 installed, `~17.0.11` declared, `expo
+  ~54.0.36`; `npx expo install --check` reports "Dependencies are up to date". **The
+  conditional re-pin sanction was not needed and was not used.**
+- **API drift** — already on the post-v16 `mediaTypes: ['images']` array at both call
+  sites; no `MediaTypeOptions` anywhere in the repo.
+- **Permissions** — requested and handled, with a Settings-pointing Alert on denial;
+  `app.json` carries the plugin and its `photosPermission` string.
+- **The picker call** — on web the sheet opens, "Photo library" opens a real file chooser,
+  a file is accepted, nothing throws.
+
+The candidate, and why it fits the word "crash": `Composer.addFromLibrary` and
+`addFromCamera` called into expo-image-picker with **no try/catch**, inside an async
+`onPress`. A native error from the permission call or the picker became an **unhandled
+promise rejection** — which React Native renders as a redbox, indistinguishable from a
+crash. The asymmetry points at it: `ImageFields.tsx` wraps the identical call for the
+avatar path, and the avatar path was never reported as crashing. The chat path was the
+only unguarded one; a third call site in that same file was unguarded too and is now
+wrapped as well. The catch surfaces the native message rather than swallowing it, so the
+next report carries text instead of a stack nobody can read.
+
+**Not fixed, deliberately:** on web the upload leg fails at Cloudinary with
+`400 "Unsupported source URL: [object Object]"`. That is a harness artifact —
+`upload.ts:152` posts React Native's `{ uri, name, type }` FormData descriptor, correct on
+device and meaningless in a browser, as that file's own comment at line 193 says. It does
+mean pick → upload → render cannot be completed in preview; that is a gate item.
+
+Minor, unrelated, left alone: `SIGNATURE_ENDPOINTS.chat` returned
+`folder: "ink-manager/inquiries"` for a chat attachment. Cosmetic.
+
+## A — gold reversal
+
+Measured in-thread on a message the A2P consent gate refused:
+
+    own bubble fill      rgb(201, 154, 91)   colors.accent      gold
+    own bubble text      rgb(23, 18, 8)      colors.accentFg    ink
+    send button          rgb(194, 64, 47)    dangerStrong       red
+    alert glyph          rgb(194, 64, 47)    on the surface, bubble's outer left
+    NOT DELIVERED line   rgb(224, 130, 114)  colors.danger, on the surface
+
+The last two are rev G edit 3's evidence: against gold, alert-red pops exactly as the
+original argument said it would.
+
+The send button needed an actual change rather than none. It was reading
+`chat.bubbleOwnBg`, so reverting the token would have quietly taken it to gold too; it is
+pinned to `colors.dangerStrong` now with the reason recorded. `CLAUDE.md`'s red exception
+narrows back to the CHAT control, and the surface-anchored failure rule is **retained on
+its original rationale** rather than retired with the ruling that introduced it. The
+white-on-red contrast note moved with the red fill, to the CHAT fab label where it still
+applies.
+
+## B — header + duo-stack
+
+    row height          44.0
+    row top              8.0     = safe-area top + 8
+    header total        53.0     = 8 + 44 + 1 hairline
+    name centred         0.0pt off the row's centre -- no dead band
+    name                Outfit_600SemiBold 17px
+    channel badge       APP
+
+    composite box       44 x 44 at x=20   -- a single avatar's footprint
+    back avatar         40, top-left
+    front               28, bottom-right, gaps 0/0
+    front ring          2px rgb(14,11,8) = chat.surface
+    overflow circle     "+2", raised espresso, Fraunces
+    channel badge       SMS, on the composite's corner
+
+The dead band had a cause: the header was two lines, so the row sized to content at ~52
+and pushed the name above the optical centre. Fixed at 44 now.
+
+**Latent bug found on the way:** the header name was `type.body` with `fontWeight: '600'`
+— Outfit 400 with a weight that does nothing, because a named family plus `fontWeight` is
+the exact trap `theme/typography.ts` documents. It had never rendered at 600.
+
+`ThreadAvatar` is ONE component serving the list row and the header, as §8 required. That
+mattered concretely: the badge treatment already forked once (the CHAT fab drew its own
+copy of the shared count bubble, undone in 06-g2). No API change — `counterpart.participants`
+was already on GROUP threads in both payloads.
+
+## C — reaction balloons
+
+    THEIR reaction on MY bubble    corner LEFT
+      balloon 38x30 r15, fill rgb(29,24,19)     bubble rgb(201,154,91) gold
+    MY reaction on THEIR bubble    corner RIGHT
+      balloon 36x30 r15, fill rgb(201,154,91)   bubble rgb(29,24,19)
+    both: emoji 16px, tail dots 7 and 4, 16pt overlap onto the bubble's top edge
+
+The corner rule is the reactor's own side — one rule, not two special cases, and it
+produces exactly the pair §7 rev G names. Storage, the one-per-person upsert and the
+summary are untouched; this decides where each entry is drawn and nothing else.
+
+## D — reveal gap
+
+    own (gold)     bubble trailing 275.0   time leading 322.3   gap  47.3
+    incoming       min gap 122.8 across 18 rows
+    every row      gap >= 12               PASS
+    time right edges   one unique value, 367 -- an exact column
+
+The fix is the alignment. Left-aligned, every time sat hard against its bubble and the
+spacing depended on the message; right-aligned they form a column and the gap is bounded
+below by the widest TIME rather than the widest bubble. The own case is the tight one at
+47.3 against a floor of 12.
+
+## E — where DIRECTION lived
+
+`Composer.tsx`, inside the "Change how this sends" sheet: a `Direction` eyebrow over "We
+are writing" / "Logging what they said". It had a **second surface** — the send-mode strip
+read "Logging what they said on SMS" whenever INBOUND was selected. Both removed.
+`direction` is dropped from `ComposerSendState` entirely rather than left as a field
+nothing can write; the two call sites pass `'OUTBOUND'` literally with a pointer to spec
+§3 rev G. The API parameter is untouched.
+
+## Verification
+
+`tsc` clean in `apps/mobile`, `apps/api`, `packages/shared-types` (which re-derives its
+enums from `schema.prisma` and reports a match) and `apps/web` (`tsc -b`). The list screen
+boots with **zero** console errors; the thread screen shows the same three pre-existing
+React-19/react-native-web warnings recorded in session 06, on code this session did not
+touch. Standing regressions confirmed present: composer, send-mode strip, reveal gutters
+(20 rendered), and no DIRECTION control anywhere.
+
+The harness animation-freeze limitation recorded in CLAUDE.md still applies to feel items.
+Everything above is geometry, colour and structure, measured — not motion.
+
+## Escalations
+
+1. **`apps/api/src/lib/conversations.ts:152` and `:181`** — the NULL-safe predicate. This
+   is the live-unread bug and it is a backend addendum.
+2. **`/nav-counts` should exclude muted threads** (carried from 06-g2, still open).
+3. **The attachment crash is unconfirmed.** The guard converts a redbox into a message;
+   whether the underlying native error persists is a device question.
+4. **The send-fly verdict is still outstanding** (`chatDevToggles.sendFly`, fly vs S1
+   pop). It has been open since the combined run and needs an operator decision on a
+   phone; nothing blocks on it.
+5. The 5A iOS `layout.y` branch remains unverified, unchanged here.
+
+## Dev-database state added
+
+Two reactions on the group thread (one from another user, to show both corners) and one
+mute/read change from the badge walk. The two Task F probe messages were deleted after
+measurement.
