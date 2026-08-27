@@ -10,6 +10,7 @@ import { isMessageEdited } from '@/lib/conversations';
 import { deliveryLabel, deliveryState } from '@/lib/deliveryStatus';
 import { linkify, truncateMiddle } from '@/lib/linkify';
 import type { DisplayMessage } from '@/lib/threadRows';
+import { BALLOON, ReactionBalloon, ReactionTail } from '@/components/ReactionBalloon';
 import { ImageBubble } from '@/components/ImageBubble';
 import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
 import { timeOfDay } from '@/lib/time';
@@ -258,6 +259,11 @@ export function MessageBubble({
     return acc;
   }, []);
 
+  // §7 rev G: split by whose corner each balloon belongs on. The summary
+  // above is unchanged -- this only decides where each entry is drawn.
+  const myReactions = reactionSummary.filter((r) => r.mine);
+  const theirReactions = reactionSummary.filter((r) => !r.mine);
+
   const attachments = message.attachments ?? [];
   const images = attachments.filter(isImageUrl);
   const others = attachments.filter((url) => !isImageUrl(url));
@@ -457,16 +463,27 @@ export function MessageBubble({
             Absolute, so it costs the row no height and cannot push the
             next bubble down.
           */}
-          {reactionSummary.length > 0 ? (
-            <View
-              style={[styles.reactions, own ? styles.reactionsOwn : styles.reactionsTheirs]}
-              pointerEvents="none"
-            >
-              {reactionSummary.map((r) => (
-                <View key={r.emoji} style={[styles.reaction, r.mine && styles.reactionMine]}>
-                  <Text style={styles.reactionGlyph}>{r.emoji}</Text>
-                  {r.count > 1 ? <Text style={styles.reactionCount}>{r.count}</Text> : null}
-                </View>
+          {/*
+            §7 rev G. Two clusters, because the corner is the REACTOR's
+            side: mine go top-right, theirs top-left. An emoji used by
+            both of us counts as mine -- it is still a reaction I made, and
+            splitting one chip across two corners would be worse than
+            picking the side I am on.
+          */}
+          {theirReactions.length > 0 ? (
+            <View style={[styles.reactionCluster, styles.reactionsLeft]} pointerEvents="none">
+              <ReactionTail side="left" mine={false} />
+              {theirReactions.map((r) => (
+                <ReactionBalloon key={r.emoji} emoji={r.emoji} count={r.count} mine={false} />
+              ))}
+            </View>
+          ) : null}
+
+          {myReactions.length > 0 ? (
+            <View style={[styles.reactionCluster, styles.reactionsRight]} pointerEvents="none">
+              <ReactionTail side="right" mine />
+              {myReactions.map((r) => (
+                <ReactionBalloon key={r.emoji} emoji={r.emoji} count={r.count} mine />
               ))}
             </View>
           ) : null}
@@ -633,33 +650,20 @@ const styles = StyleSheet.create({
   quoteAuthor: { ...type.meta },
   quoteBody: { ...type.small },
 
-  reactions: {
+  /*
+   * §7 rev G: ON the bubble's top corner, overlapping it, above it in z.
+   * The old chips sat UNDER the bubble's bottom edge, which read as part
+   * of the bubble rather than as a response to it.
+   */
+  reactionCluster: {
     position: 'absolute',
-    bottom: -11,
+    top: -BALLOON / 2 - 2,
     flexDirection: 'row',
-    gap: 2,
-  },
-  reactionsOwn: { right: space.sm },
-  reactionsTheirs: { left: space.sm },
-  reaction: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-    /* A real border in the PAGE colour, so the chip reads as sitting ON
-       the bubble rather than being part of it -- the same trick, and the
-       same reason, as the channel badge on a list avatar (§1.1). */
-    borderWidth: 2,
-    borderColor: chat.surface,
-    backgroundColor: chat.surfaceRaised,
+    zIndex: 2,
   },
-  reactionMine: { borderColor: colors.accent, backgroundColor: 'rgba(201, 154, 91, 0.16)' },
-  reactionGlyph: { fontSize: 13, lineHeight: 16 },
-  /* §1.2: every count in this app is Jura. This was Outfit-light via
-     type.meta -- body type doing a metadata job. */
-  reactionCount: { ...type.label, fontSize: 10, color: chat.textMuted },
+  reactionsRight: { right: space.sm },
+  reactionsLeft: { left: space.sm },
 
   images: { flexDirection: 'row', flexWrap: 'wrap', gap: 2 },
   /* 2 tiles + the gap between them. Messages' own collage is 2-up. */
