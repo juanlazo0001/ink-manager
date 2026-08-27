@@ -31205,3 +31205,233 @@ is not "tested it", and the gesture-driven ones are device-gate regardless.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 11 — header top inset: the offset was paid twice
+
+Branch `chat-ux/11-header-inset` from `main` (`21d32f8`). Mobile-only.
+
+## Task A — the itemised stack, and the root cause
+
+### The stack between window top and the header row's top edge
+
+| # | contributor | file:line | cost |
+| --- | --- | --- | --- |
+| 1 | root navigator | `app/_layout.tsx` — `<Stack screenOptions={{ headerShown: false }}>` | **0** — no native header, nothing reserved |
+| 2 | `SafeAreaView` in `ScreenShell` | `conversation/[id].tsx:878` — `<ScreenShell edges={['top']}>` | **`insets.top`** |
+| 3 | the header's own padding | `ThreadHeader.tsx:172` — `paddingTop: insets.top + HEADER_PAD` | **`insets.top` + 8** |
+| 4 | spacer from the retired two-line header | — | **0** — none exists; searched, nothing found |
+| 5 | context chip row, thread with no chips | `ThreadHeader.tsx:141` — `chips.length > 0 ? … : null` | **0** — short-circuits to `null`; harness confirms **0 chip elements render** |
+
+    total = insets.top + (insets.top + 8) = 2 x insets.top + 8
+
+Spec §9 rev G wants `insets.top + 8`. **The inset is paid twice.**
+
+On a Dynamic Island phone (`insets.top = 59`):
+
+| | row top edge |
+| --- | --- |
+| intended | 59 + 8 = **67** |
+| actual | 59 + 59 + 8 = **126** |
+| **excess** | **59pt** |
+
+That is the operator's measured 60–70pt, explained exactly, and it sums.
+
+### Why Session 07 Task B could not have caught it
+
+Its acceptance measured the **row's height** (~44pt), and every
+contributor above is in the stack *above* the row. The height was correct
+the whole time. This session's acceptance — offset from window top — is
+the one that can see it.
+
+### The fix, and why it removes the shell's edge rather than the header's
+
+`ScreenShell` on the thread becomes `edges={[]}`; `ThreadHeader` keeps
+`insets.top + 8` as the single source.
+
+**The direction is forced, not chosen.** `ThreadHeader` is a translucent
+blur layer the thread scrolls *beneath* (`zIndex: 10` against the list's
+`9`). If the shell owned the inset, the blur would begin below the status
+bar and the scroll-under would end at the wrong line. The header owns its
+top because it is the thing that has to reach the top.
+
+The two loading/error branches (`:854`, `:863`) **keep** `edges={['top']}`
+— they render the generic `ScreenHeader`, which has **zero** references to
+insets, so the shell is correctly their only source there. Checked rather
+than assumed.
+
+## Task B — cross-screen comparison
+
+Measured post-fix at 393pt. **Read the right column, not the middle one.**
+
+| screen | first chrome, y (harness, `insets.top = 0`) | inset consumers | formula |
+| --- | --- | --- | --- |
+| **thread header** | name at **19** | **1** — `ThreadHeader` | `insets.top + 8` |
+| chat list | `FILTER` at **138** | **1** — `ScreenShell` | `insets.top` + its own content padding |
+| clients | `Clients` at **90** | **1** — `ScreenShell` | `insets.top` + its own content padding |
+
+The raw `y` values differ because the screens have different content above
+their first text — the list carries a search field and a controls row, the
+clients screen a title block. Comparing those numbers directly would be
+comparing different things.
+
+What is comparable, and what the operator's acceptance actually needs, is
+the **safe-area treatment**: all three now consume the top inset **exactly
+once**. Before the fix the thread consumed it twice and was the only
+screen in the app that did.
+
+**No adjustment was needed for B**, so there is no `chat-ux-11-b` commit.
+The app pattern is one inset plus the screen's own padding, and Task A's
+fix is what puts the thread back on it. The spec's `+8` is the thread's
+own content padding and does not conflict — no spec delta to note.
+
+## Task C — the stale route
+
+`app/_layout.tsx:71` declared `<Stack.Screen name="flash" />` on the
+**root** stack. There is no root-level `flash` route: the file is
+`app/(tabs)/flash.tsx` and belongs to the tab navigator. A `Stack.Screen`
+naming a child that is not its child is precisely what produces
+`No route named "flash" exists in nested children`.
+
+Removed. `app/flash-piece.tsx` **is** root-level, so the declaration on the
+next line is correct and stays — both were checked rather than one deleted
+by name similarity.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         ✓ built in 14.69s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean
+
+Harness, post-fix, thread screen:
+
+    header wrap computed padding-top   8px   (= insets.top 0 + HEADER_PAD 8, one source)
+    header wrap height                 53    (44 row + 8 pad + hairline)
+    chip elements on a chipless thread 0     <- Task A's explicit requirement
+    "No route named" warnings          0
+    console errors                     3, all pre-existing react-native-web shim
+                                       noise (React 19 element.ref, nested-button
+                                       hydration) — unchanged by this branch
+
+Screenshot: `design-refs/session-11/thread-header-after-393.png`.
+
+### Two harness limits, stated rather than implied
+
+**The pixel error cannot be reproduced in preview.** The browser reports
+`insets.top = 0`, so before and after both compute to 8 there. Injecting
+Dynamic Island metrics through a nested `SafeAreaProvider` was tried and
+does **not** override the root provider. So the 59pt is arithmetic from
+source plus the operator's own measurement — the device gate is what
+confirms it. What the harness does prove: one inset source after the fix,
+8px of it, and nothing shifted at inset 0.
+
+**The `flash` warning appears in neither log, before or after.** It is a
+router runtime warning that surfaces on Metro/device, not in the web
+dev-server output, so this session cannot show a before/after for it. The
+cause is established structurally instead, which for a declaration naming
+a non-existent sibling is unambiguous.
+
+### Retested vs untouched
+
+**Retested:** header renders, header height, empty chip row = 0, boot with
+no new errors, all four typechecks.
+
+**Untouched and NOT retested** — saying so rather than implying coverage:
+blur rendering and scroll-under (needs a device; `expo-blur` is iOS-only
+in practice), context chips on a thread that *has* chips (the fixture has
+none), keyboard choreography, and FLASH tab navigation after the route
+removal. None of their code paths were modified — the diff is one prop and
+one deleted line — but "did not touch it" is not "tested it".
+
+## Escalations
+
+1. **Two device-gate confirmations carry over unchanged:** the attachment
+   hang (session 10) and the send-fly verdict, still outstanding.
+2. **Task C's warning is unverified end to end** — structural cause only,
+   Metro on device is the check.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 11 addendum — the app-wide sweep, and the third screen the brief asked for
+
+Two things the section above asserted or substituted are now checked. No
+code changed; this is verification only.
+
+## 1. "The thread was the only screen paying twice" — swept, not asserted
+
+The original section claimed this from the three screens it happened to
+measure. Now every file in `apps/mobile/src` was searched for the pairing
+that causes the defect — a top-edge safe-area shell **and** a manual
+`insets.top` in the same tree:
+
+    files using insets.top at all, app-wide:  3
+      components/ThreadHeader.tsx:172   the thread header      <- the intended single source
+      components/NavDrawer.tsx:152      inside a RN <Modal>    <- separate native root
+      components/PhotoViewer.tsx:148    inside a RN <Modal>    <- separate native root
+
+    files pairing edges={['top']} with insets.top:  1
+      app/conversation/[id].tsx   <- and post-fix this is the explanatory
+                                     COMMENT at :882-884, not live code
+
+The two `Modal` cases are correct by construction: a React Native `Modal`
+is its own native root, so it sits outside whatever `SafeAreaView` the
+screen behind it uses and its `insets.top` is that root's only consumer.
+They are not second sightings.
+
+The live props in `conversation/[id].tsx` after the fix:
+
+    :854  <ScreenShell edges={['top']}>   loading branch  -> ScreenHeader, no inset
+    :863  <ScreenShell edges={['top']}>   error branch    -> ScreenHeader, no inset
+    :902  <ScreenShell edges={[]}>        thread          -> ThreadHeader owns the inset
+
+So the claim holds app-wide, and the grep that would find a recurrence is
+recorded here rather than left to memory.
+
+## 2. Third screen: client detail, which is what the brief actually asked for
+
+The table above used the **clients list** as its third row. That is a tab,
+not a stack screen; the brief said "one more stack screen's header (e.g.,
+client detail)". Corrected:
+
+| screen | kind | inset consumers | source |
+| --- | --- | --- | --- |
+| thread header | stack | **1** | `ThreadHeader` — `insets.top + 8` |
+| **client detail** | **stack** | **1** | `ScreenShell edges={['top']}` at `client/[id].tsx:440`; **zero** `insets.top` references in the file |
+| conversation list | tab | **1** | `ScreenShell edges={['top']}` |
+| clients list | tab | **1** | `ScreenShell edges={['top']}` |
+
+Four screens, one consumer each. Client detail is the closest structural
+sibling to the thread — both are stack screens pushed over a tab — and it
+consumes the inset exactly once, which is what the thread now does.
+
+## 3. Task C: FLASH navigation is unaffected, and here is why
+
+The section above listed FLASH tab navigation as untouched-and-not-tested.
+It can be settled from the routing model without a device:
+
+    the only navigation into FLASH, app-wide:
+      app/account.tsx:85   router.push('/flash')
+
+    what that resolves to:
+      app/(tabs)/flash.tsx          exists
+      app/(tabs)/_layout.tsx:111    name="flash", the tab declaration
+
+`(tabs)` is a **route group**, so it is transparent in the URL — `/flash`
+has always resolved through the group to the tab file. In expo-router the
+**filesystem** creates routes; a `<Stack.Screen>` only supplies options
+for a child the router already found. The deleted line therefore named a
+child the root stack does not have, which is what produced the warning,
+and it was never on any navigation path. Removing it cannot break a route
+it never served.
+
+Still device-gate: that the Metro warning is actually gone. That warning
+is emitted by the router at runtime on Metro and does not appear in the
+web dev-server output, before or after — as the section above states.
+
+## Verification
+
+No files changed. `apps/mobile tsc --noEmit` clean in the primary
+checkout after `npm install` (re-run there per the handoff rule, not
+carried over from the worktree).
