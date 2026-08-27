@@ -67,6 +67,7 @@ import {
 import { saveImageToLibrary } from '@/lib/saveImage';
 import { isProviderFailure } from '@/lib/deliveryStatus';
 import { buildThreadRows, isOwnSide, type DisplayMessage, type Row } from '@/lib/threadRows';
+import type { CellRendererProps } from 'react-native';
 import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
 
 /** See the note in the list screen: polling, not sockets, this session. */
@@ -198,9 +199,30 @@ export default function ConversationScreen() {
    */
   const onFlyTargetMeasured = useCallback((id: string, size: { width: number; height: number }) => {
     const node = listBoxRef.current;
-    if (!node) return;
+    if (!node) {
+      // Graceful skip: no list to measure against, so the row simply
+      // appears. A mispositioned ghost is worse than no ghost.
+      if (__DEV__) console.log('[send-fly] skipped: list node unavailable');
+      setPendingFly(null);
+      return;
+    }
     node.measureInWindow((listX, listY, listWidth, listHeight) => {
-      if (listWidth === 0 && listHeight === 0) return;
+      /*
+       * A destination we cannot trust is a destination we do not fly to.
+       * Zero dimensions mean the list has not laid out; a zero-height row
+       * means the optimistic bubble has not measured yet. Either way the
+       * clone would land somewhere invented, so the send falls back to a
+       * plain appear and says so once.
+       */
+      if (listWidth === 0 || listHeight === 0 || size.height === 0) {
+        if (__DEV__) {
+          console.log(
+            `[send-fly] skipped: invalid destination (list ${listWidth}x${listHeight}, row h ${size.height})`,
+          );
+        }
+        setPendingFly(null);
+        return;
+      }
       const to: Rect = {
         x: listX,
         // LIST_CONTENT_PAD is the contentContainer's own paddingVertical,
@@ -594,6 +616,8 @@ export default function ConversationScreen() {
       }
       const optimistic: DisplayMessage = {
         id: tempId,
+        // Stable for this row's whole life, including after the ack.
+        rowKey: tempId,
         channel: isClientThread ? sendState.channel : 'IN_APP',
         // §3 rev G: always OUTBOUND. The API still accepts INBOUND and a
         // deliberate manual-logging design can use it -- read spec §3 rev G
@@ -631,7 +655,20 @@ export default function ConversationScreen() {
           ...(isClientThread ? { channel: sendState.channel, direction: 'OUTBOUND' as const } : {}),
         });
         pendingRef.current.delete(tempId);
-        setMessages((current) => current.map((m) => (m.id === tempId ? { ...created, status: 'sent' } : m)));
+        /*
+         * `rowKey: tempId` is the whole point. The server hands back its
+         * own id, and swapping it in changed the row's KEY — which React
+         * reads as "different element", so the just-sent bubble unmounted
+         * and remounted at the moment of acknowledgement. Measured: one
+         * unmount of the `local:` row per send.
+         *
+         * The id still becomes the server's, because everything else
+         * (reactions, replies, edits) addresses the message by it. Only
+         * the KEY stays put.
+         */
+        setMessages((current) =>
+          current.map((m) => (m.id === tempId ? { ...created, status: 'sent', rowKey: tempId } : m)),
+        );
       } catch {
         // A message that fails must stay visible and stay marked — never
         // disappear, and never look sent. The body is preserved on the row
@@ -722,6 +759,46 @@ export default function ConversationScreen() {
     }
     for (const id of failedIds) hapticFailed(id);
   }, [messages]);
+
+  /*
+   * ─── THE REMOUNT STORM, AND WHY THIS IS A `useMemo` ────────────────
+   *
+   * This was an INLINE ARROW in the FlatList's props. `CellRendererComponent`
+   * is used by React as a component TYPE, and an inline arrow is a new
+   * function identity on every render — so React saw a different type each
+   * time and did the only thing it can with a changed type: unmount every
+   * cell's entire subtree and mount a fresh one.
+   *
+   * Measured before the fix, on ONE send: 24 mounts / 23 unmounts, every
+   * pre-existing row torn down THREE times (the three renders a send
+   * causes: optimistic insert, ack, status settle). That is the operator's
+   * report exactly — the image bubble "goes blank" because it genuinely
+   * unmounts and reloads, and neighbours "flash back as fragments"
+   * because they are being rebuilt mid-flight.
+   *
+   * `useMemo` with an empty dep list gives one stable type for the life of
+   * the screen. It can still write to `rowBoxes` because a ref OBJECT is
+   * itself stable — the thing that changes is `.current`, which is read at
+   * call time, not captured.
+   */
+  const CellRenderer = useMemo(
+    () =>
+      function CellRenderer({ item: cellItem, children, ...rest }: CellRendererProps<Row>) {
+        return (
+          <View
+            {...rest}
+            onLayout={(event) => {
+              if (cellItem.kind !== 'message') return;
+              const { y, height } = event.nativeEvent.layout;
+              rowBoxes.current.set(cellItem.message.id, { y, height });
+            }}
+          >
+            {children}
+          </View>
+        );
+      },
+    [],
+  );
 
   const rows = useMemo(
     () => buildThreadRows({ messages, viewerUserId, isClientThread, isGroupThread }),
@@ -831,7 +908,9 @@ export default function ConversationScreen() {
           ref={listRef}
           inverted
           data={rows}
-          keyExtractor={(row) => (row.kind === 'separator' ? row.key : row.message.id)}
+          keyExtractor={(row) =>
+            row.kind === 'separator' ? row.key : (row.message.rowKey ?? row.message.id)
+          }
           /*
             §7 needs a row's position in CONTENT coordinates, and the
             obvious place to take it -- an onLayout on the row itself --
@@ -847,18 +926,7 @@ export default function ConversationScreen() {
             being layout rather than a window position, the inverted
             list's transform does not touch it.
           */
-          CellRendererComponent={({ item: cellItem, children, ...rest }) => (
-            <View
-              {...rest}
-              onLayout={(event) => {
-                if (cellItem.kind !== 'message') return;
-                const { y, height } = event.nativeEvent.layout;
-                rowBoxes.current.set(cellItem.message.id, { y, height });
-              }}
-            >
-              {children}
-            </View>
-          )}
+          CellRendererComponent={CellRenderer}
           renderItem={({ item }) =>
             item.kind === 'separator' ? (
               /*

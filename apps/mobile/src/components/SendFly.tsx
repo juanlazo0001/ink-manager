@@ -1,7 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 
-import { chat, hairline, radius, type } from '@/theme';
+import { chat, hairline, radius, space, type } from '@/theme';
 
 /** A measured screen-coordinate box. */
 export interface Rect {
@@ -65,10 +65,20 @@ export function SendFly({
 
   return (
     <Animated.View style={[styles.clone, style]} pointerEvents="none">
-      <View style={styles.bubble}>
-        <Text style={styles.body} numberOfLines={6}>
-          {body}
-        </Text>
+      {/*
+        The OWN-ROW CONTEXT, reproduced. The clone is not a bare bubble in
+        an absolute box — it is the same two-layer shape `MessageBubble`
+        renders: a full-width wrap carrying the row's horizontal inset,
+        with the bubble right-anchored inside it and capped at §2.1's 78%.
+        Without the wrap the bubble had nothing to be 78% OF and nothing to
+        be pushed against, which is why it flew full-bleed.
+      */}
+      <View style={styles.wrap}>
+        <View style={styles.bubble}>
+          <Text style={styles.body} numberOfLines={6}>
+            {body}
+          </Text>
+        </View>
       </View>
     </Animated.View>
   );
@@ -76,10 +86,24 @@ export function SendFly({
 
 const styles = StyleSheet.create({
   clone: { position: 'absolute', zIndex: 100 },
+  /*
+   * `MessageBubble`'s own `wrap`, field for field: the row inset that the
+   * bubble's 78% is measured inside, and the right-anchoring that puts an
+   * outgoing bubble on the outgoing side.
+   */
+  wrap: { paddingHorizontal: space.lg, maxWidth: '100%', alignItems: 'flex-end' },
   /* §2.1 anatomy, so the clone and the row it becomes are the same shape. */
   bubble: {
     alignSelf: 'flex-end',
-    maxWidth: '100%',
+    /*
+     * §2.1's 78%, and the fix for the full-bleed ghost. This read
+     * `'100%'`, which resolved against the CLONE's container — and that
+     * container is the composer's width at the origin and the list's at
+     * the destination, i.e. the whole screen at both ends. So the cap
+     * capped nothing and `alignSelf: 'flex-end'` had nothing to push
+     * against. 78% of the wrap is the same number the real bubble uses.
+     */
+    maxWidth: '78%',
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: radius.bubble,

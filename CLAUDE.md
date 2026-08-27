@@ -179,6 +179,9 @@ Concise operating rules, not a project history — see REPORT.md for history.
 - Every test must be able to fail under the plausible-wrong implementation; suppression/zero-count
   assertions always pair with a strict `+1` positive sibling (incidents: vacuous mute test;
   non-discriminating outsider test; unread NULL-author gap).
+- Instrumentation identity must not be keyed on values the system under test mutates — a mount
+  ledger keyed on `message.id` reported phantom unmounts at ack; key instruments on stable
+  identity (`rowKey`-class).
 
 ## Verifying mobile UI on the web harness
 
