@@ -30309,3 +30309,83 @@ right.
 
 **No schema change, no migration, no backfill, no database contact.** The
 Task J round-trip ran against the scratchpad fixture.
+
+# Chat UX 07b addendum — the clients list joins the same swipe engine
+
+Owner asked for the two escalations at the end of 07b to be fixed. They
+turned out to be symptoms of something one level down, so this records the
+cause as well as the fix.
+
+## The escalations said "missing registry, missing outside tap". The real gap was the ENGINE.
+
+`ClientSwipe` was built in session AJ on **`ReanimatedSwipeable`**, modelled
+on what `ConversationSwipe` looked like at that moment. `ConversationSwipe`
+was then rebuilt in **06-g3 off that same library**, because frame analysis
+of a device pass found three faults in it: threshold-pop reveals, split
+translation tearing, and off-spec panel widths.
+
+Nobody went back for the clients list. So it was the last consumer of an
+engine that had been condemned with evidence, and the two lists had
+different reveal behaviour, different panel widths (88 vs the spec's 72)
+and different exclusivity semantics — while Task H's entire argument for
+turning archive red was *cross-surface consistency*.
+
+## What shipped
+
+`ClientSwipe` is now the 06-g3 model, ported: one translating front, panels
+riding with it, nothing rendering outside the front. Not a new design — the
+same one, so the two lists answer a thumb identically rather than merely
+looking as though they should.
+
+Both escalated gaps then close **by construction rather than by patch**:
+
+- **Exclusivity** — the row claims `openSwipeRow` on touch, so opening one
+  client row closes any other, and closes an open CHAT row too, since it is
+  one registry for the app. Before, two client rows could sit open at once
+  while two chat rows could not.
+- **Outside tap** — `consumeTapIfRowOpen()` in the clients screen now has
+  something to consume, because the registry is what it reads. Row taps are
+  consumed; a `Gesture.Tap` catches the background; `onScrollBeginDrag`
+  closes on scroll. All three identical to the chat list.
+
+Two deliberate differences from the chat row, both recorded in the file: no
+leading panel (a client row has no per-viewer preference like Pin, so
+`snaps` carries two stops rather than three), and no commit haptic (nothing
+here commits on a swipe).
+
+## Measured
+
+| | before | after |
+| --- | --- | --- |
+| engine | `ReanimatedSwipeable` | single translating front (06-g3 model) |
+| panel width | 88 | **72** — the §8 number, shared with the chat row |
+| rows open at once | unbounded | **1**, app-wide |
+| outside tap closes | no | yes |
+| scroll closes | no | yes |
+| render counters during load | n/a | **all 1** — zero re-renders |
+| console errors, fresh load | **5** | **2** |
+
+That last row is worth stating precisely: the `removeWebAnimation` errors
+are pre-existing `react-native-reanimated` web-shim noise, not this change.
+Attributed by stashing the port and reloading — the OLD engine produced
+FIVE, the port produces two. It reduces them rather than introducing them.
+
+`design-refs/session-07b/clients-swipe-rebuilt-320.png`.
+
+## Not done, deliberately
+
+**The shared core was not extracted.** `ClientSwipe` and
+`ConversationSwipe` now run the same model in two files, and the honest
+next step is one `SwipeRow` taking configurable leading/trailing actions.
+It was not done here because it would mean editing `ConversationSwipe` —
+a file sitting under an unmerged device gate — to serve a refactor. The
+duplication is deliberate for now; extract it once both are gated.
+
+**Feel is the gate's.** Per CLAUDE.md gesture-handler is inert to synthetic
+input on this harness, so nothing above proves the reveal, the exclusivity
+or the outside tap actually behave under a thumb. What is proven is the
+geometry, the colours, the render counters and that the wiring exists.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
