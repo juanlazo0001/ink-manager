@@ -29899,3 +29899,166 @@ rides along on main that was already there —
 and it has **not** been applied to production. It will run on the next
 Railway deploy of main. Additive, no backfill required. Flagged in Part 1
 because the owner believed that work was still held.
+
+# Backend fix — unread counts excluded every inbound client text
+
+Branch `fix/unread-null-author` from `main`. Predicate-only, no schema.
+Origin: mobile chat Session 07's Task F stop-condition finding.
+
+## The premise, re-proven here
+
+The finding was measured by the mobile session; it was re-derived from
+scratch before anything was changed, because Prisma's `not:` semantics on
+nullable columns have shifted across major versions and "it was true last
+week" is not evidence. Inserted the exact webhook row shape into a
+throwaway thread and counted it both ways, with query logging on:
+
+    total messages in thread   : 2   (1 null-author inbound, 1 authored by me)
+    null-author rows           : 1
+    CURRENT  { not: me }       : 0   <- the bug
+    NULL-SAFE OR[null, not me] : 1
+
+And the SQL Prisma 7.8.0 actually emits, which is the part that settles it:
+
+    -- current
+    WHERE "conversationId" = $1 AND "authorUserId" <> $2
+
+    -- null-safe
+    WHERE "conversationId" = $1 AND ("authorUserId" IS NULL OR "authorUserId" <> $2)
+
+A bare `<>` is UNKNOWN — not TRUE — for a NULL row, so NULL rows are
+silently dropped. `Message.authorUserId` is `String?`, and the Twilio
+webhook writes an inbound SMS with it null because nobody is logged in to
+author a client's text. So **an arriving client message was counted unread
+by neither function**: no gutter dot, nothing in the UNREAD filter, no nav
+badge. The mobile client was rendering a correct zero.
+
+## Fix
+
+Both call sites now go through one helper in `lib/conversations.ts`:
+
+    function notAuthoredBy(userId: string) {
+      return { OR: [{ authorUserId: null }, { authorUserId: { not: userId } }] };
+    }
+
+One helper rather than the same literal twice, specifically because
+`getUnreadCountForConversation` (the per-thread dot) and
+`getUnreadConversationCount` (the nav badge) must never disagree about the
+same message — which is exactly what a second, separately-edited copy
+invites.
+
+## Class sweep
+
+Swept all of `apps/api/src` — 49 predicates — and classified each against
+actual schema nullability programmatically rather than by eye, since the
+whole failure mode is that these read fine.
+
+| class | count | verdict |
+| --- | --- | --- |
+| Explicit `{ not: null }` | 20 | An intentional `IS NOT NULL`. Never this bug — it is the predicate that *wants* the NULLs gone. |
+| Column NOT NULL in every model it appears on | 25 | Cannot hide a NULL. Mostly `id` (PK), `status` (non-null enum), `role` (non-null). |
+| Nullable-column `not:` with a non-null value | **2** | **The two reported. Both fixed.** |
+| Escalations | 0 | — |
+
+Two hits initially flagged by the checker as nullable turned out to be
+name collisions and are safe:
+
+- `routes/studios.ts:1000` and `routes/tasks.ts:58` — `userId: { not: userId }`
+  on **PersonalTask**, where `userId String` is NOT NULL (`createdById` is
+  the nullable one on that model, and it is only ever compared with `=`).
+  The checker flagged them because `userId` is nullable on the unrelated
+  `Client` model.
+
+Three shapes the initial `not:`/`notIn:` grep would have missed, checked
+separately:
+
+- `lib/deposits.ts:451` — Prisma's top-level `NOT: { id: depositFormId }`.
+  `id` is a PK, non-null. Safe.
+- Nine `none:` relation filters — these ask "no related row matches" and
+  never compare a nullable scalar to a value. Not this class.
+- One `$executeRaw` (`routes/studios.ts:1273`) — an `INSERT … ON CONFLICT`
+  upsert with no inequality in it at all. Safe.
+
+`lib/notifications.ts:206` deserves its own line because it looks like the
+bug and is not: `authorUserId: { not: null }` when collecting a client
+thread's prior authors. That is a deliberate `IS NOT NULL` — a null author
+means the *client* wrote it, not a staff member, and a client is not a
+notification recipient. Correct as written.
+
+## The near miss that explains why this hid
+
+`lib/tasks/newConversation.ts:31` carries the comment "Aligned with the
+unread-bubble logic (getUnreadConversationCount)" and implements the same
+rule — and it is **correct**, because it does the comparison in JavaScript
+on an already-fetched row:
+
+    if (lastMessage.authorUserId === userId) continue;
+
+`null === userId` is plainly `false`, so a null-author message does not
+`continue` and does produce a task. JS strict equality is two-valued; SQL
+`<>` is three-valued. Two functions, the same stated intent, the same
+apparent shape, opposite behaviour. That asymmetry is now the core of the
+CLAUDE.md entry, because reading either one in isolation tells you
+nothing.
+
+## Tests
+
+The existing suite passed under the wrong implementation for a specific,
+avoidable reason: every fixture authored its messages as a logged-in user,
+so the NULL case was never exercised. A predicate on a nullable column
+that is never given a NULL is not being tested.
+
+Five new tests in `unreadNullAuthor.test.ts`, driven through the real HTTP
+surfaces the clients read — `GET /conversations` for the per-thread count,
+`GET /nav-counts` for the conversation-level one — since the finding was
+precisely that the clients faithfully rendered a wrong number.
+
+Written to the standing rule:
+
+- **Strict `=== 1`, never `>= 1`.** A `>=` would also pass against a
+  function that counts everything, which is the opposite wrong answer.
+- **Every suppression assertion is paired with a positive sibling in the
+  same test, against the same state** — so "returns 0 for everything"
+  cannot masquerade as correct suppression. The own-message test inserts a
+  null-author inbound immediately afterwards and asserts the count rises.
+- The multi-message test asserts **3 messages / 1 conversation** in one
+  breath, so the two functions' different units cannot be conflated.
+
+Verified they can actually fail: reverting `notAuthoredBy` to the pre-fix
+predicate fails **4 of 5**. The fifth ("a colleague's message counts for
+me") passes either way by design — it exercises an *authored* message, so
+the NULL path is not involved; it guards the non-null half and would fail
+if suppression broke.
+
+## Acceptance — Session 07's experiment, through the API
+
+Against the running dev server, `Invoke-RestMethod` only, no raw SQL
+reads. The inbound row is seeded by direct insert of the webhook shape, as
+the order sanctions (driving the real webhook needs a valid Twilio
+signature; the row is what is under test, not the signature check).
+
+    thread: cmrvbeefd000iqgi2ymokza42
+
+    STEP 1 - mark read
+      baseline          thread unreadCount = 0     nav conversations = 8
+    STEP 2 - insert webhook-shaped inbound (authorUserId = null)
+      inserted message cmtav3v6q00008ki2zzfsiyob  authorUserId=null
+      after inbound     thread unreadCount = 1     nav conversations = 9
+    STEP 3 - mark read again
+      after mark-read   thread unreadCount = 0     nav conversations = 8
+
+Both endpoints move together, and back. The nav baseline of 8 is other dev
+threads with genuine unread state; what matters is the delta, which is
+exactly one thread appearing and disappearing.
+
+The probe message was deleted from the dev database afterwards.
+
+Full suite **238/238** (233 before, +5). `apps/api` `tsc` build clean.
+
+## Open
+
+**Post-deploy smoke is operator-run and not yet done.** Send one real
+inbound SMS to a monitored thread with the mobile app open on the
+conversation list; the gutter dot, preview lift and fab badge must appear
+within one refresh cycle. That single check also closes mobile Session
+07's device-gate item 7, which is deferred pending this deploy.

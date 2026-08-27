@@ -31,6 +31,27 @@ Concise operating rules, not a project history — see REPORT.md for history.
   `studioId`, and realtime `emitInvalidation` calls — all three have been wrong in exactly this way
   before.
 
+## Prisma predicates on nullable columns
+
+- Prisma `not:`/`notIn:` on a **nullable** column silently excludes NULL rows. It compiles to a
+  bare `"col" <> $1`, which under SQL's three-valued logic is UNKNOWN — not TRUE — for a NULL,
+  so those rows never match. Webhook- and system-written rows have null author/actor FKs, so
+  "not mine" must be written NULL-safe:
+
+      OR: [{ col: null }, { col: { not: id } }]
+
+- Found the hard way in unread counts, 2026-08-26: `Message.authorUserId` is nullable, the Twilio
+  webhook writes an inbound SMS with it null, and both unread functions used
+  `authorUserId: { not: userId }` — so **an arriving client text was never counted unread** by
+  either the per-thread dot or the nav badge.
+- The same intent expressed in **JavaScript** is correct and was correct here
+  (`lib/tasks/newConversation.ts` does `if (lastMessage.authorUserId === userId) continue`, and
+  `null === userId` is plainly `false`). That asymmetry is exactly why this hides: the JS version
+  reads identically and behaves differently.
+- The existing tests could not have caught it, because every fixture authored its messages as a
+  logged-in user. When a column is nullable, a test that never inserts a NULL is not testing the
+  predicate — pair every "not mine" assertion with a null-valued row.
+
 ## Timezones
 
 - **This bug class has recurred at least four times independently** (scheduling-assistant hours
