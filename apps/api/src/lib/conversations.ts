@@ -138,9 +138,27 @@ export async function canViewConversation(
   return true;
 }
 
+// "Not authored by me", written NULL-safely -- see NOT_AUTHORED_BY's own
+// comment for why the obvious form is wrong.
+function notAuthoredBy(userId: string) {
+  return { OR: [{ authorUserId: null }, { authorUserId: { not: userId } }] };
+}
+
 // Messages after the user's own lastReadAt (or all messages if they've
 // never read this thread), excluding messages that user themselves
 // authored -- your own message is never "unread" to you.
+//
+// The author predicate goes through notAuthoredBy above rather than the
+// obvious `authorUserId: { not: userId }`, and the difference was a real,
+// user-visible bug for every inbound client text.
+//
+// Message.authorUserId is NULLABLE, and Prisma compiles `not:` on it to a
+// bare `"authorUserId" <> $1`. Under SQL's three-valued logic that is
+// UNKNOWN -- not TRUE -- for a NULL row, so NULL rows are silently
+// EXCLUDED. An inbound SMS is written by the Twilio webhook with
+// authorUserId null (nobody was logged in to author it), so an arriving
+// text was never counted unread: no gutter dot, nothing in the UNREAD
+// filter, no badge. Confirmed against the emitted SQL, not inferred.
 export async function getUnreadCountForConversation(conversationId: string, userId: string): Promise<number> {
   const read = await prisma.conversationRead.findUnique({
     where: { conversationId_userId: { conversationId, userId } },
@@ -149,7 +167,7 @@ export async function getUnreadCountForConversation(conversationId: string, user
   return prisma.message.count({
     where: {
       conversationId,
-      authorUserId: { not: userId },
+      ...notAuthoredBy(userId),
       ...(read ? { createdAt: { gt: read.lastReadAt } } : {}),
     },
   });
@@ -178,7 +196,10 @@ export async function getUnreadConversationCount(studioId: string, userId: strin
       return prisma.message.findFirst({
         where: {
           conversationId: conversation.id,
-          authorUserId: { not: userId },
+          // Same NULL-safe predicate as getUnreadCountForConversation --
+          // these two must agree, or the nav bubble and the per-thread
+          // dot disagree about the same message.
+          ...notAuthoredBy(userId),
           ...(lastReadAt ? { createdAt: { gt: lastReadAt } } : {}),
         },
         select: { id: true },
