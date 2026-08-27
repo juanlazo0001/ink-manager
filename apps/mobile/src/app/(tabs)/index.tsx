@@ -6,6 +6,8 @@ import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { ScreenShell } from '@/components/ScreenShell';
 import { ConversationRow } from '@/components/ConversationRow';
 import { ConversationSwipe } from '@/components/ConversationSwipe';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { closeOpenSwipeRow, consumeTapIfRowOpen, openSwipeRow } from '@/lib/swipeRegistry';
 import { TopBar } from '@/components/TopBar';
 import { ThreadListControls } from '@/components/ThreadListControls';
 import { SkeletonList } from '@/components/Skeleton';
@@ -21,7 +23,6 @@ import {
 } from '@/lib/conversations';
 import { ApiError } from '@/lib/api';
 import { publishChatUnread } from '@/lib/chatUnread';
-import { closeOpenSwipeRow } from '@/lib/swipeRegistry';
 import {
   applyControls,
   isSearchable,
@@ -236,6 +237,34 @@ export default function ConversationsScreen() {
   );
 
   const unread = items?.reduce((n, c) => n + (c.unreadCount > 0 ? 1 : 0), 0) ?? 0;
+  /*
+   * §8 rev G — the outside tap, background half.
+   *
+   * The ROW's press handler consumes taps that land on a row
+   * (`consumeTapIfRowOpen`). This catches everything else inside the list:
+   * a section label, the gap under a short list.
+   *
+   * A TAP gesture and not a touch-down handler, and the distinction is the
+   * whole design. `onStartShouldSetResponderCapture` was tried first and
+   * is wrong: it fires the instant a finger lands, so putting a finger on
+   * an already-open row to drag it further would snap it shut under the
+   * hand. `Gesture.Tap()` only recognises when the finger LIFTS having
+   * barely moved, so a drag never triggers it and the pan keeps the touch.
+   *
+   * It writes the registry's shared value directly on the UI thread, so
+   * no row re-renders to close — the render counter stays at 0.
+   */
+  const outsideTap = useMemo(
+    () =>
+      Gesture.Tap()
+        .maxDistance(8)
+        .onEnd(() => {
+          'worklet';
+          if (openSwipeRow.value !== '') openSwipeRow.value = '';
+        }),
+    [],
+  );
+
   const visible = useMemo(() => applyControls(items ?? [], filter, sort), [items, filter, sort]);
 
   /*
@@ -294,6 +323,7 @@ export default function ConversationsScreen() {
       {items === null && error === null ? (
         <SkeletonList rows={7} />
       ) : (
+        <GestureDetector gesture={outsideTap}>
         <FlatList
           data={sections}
           /*
@@ -332,9 +362,14 @@ export default function ConversationsScreen() {
                   // Object form, not a template string: typed routes describe a
                   // dynamic route by its literal `[id]` pathname plus params,
                   // so an interpolated href is (correctly) rejected.
-                  onPress={() =>
-                    router.push({ pathname: '/conversation/[id]', params: { id: row.item.id } })
-                  }
+                  onPress={() => {
+                    // §8 rev G: a tap with a row open is spent closing it.
+                    // This covers both halves of the ruling — tapping ANOTHER
+                    // row never opens that thread, and tapping the open row's
+                    // own front just closes it.
+                    if (consumeTapIfRowOpen()) return;
+                    router.push({ pathname: '/conversation/[id]', params: { id: row.item.id } });
+                  }}
                 />
               </ConversationSwipe>
               </Appear>
@@ -390,6 +425,7 @@ export default function ConversationsScreen() {
             )
           }
         />
+        </GestureDetector>
       )}
     </ScreenShell>
   );
