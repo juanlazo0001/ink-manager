@@ -1,19 +1,11 @@
 import Feather from '@expo/vector-icons/Feather';
 import { BlurView } from 'expo-blur';
 import type { ConversationThreadHeader } from '@ink-manager/shared-types';
-import Animated, {
-  interpolate,
-  useAnimatedStyle,
-  type SharedValue,
-} from 'react-native-reanimated';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { THREAD_AVATAR_HEADER, ThreadAvatar } from '@/components/ThreadAvatar';
-import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
-
-/** Spec §9: the chip row's own height, and how far it travels. */
-export const CHIP_ROW_HEIGHT = 44;
+import { chat, colors, fonts, hairline, space } from '@/theme';
 
 /**
  * The thread header (spec §9).
@@ -27,145 +19,89 @@ export const CHIP_ROW_HEIGHT = 44;
  * stated rather than silently degraded, and this is that statement in
  * code.
  *
- * ─── THE CHIP ROW COLLAPSES, THE IDENTITY DOES NOT ──────────────────
+ * ─── NO CONTEXT-CHIP ROW (§9 rev H, owner ruling 2026-08-27) ────────
  *
- * Scrolling down collapses the context chips to zero height and fades
- * them; scrolling back up returns them. The name, avatar and channel line
- * never move — losing who you are talking to while reading history is
- * exactly the disorientation the collapse is meant to relieve.
+ * This header used to carry a second row of gold-outlined chips under
+ * the name, and a scroll-driven collapse that animated it to zero height
+ * on scroll-down and back on scroll-up. Both are gone: the header is one
+ * 44pt row, and the hairline sits directly beneath it.
  *
- * ─── CHIPS COME FROM DATA ALREADY IN HAND ───────────────────────────
+ * Worth recording because the removal is smaller than it sounds and the
+ * name of the thing was misleading: the row never rendered conversation
+ * TAGS. It rendered exactly one chip, built from `header.primaryInquiry`
+ * — description · placement · status — which is why a thread whose
+ * inquiry read description "TEST", placement "TEST", status NEW showed
+ * `TEST · TEST · NEW`. `ConversationThreadTag` carries no human label to
+ * render (see the deleted note's reasoning), so tags were never on
+ * screen and no tag data is touched by their absence.
  *
- * `primaryInquiry` (id/status/description/placement) is already on
- * `ConversationThreadHeader`. No new request is made, and a thread with no
- * linked inquiry renders no chip row at all rather than an empty strip.
+ * The collapse retires with the row. Nothing else in this header ever
+ * moved on scroll, so there is no residual choreography.
  */
 export function ThreadHeader({
   header,
   channel,
   handle,
-  collapse,
   onBack,
   onInfo,
-  onPressInquiry,
 }: {
   header: ConversationThreadHeader;
   /** The thread's channel, for the sub-line swatch + name. */
   channel: string;
   /** Phone number or handle, when the counterpart has one. */
   handle?: string | null;
-  /** 0 = chips fully open, 1 = fully collapsed. Driven by scroll. */
-  collapse: SharedValue<number>;
   onBack: () => void;
   onInfo?: () => void;
-  onPressInquiry?: (inquiryId: string) => void;
 }) {
   const insets = useSafeAreaInsets();
   const name = header.counterpart?.name ?? 'Conversation';
   const isGroup = header.type === 'GROUP';
   const members = header.counterpart?.participants;
 
-  const inquiry = header.primaryInquiry;
-  const chips: { key: string; label: string; onPress?: () => void }[] = [];
-  if (inquiry) {
-    // Description first — it is what the thread is actually about — with
-    // placement as the qualifier, then the status. Everything here is a
-    // field the header already carries.
-    const subject = [inquiry.description, inquiry.placement].filter(Boolean).join(' · ');
-    chips.push({
-      key: `inq:${inquiry.id}`,
-      label: [subject, inquiry.status.replace(/_/g, ' ')].filter(Boolean).join(' · '),
-      onPress: onPressInquiry ? () => onPressInquiry(inquiry.id) : undefined,
-    });
-  }
-  /*
-   * `tags` are deliberately NOT rendered as chips. `ConversationThreadTag`
-   * types only `id`/`entityType`/`entityId` plus an index signature — there
-   * is no guaranteed human label on it, and apps/web reads nothing but
-   * `tag.id` from it either. Inventing a label field here would be
-   * inventing API surface. The linked inquiry is the chip this screen can
-   * render truthfully today.
-   */
-
-  const chipStyle = useAnimatedStyle(() => ({
-    height: interpolate(collapse.value, [0, 1], [CHIP_ROW_HEIGHT, 0]),
-    opacity: interpolate(collapse.value, [0, 0.6], [1, 0]),
-  }));
-
   const body = (
-    <>
-      <View style={styles.row}>
-        <Pressable
-          onPress={onBack}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          hitSlop={10}
-          style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-        >
-          {/* §9: cream, never red. Red on this screen is the bubble and
-              the alerts, and a back chevron is neither. */}
-          <Feather name="chevron-left" size={26} color={chat.textPrimary} />
-        </Pressable>
+    <View style={styles.row}>
+      <Pressable
+        onPress={onBack}
+        accessibilityRole="button"
+        accessibilityLabel="Back"
+        hitSlop={10}
+        style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+      >
+        {/* §9: cream, never red. Red on this screen is the bubble and
+            the alerts, and a back chevron is neither. */}
+        <Feather name="chevron-left" size={26} color={chat.textPrimary} />
+      </Pressable>
 
-        {/*
-          §9 rev G: the list's own avatar-with-lettered-badge, at header
-          scale. The channel used to be a swatch plus its full name on a
-          second line under the title -- which is what made this header
-          two rows tall and left a dead band above the name. The badge
-          says the same thing in the space the avatar already occupies.
-        */}
-        <ThreadAvatar
-          name={name}
-          avatarUrl={header.counterpart?.avatarUrl}
-          participants={members}
-          channel={channel}
-          scale={THREAD_AVATAR_HEADER}
-        />
+      {/*
+        §9 rev G: the list's own avatar-with-lettered-badge, at header
+        scale. The channel used to be a swatch plus its full name on a
+        second line under the title -- which is what made this header
+        two rows tall and left a dead band above the name. The badge
+        says the same thing in the space the avatar already occupies.
+      */}
+      <ThreadAvatar
+        name={name}
+        avatarUrl={header.counterpart?.avatarUrl}
+        participants={members}
+        channel={channel}
+        scale={THREAD_AVATAR_HEADER}
+      />
 
-        <Text style={styles.name} numberOfLines={1}>
-          {name}
-        </Text>
+      <Text style={styles.name} numberOfLines={1}>
+        {name}
+      </Text>
 
-        <Pressable
-          onPress={onInfo}
-          accessibilityRole="button"
-          accessibilityLabel="Conversation details"
-          hitSlop={10}
-          disabled={!onInfo}
-          style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-        >
-          <Feather name="info" size={20} color={onInfo ? chat.textPrimary : chat.textMuted} />
-        </Pressable>
-      </View>
-
-      {chips.length > 0 ? (
-        <Animated.View style={[styles.chipRow, chipStyle]}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipRowContent}
-            // Load-bearing, the same note `Pill`'s row and `DayStrip` both
-            // carry: a horizontal ScrollView in a flex column takes all the
-            // height offered and stretches its children.
-            style={styles.chipScroll}
-          >
-            {chips.map((c) => (
-              <Pressable
-                key={c.key}
-                onPress={c.onPress}
-                disabled={!c.onPress}
-                accessibilityRole={c.onPress ? 'button' : undefined}
-                style={({ pressed }) => [styles.chip, pressed && c.onPress && styles.pressed]}
-              >
-                {/* No clamp: 9 says the ROW scrolls. A capped, ellipsised
-                    chip hides the status, which is the half people read. */}
-                <Text style={styles.chipLabel}>{c.label.toUpperCase()}</Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </Animated.View>
-      ) : null}
-    </>
+      <Pressable
+        onPress={onInfo}
+        accessibilityRole="button"
+        accessibilityLabel="Conversation details"
+        hitSlop={10}
+        disabled={!onInfo}
+        style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+      >
+        <Feather name="info" size={20} color={onInfo ? chat.textPrimary : chat.textMuted} />
+      </Pressable>
+    </View>
   );
 
   return (
@@ -184,7 +120,11 @@ export function ThreadHeader({
   );
 }
 
-/** §9 rev G: safe-area top + this + one 44pt row, and nothing else. */
+/**
+ * §9 rev G: safe-area top + this + one 44pt row, and nothing else.
+ * Rev H makes that literal — with the chip row gone the hairline is the
+ * next sibling after the row, so this is now the whole header.
+ */
 const HEADER_PAD = 8;
 const HEADER_ROW = 44;
 
@@ -225,27 +165,6 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: chat.textPrimary,
   },
-
-  chipRow: { justifyContent: 'center' },
-  chipScroll: { flexGrow: 0 },
-  chipRowContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    paddingHorizontal: space.md,
-    paddingBottom: space.sm,
-  },
-  /* §9: gold outline, in the active-filter-chip style. */
-  chip: {
-    flexShrink: 0,
-    paddingHorizontal: space.md,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-    borderWidth: hairline,
-    borderColor: chat.accent,
-    backgroundColor: 'rgba(201, 154, 91, 0.08)',
-  },
-  chipLabel: { ...type.label, fontSize: 9, color: chat.accent },
 
   hairline: { height: hairline, backgroundColor: chat.hairline },
   pressed: { opacity: 0.6 },

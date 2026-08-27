@@ -333,17 +333,6 @@ export default function ConversationScreen() {
   }));
 
   /*
-   * §9: the context-chip row collapses on scroll-down and returns on
-   * scroll-up. Driven by DIRECTION, not absolute offset — an absolute
-   * threshold would leave the chips hidden forever once you were deep in
-   * history, and the whole point is that they come back when you reach for
-   * them. The list is inverted, so "scrolling down through history" is a
-   * RISING contentOffset.
-   */
-  const chipCollapse = useSharedValue(0);
-  const lastScrollY = useSharedValue(0);
-
-  /*
    * §5 SCROLL-TO-BOTTOM PILL.
    *
    * The list is inverted, so contentOffset 0 IS the bottom and the 200pt
@@ -372,13 +361,14 @@ export default function ConversationScreen() {
       // Exact, every event -- the pill's dead-band below is a display
       // decision, and §7's geometry needs the real number.
       scrollOffset.current = y;
-      const dy = y - lastScrollY.value;
-      // A dead-band, so a thumb resting on the list does not flicker it.
-      if (Math.abs(dy) > 6) {
-        chipCollapse.value = withSpring(dy > 0 ? 1 : 0, S2);
-        lastScrollY.value = y;
-      }
 
+      /*
+       * §9 rev H: the chip row's scroll-direction collapse lived here — a
+       * 6pt dead-band and a spring on `chipCollapse`. Removed with the row
+       * itself. What remains reads ABSOLUTE offset only, so nothing in
+       * this handler depends on scroll direction any more, and there is no
+       * threshold left that could fire a layout change mid-scroll.
+       */
       const away = y > PILL_THRESHOLD;
       if (away !== awayFromBottom.current) {
         awayFromBottom.current = away;
@@ -387,7 +377,7 @@ export default function ConversationScreen() {
         if (!away) setUnseenCount(0);
       }
     },
-    [chipCollapse, lastScrollY, pillShown],
+    [pillShown],
   );
 
   /** The pill's tap, and what every "go to newest" path should call. */
@@ -879,7 +869,7 @@ export default function ConversationScreen() {
      * ─── NO TOP EDGE HERE, AND THAT IS THE FIX ────────────────────
      *
      * This read `edges={['top']}`, and `ThreadHeader` ALSO applies
-     * `insets.top + 8` (ThreadHeader.tsx:172). The safe-area inset was
+     * `insets.top + 8` (ThreadHeader.tsx:108). The safe-area inset was
      * therefore paid TWICE: the row's top edge landed at
      * `2 x insets.top + 8` instead of `insets.top + 8`. On a Dynamic
      * Island phone that is 126 rather than 67 — a 59pt excess, which is
@@ -902,18 +892,10 @@ export default function ConversationScreen() {
     <ScreenShell edges={[]}>
       {/*
         §9. Replaces the generic ScreenHeader on this screen only: chat
-        needs a translucent unit carrying identity, channel and the context
-        chips, and the shared header has no concept of any of that.
+        needs a translucent unit carrying identity and channel, and the
+        shared header has no concept of either.
       */}
-      <ThreadHeader
-        header={header}
-        channel={threadChannel}
-        collapse={chipCollapse}
-        onBack={() => router.back()}
-        onPressInquiry={(inquiryId) =>
-          router.push({ pathname: '/staff-inquiry/[id]', params: { id: inquiryId } })
-        }
-      />
+      <ThreadHeader header={header} channel={threadChannel} onBack={() => router.back()} />
 
       {/*
         §4: no `KeyboardAvoidingView` anywhere in the chat stack. It
