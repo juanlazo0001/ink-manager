@@ -160,6 +160,26 @@ Concise operating rules, not a project history — see REPORT.md for history.
   real error (`ConversationsPanel.tsx`'s separate `Record<Tone, string>` maps needing a new `hold`
   key) that only the real `vite build` caught, after passing silently all session.
 
+## Motion verification protocol
+
+- Any session shipping gesture or animation work must end its report with a named ≤15s recording
+  request ("record: slow swipe right, release; fast flick left; tap outside") and, when the operator
+  provides it under `tools/motion-probe/recordings/`, run motion-probe and include the verdict
+  before recommending merge. The web harness freezes animation travel in app subtrees — geometry
+  proves in preview, feel proves on frames or on device, never by assertion.
+
+## Merge verification
+
+- Before treating a branch as merged, verify its tip with `git merge-base --is-ancestor <tip> main`
+  — never merely that a merge commit references the branch; branches grow after partial merges
+  (incident: 7f1e834 took one file of eight commits).
+
+## Falsifiable tests
+
+- Every test must be able to fail under the plausible-wrong implementation; suppression/zero-count
+  assertions always pair with a strict `+1` positive sibling (incidents: vacuous mute test;
+  non-discriminating outsider test; unread NULL-author gap).
+
 ## Verifying mobile UI on the web harness
 
 - **P3-class animation travel is device-gate-only under the web harness** — a reanimated animation
