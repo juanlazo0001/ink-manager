@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import Feather from '@expo/vector-icons/Feather';
-import { Eyebrow } from '@/components/ui';
 import { startConversation } from '@/lib/conversations';
 import { clientName, fetchClients } from '@/lib/clients';
 import { fetchTeamUsers } from '@/lib/team';
@@ -134,8 +133,29 @@ export function EmptySearchStart({
 
   return (
     <View style={styles.wrap}>
-      {/* §8 rev G's own words, Jura caps, muted. */}
-      <Eyebrow style={styles.eyebrow}>No conversations found</Eyebrow>
+      {/*
+        §8 rev G asks for `NO CONVERSATIONS FOUND` in **Jura caps, muted**,
+        and that is all it asks for — so this is a plain Text, not the
+        `Eyebrow` component it started as.
+ 
+        `Eyebrow` is Jura caps muted for the LABEL, which is why it looked
+        right, but it also brackets the label with `+` ticks in
+        `danger-strong`. Two reasons that is wrong here, neither of them
+        "ornaments were retired" — they were not, and `Eyebrow` documents
+        the ticks as the sanctioned decorative use of that token:
+ 
+          1. REV G NARROWED RED. This session's own headline ruling pulled
+             the red exception back to the CHAT fab alone. Putting two red
+             glyphs on a dead-end screen, in the release that narrowed red,
+             is the one place it should not appear.
+          2. AN EYEBROW LABELS A SECTION. It says "a thing follows". This
+             is the absence of things. Borrowing section furniture for an
+             empty state gives the emptiness a header, which reads as a
+             heading with nothing under it rather than as "nothing here".
+ 
+        The CTA below still carries every bit of colour this screen needs.
+      */}
+      <Text style={styles.title}>NO CONVERSATIONS FOUND</Text>
       <Text style={styles.body}>
         Nothing matching &ldquo;{query}&rdquo;. Search looks at names and message text.
       </Text>
@@ -184,7 +204,9 @@ interface Person {
 
 const styles = StyleSheet.create({
   wrap: { paddingHorizontal: space.lg, paddingVertical: space.xl, alignItems: 'center' },
-  eyebrow: { marginBottom: space.sm },
+  /* `type.eyebrow`'s own numbers — Jura 600, 11px, 3.74px tracking — so
+     this is the same type the eyebrow set, without the tick glyphs. */
+  title: { ...type.eyebrow, color: colors.fgMuted, textAlign: 'center', marginBottom: space.sm },
   body: { ...type.small, color: colors.fgMuted, textAlign: 'center', marginBottom: space.lg },
   spinner: { marginTop: space.md },
 
