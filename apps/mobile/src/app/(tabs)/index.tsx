@@ -20,6 +20,7 @@ import {
   setConversationViewerState,
 } from '@/lib/conversations';
 import { ApiError } from '@/lib/api';
+import { publishChatUnread } from '@/lib/chatUnread';
 import {
   applyControls,
   isSearchable,
@@ -93,6 +94,15 @@ export default function ConversationsScreen() {
         const next = await fetchConversations(token, activeSearch ? { search: activeSearch } : {});
         if (seq !== requestRef.current) return;
         setItems(next);
+        /*
+         * §8 rev F: the CHAT fab's badge, published from the list's own
+         * refresh path rather than fetched a second time. One source,
+         * three consumers -- see lib/chatUnread.ts.
+         *
+         * Deliberately NOT published while a search is narrowing the
+         * list: a badge that counts search results is not a badge.
+         */
+        if (!activeSearch) publishChatUnread(next);
         setError(null);
       } catch (err) {
         if (seq !== requestRef.current) return;

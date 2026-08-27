@@ -1,10 +1,10 @@
-import { formatBubbleCount } from '@ink-manager/shared-types';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AccountMenu } from '@/components/AccountMenu';
+import { Badge } from '@/components/Badge';
 import { NavDrawer } from '@/components/NavDrawer';
 import { BellIcon, ChevronDownIcon, MenuIcon, TasksIcon } from '@/components/icons';
 import { useAuth } from '@/context/auth';
@@ -189,17 +189,14 @@ function IconButton({
   );
 }
 
-/**
- * The one bubble treatment, shared by the tab bar too — cream fill, dark
- * text, `99+` above ninety-nine.
+/*
+ * `Badge` moved to its own module. It was exported from here but HOUSED
+ * with the top cluster, which is how the CHAT fab came to draw its own
+ * copy in local styles rather than importing this one -- two
+ * implementations of one bubble. Re-exported so existing callers are
+ * untouched.
  */
-export function Badge({ count, style }: { count: number; style?: object }) {
-  return (
-    <View style={[styles.badge, style]} pointerEvents="none">
-      <Text style={styles.badgeText}>{formatBubbleCount(count)}</Text>
-    </View>
-  );
-}
+export { Badge };
 
 const styles = StyleSheet.create({
   bar: {
@@ -263,20 +260,6 @@ const styles = StyleSheet.create({
   /* font-display text-sm text-accent-hover */
   avatarInitial: { fontFamily: type.display.fontFamily, fontSize: 14, color: colors.accentHover },
 
-  badge: {
-    position: 'absolute',
-    right: -4,
-    top: -4,
-    height: 20,
-    minWidth: 20,
-    paddingHorizontal: 4,
-    borderRadius: radius.pill,
-    backgroundColor: colors.fg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-    /* text-[11px] font-medium text-accent-fg */
-  badgeText: { fontFamily: fonts.bodyMedium, fontSize: 11, lineHeight: 14, color: colors.accentFg },
 
   pressed: { opacity: 0.6 },
 });
