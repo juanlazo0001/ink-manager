@@ -31029,3 +31029,179 @@ merge-verification house rule (`abeb5ff`) catching a real gap on its first
 use, one commit after being written.
 
 Both tables together are the record: what was true, and what is true.
+
+# Chat UX 10 — send choreography: the remount storm and the full-bleed clone
+
+Two defects, both root-caused to a line and both fixed. One task blocked
+on missing inputs. Branch `chat-ux/10-send-choreography` from `main`
+(`af856ce`); mobile-only, no dependencies.
+
+## Task A — the remount storm
+
+### Root cause, and it is not the keys
+
+    apps/mobile/src/app/conversation/[id].tsx:850   (pre-fix)
+        CellRendererComponent={({ item: cellItem, children, ...rest }) => (
+
+`CellRendererComponent` is consumed by React as a component **TYPE**. An
+inline arrow is a new function identity on every render, so React saw a
+different type each time and did the only thing a changed type permits:
+**unmount every cell's entire subtree and mount a fresh one.**
+
+The survey's own framing pointed at `keyExtractor` and the optimistic
+insert. Both were checked and both were fine — line 622 builds a new array
+but preserves untouched element identities, and line 634's `.map` does the
+same. The array was never the problem; the renderer type was.
+
+### Measured, not argued
+
+A `__DEV__` mount ledger on `MessageBubble`, one send, thread of 7:
+
+| | mounts | unmounts | distinct rows torn down |
+| --- | --- | --- | --- |
+| **before** | **24** | **23** | **9** — every pre-existing row (`m1`–`m7`) **three times each** |
+| **after** | 2 | 1 | **0 pre-existing rows** |
+
+Three times each because a send causes three renders: optimistic insert,
+ack, status settle. And `m7` is the image row in the fixture — it was
+unmounting three times per send, which is exactly why the operator sees it
+**go blank**. A re-render cannot blank a loaded image; only an unmount can.
+"Neighbours flash back as fragments" is the same event.
+
+### The second defect, separately real
+
+    [id].tsx:634  current.map((m) => (m.id === tempId ? { ...created, status: 'sent' } : m))
+    [id].tsx:834  keyExtractor={(row) => ... row.message.id}
+
+The optimistic row carries a `local:` id; the server's reply replaces it.
+The **key** therefore changed at acknowledgement, so the just-sent bubble
+unmounted and remounted the instant it was acked.
+
+Fixed with `rowKey` on `DisplayMessage` (`threadRows.ts`), assigned once at
+optimistic-insert and carried through the swap. The `id` still becomes the
+server's — reactions, replies and edits all address by it — **only the key
+stays put**.
+
+### The probe lied once, and that is recorded in it
+
+Keyed on `message.id`, the ledger fired its own effect cleanup when the id
+changed at ack, logging a **phantom unmount for a row React never
+touched**. The first post-fix reading (2 mounts / 1 unmount, ids differing)
+was that artifact, not churn. It is keyed on `rowKey` now.
+
+### Residual, characterised rather than explained away
+
+The just-sent row still cycles once, under the **same** `rowKey`:
+
+    +41ms  mount    bubble:local:…
+    +80ms  unmount  bubble:local:…
+    +81ms  mount    bubble:local:…
+
+No pre-existing row is involved and nothing visible blanks — it is a fresh
+row with no loaded image. **Not root-caused.** Candidate hypotheses are a
+day/time separator appearing beside it or FlatList windowing on the length
+change, and I did not confirm either, so neither is asserted.
+
+## Task B — the clone's constraints
+
+### Root cause
+
+    apps/mobile/src/components/SendFly.tsx   styles.bubble
+        maxWidth: '100%'
+
+**100% of what** is the bug. The clone's container is the composer's box at
+the origin and the list's at the destination — both effectively the full
+screen — so the cap capped nothing and `alignSelf: 'flex-end'` had nothing
+to push against.
+
+### Fix
+
+The clone now reproduces the **own-row context** rather than being a bare
+bubble in an absolute box: `MessageBubble`'s own two-layer shape, field for
+field — a full-width `wrap` carrying the row inset, the bubble
+right-anchored inside it and capped at §2.1's **78%**, the same percentage
+the real bubble uses.
+
+Measured at 320pt, with `SendFly` mounted directly against synthetic
+composer and list rects — both full-width, the exact condition that
+produced the ghost:
+
+| | value |
+| --- | --- |
+| screen width | 320 |
+| clone container | 320 — correct, it maps to the row's box |
+| **bubble width** | **225 = 0.70 × screen**, under the 249.6 cap |
+| **bubble right edge** | **304 = 320 − 16**, the row inset exactly |
+| radius / fill | 18px / `rgb(201,154,91)` gold |
+
+`design-refs/session-10/clone-at-origin-320.png`.
+
+### Graceful skip
+
+The destination is now rejected when the list has not laid out or the
+optimistic row has not measured (zero list width, zero list height, zero
+row height). The send falls back to a plain appear and logs one dev line
+naming the failed measurement, rather than flying to an invented point.
+
+### Harness limit, stated plainly
+
+**The send path's own fly does not start in the web preview** — the
+composer's `measureInWindow` returns nothing there, so neither the flight
+nor the skip log fires (verified: no `[send-fly]` console line either way).
+That is why the numbers above come from mounting `SendFly` directly with
+known rects. **The geometry is proven; the flight is device-gate.**
+
+## Task C — BLOCKED, both inputs missing
+
+Not run, and not faked:
+
+| input | state |
+| --- | --- |
+| `tools/motion-probe/recordings/send-glitch-0827.mp4` | **absent** — the directory holds only its `.gitignore` |
+| **ffmpeg** | **not installed on this machine** |
+
+So there is no probe baseline in this report, no verdict lines, and no
+`chat-ux-10-c` commit. Either gap alone would block it; both are present.
+
+The tool itself is fine — `python probe.py selftest` still passes 3/3, and
+it degrades on the missing ffmpeg with its install message rather than a
+traceback, which is the behaviour it was built for.
+
+**To unblock:** install ffmpeg (`winget install Gyan.FFmpeg`), drop the
+recording in `recordings/`, and the baseline is one command per window —
+`sheet` first, then `track`/`panel` over t≈1.0–2.0s and t≈9.8–10.8s.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         ✓ built in 13.71s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean
+
+Mount counters printed above (before: 23 unmounts; after: 0 pre-existing).
+Clone width printed above. Console shows no new errors from these changes —
+the three that remain are the pre-existing `react-native-web` shim warnings
+(deprecated `pointerEvents`, React 19 `element.ref`, nested-button
+hydration), all present before this branch.
+
+**Standing regressions not re-verified here, and I am saying so rather than
+implying coverage:** reveal drag, keyboard ride and interactive dismissal,
+swipe render-counters, outside-tap, QUEUED→SENT, failed-send treatment.
+Nothing in this branch touches their code paths — the changes are one
+FlatList prop, one key field and one style block — but "did not touch it"
+is not "tested it", and the gesture-driven ones are device-gate regardless.
+
+## Escalations
+
+1. **The residual single remount** (Task A) — real, characterised, not
+   root-caused. Low severity: the row is brand new, nothing blanks.
+2. **Task C is blocked on ffmpeg + the recording.** The after-probe the
+   gate wants cannot run until both exist.
+3. **The send-fly verdict is still outstanding** — Session 09's Task P was
+   skipped for a blank verdict line, and the gate for this session is the
+   right moment to call it, now that the animation being judged is the
+   fixed one.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
