@@ -153,6 +153,13 @@ Two things the ruling should be read against, both established while removing it
 - **The row never rendered tags.** As shipped it rendered exactly ONE chip, built from `primaryInquiry` — description · placement · status. The gate's `TEST · TEST · NEW` was an inquiry whose description and placement were both "TEST" and whose status was NEW. `ConversationThreadTag` carries no human label to render, which is why tags were never on screen. No tag data changes.
 - **The ⓘ is not wired yet, so §9's context has no home on screen today.** `ThreadHeader` accepts `onInfo`, but `conversation/[id]` does not pass it: the button renders muted and `disabled`. The chip's tap was the only path from a thread to its linked inquiry (`/staff-inquiry/[id]`), and removing the row removes it. Under this spec's own **no-inert-affordances rule** the ⓘ must either get its sheet or stop rendering — tracked as the open item from Session 12, not silently assumed done.
 
+**Rev H — details sheet v1 (Session 13).** The ⓘ is wired and no longer inert. It opens the house bottom sheet (`components/Sheet.tsx`, the same one the attach and long-press sheets use — reused, not forked) containing:
+
+- **PARTICIPANTS** — one row per person: the shared avatar with its lettered channel badge, the display name, and the channel's full name beneath. Group threads list every member; CLIENT/STAFF threads are their single counterpart. The second line is the channel because that is what the retired two-line sub-line actually rendered — it read `channelLabel(channel) + (handle ? ' · ' + handle : '')`, and **no commit in this repo ever passed a `handle`**; there is no handle/number field on the thread payload. A number or @handle would require data the screen does not hold, i.e. a new request, which v1 does not make.
+- **LINKED INQUIRY** — rendered only when `primaryInquiry` exists, absent entirely otherwise (not an empty section). Its label is the removed chip's exact composition — description · placement · status — and tapping it pushes `/staff-inquiry/[id]`, the same call the chip made, recovered from the commit that deleted it rather than reinvented.
+
+No new API calls: everything renders from `ConversationThreadHeader`, which the screen already holds. **This closes the no-inert item opened above.**
+
 *Superseded (rev G and earlier):* Context chip row (client threads — the thing iMessage doesn't have): gold-outline chips in the exact style of the active filter chip — `INQ-0247 · BLACKWORK SLEEVE · ESTIMATE ACCEPTED`, `DEPOSIT · PAID` — tap → linked inquiry/project. Horizontally scrolls; part of the header blur unit; collapses on scroll-down, returns on scroll-up (44pt, S2).
 
 ## 10. Motion and haptics map (unchanged)

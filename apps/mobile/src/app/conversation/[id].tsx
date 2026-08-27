@@ -48,6 +48,7 @@ import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
 import { channelLabel } from '@/components/ConversationRow';
 import { MessageBubble, REVEAL_WIDTH, messageImages } from '@/components/MessageBubble';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { ThreadDetailsSheet } from '@/components/ThreadDetailsSheet';
 import { ThreadHeader } from '@/components/ThreadHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -93,6 +94,8 @@ export default function ConversationScreen() {
   const viewerUserId = session?.profile.id ?? '';
 
   const [header, setHeader] = useState<ConversationThreadHeader | null>(null);
+  /** §9 rev H: the ⓘ details sheet. */
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -895,7 +898,35 @@ export default function ConversationScreen() {
         needs a translucent unit carrying identity and channel, and the
         shared header has no concept of either.
       */}
-      <ThreadHeader header={header} channel={threadChannel} onBack={() => router.back()} />
+      <ThreadHeader
+        header={header}
+        channel={threadChannel}
+        onBack={() => router.back()}
+        onInfo={() => setDetailsOpen(true)}
+      />
+
+      {/*
+        §9 rev H. The ⓘ was inert from the day the header shipped;
+        session 12 then removed the chip row, which had been the only
+        route from a thread to its linked inquiry. This is where both
+        land.
+      */}
+      <ThreadDetailsSheet
+        visible={detailsOpen}
+        onClose={() => setDetailsOpen(false)}
+        header={header}
+        channel={threadChannel}
+        onPressInquiry={(inquiryId) => {
+          /*
+           * Recovered verbatim from 4a8117a, the commit that deleted it —
+           * not reinvented. `/staff-inquiry/[id]` still resolves
+           * (app/staff-inquiry/[id].tsx), and `(tabs)/inquiries.tsx` and
+           * `inquiry-new.tsx` both push it in this identical shape.
+           */
+          setDetailsOpen(false);
+          router.push({ pathname: '/staff-inquiry/[id]', params: { id: inquiryId } });
+        }}
+      />
 
       {/*
         §4: no `KeyboardAvoidingView` anywhere in the chat stack. It

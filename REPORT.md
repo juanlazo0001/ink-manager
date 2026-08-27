@@ -31585,3 +31585,128 @@ is not "tested it".
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 13 — the ⓘ is wired, and the inquiry path is back
+
+Branch `chat-ux/13-details-sheet` from `main` (`52d0617`), worktree per
+`CLAUDE.md`. Mobile-only, no dependencies, **no new API calls**. One
+commit.
+
+## Precondition, checked before starting
+
+Both prerequisites are on main and were verified by content, not by
+changelog: `ThreadHeader` has **0** chip-row remnants, and the header is
+`HEADER_PAD 8 + HEADER_ROW 44 + hairline` with the hairline as `{body}`'s
+immediate sibling — **53**, re-probed live at the end and still 53.
+
+## The recovered navigation, and that it still resolves
+
+    router.push({ pathname: '/staff-inquiry/[id]', params: { id: inquiryId } })
+
+Recovered verbatim from **`4a8117a`**, the commit that deleted it — the
+brief's instruction, and worth following because the route is easy to
+guess wrong. It resolves: `app/staff-inquiry/[id].tsx` exists, and
+`(tabs)/inquiries.tsx:266` and `inquiry-new.tsx:188` both push it in the
+identical shape. No stop condition fired.
+
+The harness proves the push rather than asserting it: tapping the row
+moved the URL to **`/staff-inquiry/q1`**, `q1` being the fixture's
+inquiry id.
+
+## The house sheet hosted it unchanged
+
+`components/Sheet.tsx` takes `visible` / `onClose` / `children`, so
+`ThreadDetailsSheet` is a consumer exactly like `ClientMoreSheet` and the
+composer's attach sheet. **No change to the sheet's contract**, so the
+other seven consumers are untouched — the stop condition about forking
+the long-press sheet did not apply.
+
+## Sheet composition per thread type
+
+| thread | fixture | PARTICIPANTS | LINKED INQUIRY |
+| --- | --- | --- | --- |
+| inquiry-linked (`Juan Lazo`, SMS) | `t1` | 1 row — `JL` avatar + `SMS` badge · "Juan Lazo" · `SMS` | **present** — `TEST · TEST · NEW` → `/staff-inquiry/q1` |
+| plain (`Mandii`, SMS) | `t2` | 1 row — `M` + `SMS` badge · "Mandii" · `SMS` | **section absent entirely** — no empty heading |
+| group (`Front desk`, IN-APP) | `t3` | **3 rows** — Marcus Delacroix · Priyanka Venkataraman · Jo Ng, each `APP`-badged, each `IN-APP` | absent |
+
+The group fixture carries a real `participants` array, because
+`participants` is present on GROUP threads *only* and its presence is
+what the sheet branches on — a fixture that omitted it would have tested
+the CLIENT path twice and reported a pass.
+
+## A correction: the second line is the channel, and always was
+
+The brief asks for "the channel handle/number line the old two-line
+header used to show". What that sub-line rendered was:
+
+    {channelLabel(channel).toUpperCase()}{handle ? ` · ${handle}` : ''}
+
+and the `handle` half **never rendered once**. `ThreadHeader` declared a
+`handle?: string | null` prop, and `git log -S"handle={"` over the
+screen's entire history returns **nothing** — no commit ever passed one.
+There is no handle or number field on `ConversationThreadHeader` to pass.
+
+So the line that actually shipped was the channel's full name, and that
+is what the sheet reproduces. A real phone number or @handle would need
+data the screen does not hold — a new request, which this session is not
+allowed to make. Recorded in the component, in the spec and here rather
+than quietly approximated with something that looks similar.
+
+The channel is a property of the thread, not of a person, so every row on
+a group shows the same one. That is true rather than lazy — everyone in a
+group thread is reached the same way — and it matches the badge the
+shared avatar already draws on each row.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 14.29s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+Harness, 393pt:
+
+    info button aria-disabled          null   (was "true" in session 12)
+    info button disabled               false
+    info button tabindex               0
+    header height / row top / hairline 53 / 8 / 52   <- unchanged by this session
+    header wrap children               4             <- unchanged
+    sections on t1                     PARTICIPANTS, LINKED INQUIRY
+    sections on t2 and t3              PARTICIPANTS only
+    group member rows                  3 of 3
+    URL after tapping the inquiry row  /staff-inquiry/q1
+    console errors                     1, the pre-existing React 19
+                                       element.ref shim message
+
+Screenshots in `design-refs/session-13/`: `cux13-sheet-inquiry-t1-393.png`,
+`cux13-sheet-plain-t2-393.png`, `cux13-sheet-group-t3-393.png`.
+
+### Retested vs untouched
+
+**Retested:** ⓘ enabled state, sheet open on all three thread types,
+section presence and absence, group member enumeration, the inquiry
+push's resolved URL, header geometry, boot with no new console errors,
+all four typechecks.
+
+**Untouched and NOT retested** — stated rather than implied: the sheet's
+own dismissal choreography (scrim fade under panel slide) and swipe
+dismissal, which are `Sheet`'s and unmodified; blur rendering and
+scroll-under; the long-press sheet and every other `Sheet` consumer;
+keyboard choreography; send. The diff adds one component and wires one
+prop.
+
+## Escalations
+
+1. **`aria-disabled` was the session-12 evidence and is now the
+   session-13 evidence.** Same probe, opposite value. Nothing outstanding
+   from that escalation — it is closed.
+2. **v1 is deliberately thin.** It shows who and what-inquiry, and
+   nothing about the thread itself (archived state, created date, mute).
+   Those are additions, not omissions with a bug behind them.
+3. **A real handle/number line needs a payload field that does not
+   exist** — see above. If the operator wants the number under the name,
+   that is an API change and a separate session, not a UI tweak.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
