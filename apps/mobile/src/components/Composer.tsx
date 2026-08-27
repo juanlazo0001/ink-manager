@@ -568,14 +568,21 @@ const styles = StyleSheet.create({
   /* Holds the button's slot steady while it scales in. */
   sendWrap: { marginBottom: 3 },
   send: {
-    /* §3: 30pt red circle, white arrow. Was a 40pt gold circle — the red
-       is the same brand fill the outgoing bubbles took under the owner's
-       ruling, which is what makes the button read as "this becomes a
-       message". */
+    /*
+     * §3: 30pt red circle, white arrow. Was a 40pt gold circle.
+     *
+     * The red is now PINNED here rather than borrowed from
+     * `chat.bubbleOwnBg`. It was the same token, on the argument that the
+     * button matched the bubble it produced -- and when rev G reverted
+     * the bubbles to gold, that inheritance would have quietly taken the
+     * send button with them. The owner's reversal keeps this red: at
+     * 30pt it is punctuation-scale brand, the same reading as the CHAT
+     * fab, which is the one place CLAUDE.md still sanctions a red fill.
+     */
     width: 30,
     height: 30,
     borderRadius: radius.pill,
-    backgroundColor: chat.bubbleOwnBg,
+    backgroundColor: colors.dangerStrong,
     alignItems: 'center',
     justifyContent: 'center',
   },
