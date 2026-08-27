@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Avatar, initialsOf } from '@/components/Avatar';
+import Feather from '@expo/vector-icons/Feather';
 import { Eyebrow } from '@/components/ui';
 import { startConversation } from '@/lib/conversations';
 import { clientName, fetchClients } from '@/lib/clients';
@@ -153,12 +153,14 @@ export function EmptySearchStart({
               accessibilityState={{ busy: busyId === person.key }}
               style={({ pressed }) => [styles.offer, pressed && styles.pressed]}
             >
-              <Avatar
-                url={person.avatarUrl}
-                initials={initialsOf(person.name)}
-                size={28}
-                labelStyle={styles.avatarLabel}
-              />
+              {/*
+                No avatar. It was tried and removed on sight: `Avatar`
+                draws on `colors.surface`, so inside a gold pill it reads
+                as a dark blob, and its ink initials vanish against that
+                dark ground. The label already names the person — the
+                circle was repeating it illegibly.
+              */}
+              <Feather name="edit" size={14} color={colors.accentFg} />
               <Text style={styles.offerLabel} numberOfLines={1}>
                 START CHAT WITH {person.name.toUpperCase()}
               </Text>
@@ -202,7 +204,6 @@ const styles = StyleSheet.create({
     paddingVertical: space.sm,
     minHeight: 44,
   },
-  avatarLabel: { ...type.label, fontSize: 11, color: colors.accentFg },
   offerLabel: { ...type.button, fontSize: 11, color: colors.accentFg, flex: 1 },
   pressed: { opacity: 0.75 },
 
