@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import Feather from '@expo/vector-icons/Feather';
+import { useRouter } from 'expo-router';
 import { startConversation } from '@/lib/conversations';
+import { parseSearchPrefill } from '@/lib/searchPrefill';
 import { clientName, searchClients } from '@/lib/clients';
 import { fetchTeamUsers } from '@/lib/team';
 import { colors, hairline, radius, space, type } from '@/theme';
@@ -89,7 +91,25 @@ export function EmptySearchStart({
    */
   const [searchOk, setSearchOk] = useState(false);
 
+  const router = useRouter();
   const canStart = role !== 'ARTIST';
+
+  /*
+   * §8 rev H step 3. Three conditions, all required, and each one is
+   * load-bearing:
+   *
+   *   searchOk        the people query RAN. A thrown search is "unknown".
+   *   people.length   it matched nobody. Not "nobody in the newest 100".
+   *   canStart        an ARTIST cannot create the conversation afterwards
+   *                   (the route 404s them), so offering the whole flow
+   *                   would be offering a dead end — the no-inert rule.
+   *
+   * A two-character minimum is implicit: `searchClients` does not call
+   * the route below that, so `searchOk` never becomes true for a
+   * one-character query and the row cannot appear on a stray keystroke.
+   */
+  const prefill = parseSearchPrefill(query);
+  const canCreate = canStart && searchOk && people !== null && people.length === 0;
 
   useEffect(() => {
     if (!canStart) {
@@ -228,6 +248,35 @@ export function EmptySearchStart({
           {failed ? <Text style={styles.failed}>That didn&apos;t open. Try again.</Text> : null}
         </View>
       )}
+
+      {canCreate ? (
+        <View style={styles.offers}>
+          <Pressable
+            onPress={() =>
+              router.push({
+                pathname: '/client-new',
+                params: {
+                  firstName: prefill.firstName,
+                  lastName: prefill.lastName,
+                  email: prefill.email,
+                  phone: prefill.phone,
+                  /* The intent. `client-new` lands in the thread instead
+                     of the client record when this is set. */
+                  startChat: '1',
+                },
+              })
+            }
+            accessibilityRole="button"
+            accessibilityLabel={`Create client ${query.trim()}`}
+            style={({ pressed }) => [styles.offer, pressed && styles.pressed]}
+          >
+            <Feather name="user-plus" size={14} color={colors.accentFg} />
+            <Text style={styles.offerLabel} numberOfLines={1}>
+              CREATE CLIENT &ldquo;{query.trim()}&rdquo;
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }

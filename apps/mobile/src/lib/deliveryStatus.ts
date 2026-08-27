@@ -100,6 +100,20 @@ export function isProviderFailure(message: DisplayMessage): boolean {
 }
 
 /** The Jura caps label for a state. */
+/**
+ * The failed row's own line. Reason-keyed, because "NOT DELIVERED · TAP
+ * TO RETRY" is actively misleading for a consent block: retrying changes
+ * nothing until the client consents, and the operator needs to know that
+ * the number is fine and the paperwork is not.
+ *
+ * The A2P gate itself is not softened anywhere — this only changes what
+ * the refusal SAYS.
+ */
+export function failedLineFor(message: DisplayMessage): string {
+  if (message.failureCode === 'no_sms_consent') return 'NO SMS CONSENT ON FILE';
+  return 'NOT DELIVERED · TAP TO RETRY';
+}
+
 export function deliveryLabel(state: DeliveryState): string {
   switch (state) {
     case 'QUEUED':

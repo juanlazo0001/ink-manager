@@ -7,7 +7,7 @@ import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reani
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { isMessageEdited } from '@/lib/conversations';
-import { deliveryLabel, deliveryState } from '@/lib/deliveryStatus';
+import { deliveryLabel, deliveryState, failedLineFor } from '@/lib/deliveryStatus';
 import { linkify, truncateMiddle } from '@/lib/linkify';
 import type { DisplayMessage } from '@/lib/threadRows';
 import { BALLOON, ReactionBalloon, ReactionTail } from '@/components/ReactionBalloon';
@@ -566,7 +566,7 @@ export function MessageBubble({
         <Pressable
           onPress={onRetry}
           accessibilityRole="button"
-          accessibilityLabel="Not delivered. Tap to retry."
+          accessibilityLabel={`${failedLineFor(message)}. Tap to retry.`}
           hitSlop={8}
           style={({ pressed }) => [
             styles.failedRow,
@@ -574,7 +574,9 @@ export function MessageBubble({
             pressed && styles.pressed,
           ]}
         >
-          <Text style={styles.failedLabel}>NOT DELIVERED · TAP TO RETRY</Text>
+          {/* Surface-anchored, per CLAUDE.md: the line sits on the
+              screen beside the bubble and never recolours the fill. */}
+          <Text style={styles.failedLabel}>{failedLineFor(message)}</Text>
         </Pressable>
       ) : pending && showMeta ? (
         <View style={[styles.meta, own ? styles.metaOwn : styles.metaTheirs]}>

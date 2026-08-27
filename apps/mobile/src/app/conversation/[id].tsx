@@ -662,11 +662,20 @@ export default function ConversationScreen() {
         setMessages((current) =>
           current.map((m) => (m.id === tempId ? { ...created, status: 'sent', rowKey: tempId } : m)),
         );
-      } catch {
+      } catch (err) {
         // A message that fails must stay visible and stay marked — never
         // disappear, and never look sent. The body is preserved on the row
         // itself so a retry needs no re-typing.
-        const failed: DisplayMessage = { ...optimistic, status: 'failed' };
+        //
+        // The API's `code` is carried onto the row when there is one, so
+        // the failure can be described by REASON rather than generically.
+        // `ApiError` has always parsed it (`lib/api.ts:103`); this send
+        // path simply used to throw it away with a bare `catch {}`.
+        const failed: DisplayMessage = {
+          ...optimistic,
+          status: 'failed',
+          failureCode: err instanceof ApiError && err.fromApi ? err.code : undefined,
+        };
         pendingRef.current.set(tempId, failed);
         setMessages((current) => current.map((m) => (m.id === tempId ? failed : m)));
       } finally {
@@ -1217,7 +1226,23 @@ export default function ConversationScreen() {
                 }
               : {
                   kind: 'local' as const,
-                  explanation: 'This never left the app, so the text is still here.',
+                  /*
+                   * §8 rev H, architect ruling. A consent block is not a
+                   * broken message — it is a message waiting on paperwork,
+                   * and saying so is the difference between "try again"
+                   * and "go get consent".
+                   *
+                   * RETRY STAYS, deliberately diverging from the
+                   * provider-FAILED suppression above. That rule exists
+                   * because retrying a PERSISTED row duplicates it. This
+                   * row never persisted, and the blocking state is one the
+                   * client can change — the moment consent lands, retry is
+                   * exactly the right button.
+                   */
+                  explanation:
+                    actionFor.failureCode === 'no_sms_consent'
+                      ? 'This client has not consented to texts yet. Sends unlock as soon as they complete their consent form — then retry this message.'
+                      : 'This never left the app, so the text is still here.',
                   onRetry: () => {
                     const target = actionFor;
                     closeOverlay();
