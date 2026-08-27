@@ -1,0 +1,6 @@
+# Operator screen recordings are evidence for one session, not repo content:
+# a 15s phone capture is tens of megabytes and is superseded the moment the
+# thing it shows is fixed. The directory is tracked so the drop point exists
+# on a fresh clone; nothing inside it is.
+*
+!.gitignore
