@@ -1,4 +1,4 @@
-import { CLIENT_CHANNELS, type ClientChannel, type MessageDirection } from '@ink-manager/shared-types';
+import { CLIENT_CHANNELS, type ClientChannel } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
 import * as Haptics from 'expo-haptics';
 import Animated, {
@@ -48,7 +48,6 @@ const sendEntering = ZoomIn.springify().stiffness(S3.stiffness!).damping(S3.damp
 
 export interface ComposerSendState {
   channel: ClientChannel;
-  direction: MessageDirection;
 }
 
 /**
@@ -201,7 +200,6 @@ export function Composer({
   const wouldSendLive =
     isClientThread &&
     canSendLive &&
-    sendState.direction === 'OUTBOUND' &&
     (sendState.channel === 'SMS' || sendState.channel === 'EMAIL') &&
     !unavailableChannels.has(sendState.channel);
 
@@ -304,11 +302,9 @@ export function Composer({
         >
           <View style={[styles.dot, { backgroundColor: channelColor(sendState.channel) }]} />
           <Text style={styles.stripLabel}>
-            {sendState.direction === 'INBOUND'
-              ? `Logging what they said on ${channelLabel(sendState.channel)}`
-              : wouldSendLive
-                ? `Sends for real over ${channelLabel(sendState.channel)}`
-                : `Logged to the thread as ${channelLabel(sendState.channel)}`}
+            {wouldSendLive
+              ? `Sends for real over ${channelLabel(sendState.channel)}`
+              : `Logged to the thread as ${channelLabel(sendState.channel)}`}
           </Text>
           <Feather name="chevron-up" size={14} color={colors.fgMuted} />
         </Pressable>
@@ -495,21 +491,18 @@ export function Composer({
               );
             })}
 
-            <Eyebrow style={styles.sheetEyebrow}>Direction</Eyebrow>
-            {(['OUTBOUND', 'INBOUND'] as const).map((direction) => (
-              <Pressable
-                key={direction}
-                onPress={() => onChangeSendState({ ...sendState, direction })}
-                style={({ pressed }) => [styles.option, pressed && styles.pressed]}
-              >
-                <Text
-                  style={[styles.optionLabel, sendState.direction === direction && styles.optionLabelActive]}
-                >
-                  {direction === 'OUTBOUND' ? 'We are writing' : 'Logging what they said'}
-                </Text>
-                {sendState.direction === direction ? <Feather name="check" size={16} color={colors.accent} /> : null}
-              </Pressable>
-            ))}
+            {/*
+              §3 rev G: the DIRECTION control ("We are writing" / "Logging
+              what they said") is REMOVED. It was a testing artifact -- it
+              let anyone write a message into the thread attributed to the
+              CLIENT, which is a record-keeping decision, not a composer
+              setting, and one no real workflow had asked for.
+
+              The API's `direction` parameter stays and still accepts
+              INBOUND; this client just always sends OUTBOUND now. A
+              deliberate manual-logging design can pick it up later --
+              spec §3 rev G is the note to read first.
+            */}
 
             {!canSendLive ? (
               <Text style={styles.sheetNote}>
