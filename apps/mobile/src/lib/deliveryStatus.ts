@@ -91,7 +91,7 @@ export function deliveryState(message: DisplayMessage): DeliveryState {
  *
  * This is the difference between "we never managed to send it" and "we
  * sent it and the carrier rejected it", and it changes what the retry
- * sheet may honestly offer — see `RetrySheet`.
+ * sheet may honestly offer — see MessageActions' `failure` prop.
  */
 export function isProviderFailure(message: DisplayMessage): boolean {
   if (message.status !== 'sent') return false;

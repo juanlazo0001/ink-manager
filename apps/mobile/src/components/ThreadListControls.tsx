@@ -1,6 +1,6 @@
 import Feather from '@expo/vector-icons/Feather';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   THREAD_FILTERS,
@@ -8,18 +8,29 @@ import {
   type ThreadFilter,
   type ThreadSort,
 } from '@/lib/conversationListControls';
-import { Pill } from '@/components/Pill';
+import { LIST_INSET } from '@/theme/listMetrics';
 import { colors, hairline, radius, space, type } from '@/theme';
 
 /**
- * Search, filter and sort for the thread list — the three controls web
- * has and mobile didn't.
+ * §8's screen furniture: a search field, then a controls row with the
+ * FILTER dropdown left and the SORT dropdown right.
  *
- * Search is a server round trip, so it gets a busy state; the other two
- * are instant because they only reorder what is already here. Sort lives
- * behind a toggle rather than a second permanent row of chips: it is
- * changed far less often than the filter, and two chip rows above a list
- * on a phone is most of the screen.
+ * ─── WHY DROPDOWNS AND NOT CHIPS ────────────────────────────────────
+ *
+ * The shipped version put filters in a horizontally scrolling chip row
+ * and hid sort behind a toggle below it. Three filters never needed to
+ * scroll, and the asymmetry said the two controls were different kinds
+ * of thing when they are the same kind: pick one from a short list. Two
+ * matching dropdowns on one line say that, and give the list back the
+ * vertical space the second row was spending.
+ *
+ * ─── THE ACTIVE STATE ───────────────────────────────────────────────
+ *
+ * §8: a non-default filter shows its selection in gold. That is the
+ * active-state language the chips used, kept — the whole point of a
+ * filter control is being able to tell at a glance that the list you are
+ * looking at is not the whole list. Sort has no wrong value, so it never
+ * goes gold; it just says what the order is.
  */
 export function ThreadListControls({
   search,
@@ -39,8 +50,13 @@ export function ThreadListControls({
   sort: ThreadSort;
   onSortChange: (next: ThreadSort) => void;
 }) {
-  const [showSort, setShowSort] = useState(false);
+  // At most one menu is open: two open dropdowns on a phone is a pair of
+  // overlapping lists and no way to tell which one a tap belongs to.
+  const [open, setOpen] = useState<'filter' | 'sort' | null>(null);
+
+  const filterLabel = THREAD_FILTERS.find((f) => f.key === filter)?.label ?? '';
   const sortLabel = THREAD_SORTS.find((s) => s.key === sort)?.label ?? '';
+  const filtered = filter !== 'all';
 
   return (
     <View style={styles.wrap}>
@@ -73,53 +89,109 @@ export function ThreadListControls({
         ) : null}
       </View>
 
-      <View style={styles.chipRow}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-          {THREAD_FILTERS.map((option) => (
-            <Pill
-              key={option.key}
-              label={option.label}
-              selected={option.key === filter}
-              onPress={() => onFilterChange(option.key)}
-            />
-          ))}
-        </ScrollView>
-
-        <Pressable
-          onPress={() => setShowSort((v) => !v)}
-          accessibilityRole="button"
+      <View style={styles.controlsRow}>
+        <Dropdown
+          label={filtered ? filterLabel : 'Filter'}
+          active={filtered}
+          expanded={open === 'filter'}
+          accessibilityLabel={`Filter: ${filterLabel}`}
+          onPress={() => setOpen((o) => (o === 'filter' ? null : 'filter'))}
+        />
+        <Dropdown
+          label={sortLabel}
+          active={false}
+          expanded={open === 'sort'}
           accessibilityLabel={`Sort: ${sortLabel}`}
-          accessibilityState={{ expanded: showSort }}
-          hitSlop={6}
-          style={({ pressed }) => [styles.sortToggle, pressed && styles.pressed]}
-        >
-          <Feather name={showSort ? 'chevron-up' : 'chevron-down'} size={13} color={colors.fgMuted} />
-          <Text style={styles.sortToggleLabel}>SORT</Text>
-        </Pressable>
+          onPress={() => setOpen((o) => (o === 'sort' ? null : 'sort'))}
+        />
       </View>
 
-      {showSort ? (
-        <View style={styles.sortList}>
-          {THREAD_SORTS.map((option) => {
-            const on = option.key === sort;
-            return (
-              <Pressable
-                key={option.key}
-                onPress={() => {
-                  onSortChange(option.key);
-                  setShowSort(false);
-                }}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: on }}
-                style={({ pressed }) => [styles.sortRow, pressed && styles.pressed]}
-              >
-                <Text style={[styles.sortLabel, on && styles.sortLabelOn]}>{option.label}</Text>
-                {on ? <Feather name="check" size={14} color={colors.accent} /> : null}
-              </Pressable>
-            );
-          })}
-        </View>
+      {open === 'filter' ? (
+        <Menu
+          options={THREAD_FILTERS}
+          selected={filter}
+          onSelect={(key) => {
+            onFilterChange(key);
+            setOpen(null);
+          }}
+        />
       ) : null}
+
+      {open === 'sort' ? (
+        <Menu
+          options={THREAD_SORTS}
+          selected={sort}
+          onSelect={(key) => {
+            onSortChange(key);
+            setOpen(null);
+          }}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+/** The chevron + Jura-caps control §8 asks both of these to be. */
+function Dropdown({
+  label,
+  active,
+  expanded,
+  accessibilityLabel,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  expanded: boolean;
+  accessibilityLabel: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ expanded }}
+      hitSlop={8}
+      style={({ pressed }) => [styles.dropdown, pressed && styles.pressed]}
+    >
+      <Text style={[styles.dropdownLabel, active && styles.dropdownLabelActive]} numberOfLines={1}>
+        {label.toUpperCase()}
+      </Text>
+      <Feather
+        name={expanded ? 'chevron-up' : 'chevron-down'}
+        size={13}
+        color={active ? colors.accent : colors.fgMuted}
+      />
+    </Pressable>
+  );
+}
+
+function Menu<K extends string>({
+  options,
+  selected,
+  onSelect,
+}: {
+  options: readonly { key: K; label: string }[];
+  selected: K;
+  onSelect: (key: K) => void;
+}) {
+  return (
+    <View style={styles.menu}>
+      {options.map((option) => {
+        const on = option.key === selected;
+        return (
+          <Pressable
+            key={option.key}
+            onPress={() => onSelect(option.key)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: on }}
+            style={({ pressed }) => [styles.menuRow, pressed && styles.pressed]}
+          >
+            <Text style={[styles.menuLabel, on && styles.menuLabelOn]}>{option.label}</Text>
+            {on ? <Feather name="check" size={14} color={colors.accent} /> : null}
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -127,7 +199,9 @@ export function ThreadListControls({
 const styles = StyleSheet.create({
   wrap: {
     gap: space.md,
-    paddingHorizontal: space.lg,
+    // §8: 20pt, the same inset the rows use — the controls and the list
+    // they control read as one column rather than two.
+    paddingHorizontal: LIST_INSET,
     paddingTop: space.md,
     paddingBottom: space.md,
     borderBottomWidth: hairline,
@@ -146,21 +220,25 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, ...type.body, fontSize: 15, color: colors.fg, paddingVertical: space.md },
 
-  chipRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  chips: { flexDirection: 'row', gap: space.sm, paddingRight: space.sm },
+  controlsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  dropdown: { flexDirection: 'row', alignItems: 'center', gap: space.xs, maxWidth: '48%' },
+  dropdownLabel: { ...type.label, color: colors.fgMuted },
+  dropdownLabelActive: { color: colors.accent },
 
-  sortToggle: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
-  sortToggleLabel: { ...type.label, color: colors.fgMuted },
-
-  sortList: {
+  menu: {
     gap: space.xs,
     borderTopWidth: hairline,
     borderTopColor: colors.borderSoft,
     paddingTop: space.sm,
   },
-  sortRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: space.sm },
-  sortLabel: { ...type.body, fontSize: 14, color: colors.fgSecondary },
-  sortLabelOn: { color: colors.fg },
+  menuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: space.sm,
+  },
+  menuLabel: { ...type.body, fontSize: 14, color: colors.fgSecondary },
+  menuLabelOn: { color: colors.fg },
 
   pressed: { opacity: 0.6 },
 });

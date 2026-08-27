@@ -1,6 +1,6 @@
-import { formatBubbleCount } from '@ink-manager/shared-types';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { Badge } from '@/components/Badge';
 import { MessageIcon } from '@/components/icons';
 import { colors, fonts, radius, space } from '@/theme';
 
@@ -54,11 +54,17 @@ export function ChatTabButton({
         <View style={styles.halo} pointerEvents="none" />
         <MessageIcon size={20} color="#ffffff" />
         <Text style={styles.label}>CHAT</Text>
-        {unread > 0 ? (
-          <View style={styles.badge} pointerEvents="none">
-            <Text style={styles.badgeText}>{formatBubbleCount(unread)}</Text>
-          </View>
-        ) : null}
+        {/*
+          §8 rev F. The SHARED bubble, not a local copy of it -- this drew
+          its own byte-identical fork in local styles, which is a drift
+          waiting to happen and the reason Badge now has its own module.
+
+          Offset to clear the halo: the ring sits 8pt outside the button
+          (`-space.sm` on all four edges), so a badge at the shared -4
+          would have straddled it. -10 puts the bubble's edge just outside
+          the ring instead of cutting through it.
+        */}
+        {unread > 0 ? <Badge count={unread} style={styles.badgeOnFab} /> : null}
       </Pressable>
     </View>
   );
@@ -100,19 +106,8 @@ const styles = StyleSheet.create({
   /* font-jura text-[8px] font-bold tracking-[0.14em] uppercase, white */
   label: { fontFamily: fonts.labelBold, fontSize: 8, lineHeight: 10, letterSpacing: 1.12, color: '#ffffff' },
 
-  badge: {
-    position: 'absolute',
-    right: -4,
-    top: -4,
-    height: 20,
-    minWidth: 20,
-    paddingHorizontal: 4,
-    borderRadius: radius.pill,
-    backgroundColor: colors.fg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  badgeText: { fontFamily: fonts.bodyMedium, fontSize: 11, lineHeight: 14, color: colors.accentFg },
+  /* Clear of the halo -- see the render. */
+  badgeOnFab: { right: -10, top: -10 },
 
   pressed: { opacity: 0.85 },
 });

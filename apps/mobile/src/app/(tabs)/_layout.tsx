@@ -3,6 +3,7 @@ import { Tabs } from 'expo-router';
 import { AppointmentsIcon, DashboardIcon, DocumentIcon, PhotoIcon } from '@/components/icons';
 import { CHAT_BUTTON_LIFT, ChatTabButton } from '@/components/ChatTabButton';
 import { useBadgeCounts } from '@/hooks/useBadgeCounts';
+import { useChatUnread } from '@/lib/chatUnread';
 import { colors, hairline, space, type } from '@/theme';
 
 /**
@@ -32,6 +33,20 @@ import { colors, hairline, space, type } from '@/theme';
  */
 export default function TabsLayout() {
   const { conversations } = useBadgeCounts();
+  /*
+   * §8 rev F: the fab's count must EXCLUDE MUTED THREADS, and
+   * `/nav-counts` cannot do that -- its `getUnreadConversationCount`
+   * never touches `UserConversationState`, so muted threads are in its
+   * number by construction (verified: it returned 3 while one of the
+   * three was muted). Teaching it about mute is an apps/api change.
+   *
+   * So the list publishes the Q9 count -- the same predicate that draws
+   * the row dots and backs the UNREAD filter -- and that wins whenever it
+   * is known. `null` means the list has not loaded yet, where the server
+   * number is still better than a confident, wrong zero.
+   */
+  const q9Unread = useChatUnread();
+  const chatUnread = q9Unread ?? conversations;
 
   return (
     <Tabs
@@ -79,7 +94,7 @@ export default function TabsLayout() {
           tabBarButton: (props) => (
             <ChatTabButton
               focused={props.accessibilityState?.selected ?? false}
-              unread={conversations}
+              unread={chatUnread}
               onPress={() => props.onPress?.({} as never)}
             />
           ),

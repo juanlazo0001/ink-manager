@@ -1,8 +1,6 @@
 import Feather from '@expo/vector-icons/Feather';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Eyebrow } from '@/components/ui';
-import { REACTION_EMOJIS, type ReactionEmoji } from '@/lib/conversations';
 import { stamp } from '@/lib/format';
 import { colors, hairline, radius, space, type } from '@/theme';
 
@@ -30,15 +28,13 @@ import { colors, hairline, radius, space, type } from '@/theme';
 export function MessageActions({
   visible,
   onClose,
-  /** The viewer's current reaction on this message, if any. */
-  myReaction,
+  failure,
   canEdit,
   /** False for a message with no text — there is nothing to put on the clipboard. */
   canCopy,
   copied,
   detail,
   images,
-  onReact,
   onReply,
   onCopy,
   onEdit,
@@ -46,7 +42,17 @@ export function MessageActions({
 }: {
   visible: boolean;
   onClose: () => void;
-  myReaction?: string | null;
+  /**
+   * §2.4 rev E. `kind` is the whole point: it decides which items exist,
+   * and it is derived from `deliveryStatus`, not guessed from `status`.
+   */
+  failure?: {
+    kind: 'local' | 'provider';
+    /** One sentence, in the viewer's language, about what happened. */
+    explanation: string;
+    onRetry?: () => void;
+    onDiscard?: () => void;
+  } | null;
   canEdit: boolean;
   canCopy: boolean;
   copied: boolean;
@@ -61,39 +67,48 @@ export function MessageActions({
   detail?: { channel: string; sentAt: string; edited: boolean } | null;
   /** Image attachments on this message, if any — enables Save. */
   images?: string[];
-  onReact: (emoji: ReactionEmoji) => void;
   onReply: () => void;
   onCopy: () => void;
   onEdit: () => void;
   onSaveImage?: (url: string) => void;
 }) {
   const savable = images ?? [];
+  if (!visible) return null;
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
-          <Eyebrow style={styles.eyebrow}>React</Eyebrow>
-          <View style={styles.emojiRow}>
-            {REACTION_EMOJIS.map((emoji) => {
-              const mine = myReaction === emoji;
-              return (
-                <Pressable
-                  key={emoji}
-                  onPress={() => onReact(emoji)}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: mine }}
-                  accessibilityLabel={mine ? `Remove ${emoji} reaction` : `React ${emoji}`}
-                  style={({ pressed }) => [styles.emoji, mine && styles.emojiMine, pressed && styles.pressed]}
-                >
-                  <Text style={styles.emojiGlyph}>{emoji}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
+    <View style={styles.sheet}>
+      {/*
+        §2.4 rev E: what a FAILED message offers depends on WHY it failed,
+        and the two cases are not interchangeable.
 
-          <View style={styles.divider} />
+        A LOCAL failure never reached the API, so the body is still in
+        hand and Retry means something. A PROVIDER failure was accepted by
+        the API and then rejected by the carrier -- retrying would send a
+        second message, and there is no local copy to discard because the
+        server has the real one. Offering Retry there is offering a button
+        that does the wrong thing.
+      */}
+      {failure ? (
+        <View style={styles.failure}>
+          <Text style={styles.failureText}>{failure.explanation}</Text>
+        </View>
+      ) : null}
 
-          <Pressable
+      {failure?.kind === 'local' ? (
+        <Pressable
+          onPress={failure.onRetry}
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.action, pressed && styles.pressed]}
+        >
+          <Feather name="rotate-cw" size={16} color={colors.accent} />
+          <Text style={[styles.actionLabel, styles.actionLabelAccent]}>Retry</Text>
+        </Pressable>
+      ) : null}
+
+      {failure ? <View style={styles.divider} /> : null}
+
+      {failure ? null : (
+        <Pressable
             onPress={onReply}
             accessibilityRole="button"
             style={({ pressed }) => [styles.action, pressed && styles.pressed]}
@@ -101,6 +116,7 @@ export function MessageActions({
             <Feather name="corner-up-left" size={16} color={colors.fgSecondary} />
             <Text style={styles.actionLabel}>Reply</Text>
           </Pressable>
+      )}
 
           {canCopy ? (
             <Pressable
@@ -155,43 +171,43 @@ export function MessageActions({
             </>
           ) : null}
 
-          <Pressable onPress={onClose} style={styles.done}>
-            <Text style={styles.doneLabel}>CANCEL</Text>
-          </Pressable>
+      {/* §2.4 rev E: a LOCAL failure can be thrown away -- nothing on the
+          server knows about it. A provider failure cannot: the message
+          exists, and hiding it would be pretending it never went. */}
+      {failure?.kind === 'local' && failure.onDiscard ? (
+        <Pressable
+          onPress={failure.onDiscard}
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.action, pressed && styles.pressed]}
+        >
+          <Feather name="trash-2" size={16} color={colors.danger} />
+          <Text style={[styles.actionLabel, styles.actionLabelDanger]}>Discard</Text>
         </Pressable>
+      ) : null}
+
+      <Pressable onPress={onClose} style={styles.done}>
+        <Text style={styles.doneLabel}>CANCEL</Text>
       </Pressable>
-    </Modal>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'flex-end' },
+  /* §7: raised espresso, radius 16, cream text. It is a panel the
+     overlay places, not a modal of its own -- the scrim, the lifted clone
+     and the dismissal all belong to MessageOverlay now. */
   sheet: {
     backgroundColor: colors.surfaceRaised,
-    borderTopLeftRadius: radius.card,
-    borderTopRightRadius: radius.card,
-    borderTopWidth: hairline,
+    borderRadius: radius.card,
+    borderWidth: hairline,
     borderColor: colors.borderStrong,
     paddingHorizontal: space.lg,
     paddingTop: space.lg,
-    paddingBottom: space.xxl,
+    paddingBottom: space.lg,
   },
-  eyebrow: { marginBottom: space.sm },
 
-  emojiRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: space.xs },
-  emoji: {
-    width: 46,
-    height: 46,
-    borderRadius: radius.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: hairline,
-    borderColor: 'transparent',
-  },
-  // The viewer's own reaction, marked the same way a selected pill is.
-  emojiMine: { borderColor: colors.accent, backgroundColor: 'rgba(201, 154, 91, 0.08)' },
-  emojiGlyph: { fontSize: 24, lineHeight: 30 },
-
+  failure: { paddingBottom: space.sm },
+  failureText: { ...type.small, color: colors.fgSecondary },
   detail: { paddingTop: space.sm, paddingHorizontal: space.xs },
   detailText: { ...type.meta, color: colors.fgMuted },
   divider: { height: hairline, backgroundColor: colors.border, marginTop: space.md, marginBottom: space.xs },
@@ -199,6 +215,8 @@ const styles = StyleSheet.create({
   action: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md },
   actionLabel: { ...type.body, color: colors.fg },
   actionLabelDone: { color: colors.accent },
+  actionLabelAccent: { color: colors.accent },
+  actionLabelDanger: { color: colors.danger },
 
   done: { marginTop: space.md, alignItems: 'center', paddingVertical: space.md },
   doneLabel: { ...type.button, color: colors.accent },

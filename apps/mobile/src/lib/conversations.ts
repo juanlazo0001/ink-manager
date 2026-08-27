@@ -6,6 +6,8 @@ import type {
   Message,
   MessageDirection,
   SendMessageRequest,
+  UpdateConversationViewerStateRequest,
+  UpdateConversationViewerStateResponse,
 } from '@ink-manager/shared-types';
 
 import { apiFetch } from './api';
@@ -78,6 +80,73 @@ export async function markConversationRead(token: string, conversationId: string
   } catch {
     // Intentionally silent.
   }
+}
+
+/**
+ * How long "Mute" mutes for.
+ *
+ * The schema stores an INSTANT, not a flag — there is no representation of
+ * "muted forever", and inventing one by writing the year 9999 would be a
+ * lie dressed as data. A year is past any horizon this product plans on,
+ * so it behaves as indefinite in practice, and it is self-healing: a mute
+ * someone set once and forgot expires rather than silencing a client
+ * thread for the life of the studio. A duration picker is the natural
+ * follow-up and needs no schema change when it arrives.
+ */
+const MUTE_MS = 365 * 24 * 60 * 60 * 1000;
+
+/** `mutedUntil` is compared against now at read time — a past value is not a mute. */
+export function isMuted(viewerState: { mutedUntil: string | null }, now = Date.now()): boolean {
+  const until = viewerState.mutedUntil;
+  return until !== null && new Date(until).getTime() > now;
+}
+
+/**
+ * Pin/unpin and mute/unmute — the ONE writer for this viewer's own
+ * per-thread preferences.
+ *
+ * Per-user by construction: the API keys on the caller's own token, so
+ * there is no way to write anyone else's. Distinct from archive below,
+ * which is deliberately studio-wide.
+ *
+ * `409 PIN_LIMIT` (four pins) arrives as an `ApiError` with `code` set;
+ * match on the code, never the message.
+ */
+export function setConversationViewerState(
+  token: string,
+  conversationId: string,
+  patch: UpdateConversationViewerStateRequest,
+): Promise<UpdateConversationViewerStateResponse> {
+  return apiFetch<UpdateConversationViewerStateResponse>(
+    `/conversations/${encodeURIComponent(conversationId)}/viewer-state`,
+    { method: 'PATCH', token, body: JSON.stringify(patch) },
+  );
+}
+
+/** Mute for MUTE_MS from now, or clear an existing mute. */
+export function setConversationMuted(
+  token: string,
+  conversationId: string,
+  muted: boolean,
+): Promise<UpdateConversationViewerStateResponse> {
+  return setConversationViewerState(token, conversationId, {
+    mutedUntil: muted ? new Date(Date.now() + MUTE_MS).toISOString() : null,
+  });
+}
+
+/**
+ * Archive — and this one is STUDIO-WIDE. `archivedAt` hides the thread for
+ * everyone, by explicit existing design, which is why §8 forbids a
+ * full-swipe from committing it: the swipe reveals the button and a tap
+ * commits. Reversible, and the thread, its messages and its history are
+ * untouched — it only changes what `GET /conversations` returns by
+ * default.
+ */
+export async function archiveConversation(token: string, conversationId: string): Promise<void> {
+  await apiFetch<null>(`/conversations/${encodeURIComponent(conversationId)}/archive`, {
+    method: 'POST',
+    token,
+  });
 }
 
 export interface SendOptions {

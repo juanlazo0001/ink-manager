@@ -1,18 +1,27 @@
-import type { ConversationListItem } from '@ink-manager/shared-types';
+import type { ConversationListItem, ConversationViewerState } from '@ink-manager/shared-types';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
 import { ConversationRow } from '@/components/ConversationRow';
-import { FrequentStrip } from '@/components/FrequentStrip';
+import { ConversationSwipe } from '@/components/ConversationSwipe';
 import { TopBar } from '@/components/TopBar';
 import { ThreadListControls } from '@/components/ThreadListControls';
 import { SkeletonList } from '@/components/Skeleton';
 import { Appear } from '@/components/Appear';
 import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
-import { fetchConversations } from '@/lib/conversations';
+import {
+  archiveConversation,
+  fetchConversations,
+  isMuted,
+  setConversationMuted,
+  setConversationViewerState,
+} from '@/lib/conversations';
+import { ApiError } from '@/lib/api';
+import { publishChatUnread } from '@/lib/chatUnread';
+import { closeOpenSwipeRow } from '@/lib/swipeRegistry';
 import {
   applyControls,
   isSearchable,
@@ -20,7 +29,8 @@ import {
   type ThreadSort,
 } from '@/lib/conversationListControls';
 import { screenErrorMessage } from '@/lib/screenError';
-import { colors, space } from '@/theme';
+import { LIST_INSET, LIST_LABEL_INSET, LIST_SEPARATOR_INSET } from '@/theme/listMetrics';
+import { colors, fonts, space, type } from '@/theme';
 
 /**
  * Refresh strategy, decided in this session's investigation: poll, not
@@ -41,6 +51,11 @@ const LIST_POLL_MS = 30_000;
  * list still feels like it is responding to what was typed.
  */
 const SEARCH_DEBOUNCE_MS = 350;
+
+/** A section label or a thread — see `sections` for why they share a list. */
+type ListRow =
+  | { kind: 'label'; label: string }
+  | { kind: 'item'; item: ConversationListItem };
 
 export default function ConversationsScreen() {
   const router = useRouter();
@@ -80,6 +95,15 @@ export default function ConversationsScreen() {
         const next = await fetchConversations(token, activeSearch ? { search: activeSearch } : {});
         if (seq !== requestRef.current) return;
         setItems(next);
+        /*
+         * §8 rev F: the CHAT fab's badge, published from the list's own
+         * refresh path rather than fetched a second time. One source,
+         * three consumers -- see lib/chatUnread.ts.
+         *
+         * Deliberately NOT published while a search is narrowing the
+         * list: a badge that counts search results is not a badge.
+         */
+        if (!activeSearch) publishChatUnread(next);
         setError(null);
       } catch (err) {
         if (seq !== requestRef.current) return;
@@ -116,8 +140,134 @@ export default function ConversationsScreen() {
 
   useEffect(() => () => void ++requestRef.current, []);
 
+  /*
+   * A brief line under the controls, for the two things a swipe can say
+   * that a re-rendered row cannot: the pin cap, and a failure.
+   */
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const say = useCallback((message: string) => {
+    setNotice(message);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 3200);
+  }, []);
+  useEffect(() => () => void (noticeTimer.current && clearTimeout(noticeTimer.current)), []);
+
+  /**
+   * Apply the server's own answer to one row.
+   *
+   * The response carries the saved `viewerState`, so this writes what the
+   * server stored rather than what was asked for -- which is the whole
+   * reason there is no optimistic flip here. A pin that appears and then
+   * silently vanishes when the cap rejects it is worse than a pin that
+   * takes 200ms.
+   */
+  const applyViewerState = useCallback((id: string, viewerState: ConversationViewerState) => {
+    setItems((current) =>
+      current === null ? current : current.map((t) => (t.id === id ? { ...t, viewerState } : t)),
+    );
+  }, []);
+
+  const togglePin = useCallback(
+    async (item: ConversationListItem) => {
+      if (!token) return;
+      try {
+        const { viewerState } = await setConversationViewerState(token, item.id, {
+          isPinned: !item.viewerState.isPinned,
+        });
+        applyViewerState(item.id, viewerState);
+      } catch (err) {
+        // Matched on the CODE, never the message -- the API's own type
+        // documentation is explicit about that, because prose changes.
+        if (err instanceof ApiError && err.code === 'PIN_LIMIT') {
+          say('Three pinned threads is the limit. Unpin one first.');
+          return;
+        }
+        say(screenErrorMessage(err, 'that pin'));
+      }
+    },
+    [token, applyViewerState, say],
+  );
+
+  const toggleMute = useCallback(
+    async (item: ConversationListItem) => {
+      if (!token) return;
+      const muted = isMuted(item.viewerState);
+      try {
+        const { viewerState } = await setConversationMuted(token, item.id, !muted);
+        applyViewerState(item.id, viewerState);
+        // Worth saying out loud, because the row deliberately does NOT go
+        // quiet: a mute suppresses the interruption, not the indicator, so
+        // the unread dot keeps accruing and nothing else on screen changes.
+        say(muted ? 'Unmuted.' : 'Muted. You still see new messages, you just are not pinged.');
+      } catch (err) {
+        say(screenErrorMessage(err, 'that mute'));
+      }
+    },
+    [token, applyViewerState, say],
+  );
+
+  const archive = useCallback(
+    async (item: ConversationListItem) => {
+      if (!token) return;
+      try {
+        await archiveConversation(token, item.id);
+        // Studio-wide: it leaves everyone's default list, so it leaves
+        // this one immediately rather than waiting for the next poll.
+        setItems((current) => (current === null ? current : current.filter((t) => t.id !== item.id)));
+        say('Archived for the whole studio. Reversible from the archived filter.');
+      } catch (err) {
+        say(screenErrorMessage(err, 'that archive'));
+      }
+    },
+    [token, say],
+  );
+
+  // §8: archive is staff-only for anything but an artist's own STAFF
+  // thread, and the API answers 403 otherwise. Better to not draw the
+  // button than to draw one that fails.
+  const role = session?.profile.role;
+  const canArchive = useCallback(
+    (item: ConversationListItem) =>
+      role === 'OWNER' ||
+      role === 'FRONT_DESK' ||
+      (item.type === 'STAFF' && item.staffUserId === session?.profile.id),
+    [role, session?.profile.id],
+  );
+
   const unread = items?.reduce((n, c) => n + (c.unreadCount > 0 ? 1 : 0), 0) ?? 0;
   const visible = useMemo(() => applyControls(items ?? [], filter, sort), [items, filter, sort]);
+
+  /*
+   * §8: PINNED first under its own label, then CONVERSATIONS.
+   *
+   * The labels are rows in the same list rather than SectionList
+   * sections. A SectionList would give sticky headers, and a header that
+   * sticks is a header that can end up saying PINNED over a run of
+   * unpinned threads while you scroll -- which is worse than no label.
+   *
+   * Pin state comes from `viewerState.isPinned`, the server's per-user
+   * record, so it survives a reinstall. There is no local stand-in: §8 is
+   * explicit that a pin which vanishes is a broken promise.
+   */
+  const sections = useMemo<ListRow[]>(() => {
+    const pinned = visible.filter((t) => t.viewerState.isPinned);
+    const rest = visible.filter((t) => !t.viewerState.isPinned);
+    const rows: ListRow[] = [];
+    // The PINNED label only appears when something is pinned; an empty
+    // section header is an instruction nobody asked for.
+    if (pinned.length > 0) {
+      rows.push({ kind: 'label', label: 'PINNED' });
+      for (const item of pinned) rows.push({ kind: 'item', item });
+    }
+    if (rest.length > 0) {
+      // With nothing pinned the list needs no heading at all -- it is
+      // just the conversations, and saying so would be furniture.
+      if (pinned.length > 0) rows.push({ kind: 'label', label: 'CONVERSATIONS' });
+      for (const item of rest) rows.push({ kind: 'item', item });
+    }
+    return rows;
+  }, [visible]);
   // Typed something worth searching, but the request for it hasn't landed.
   const searching = isSearchable(search) && search.trim() !== activeSearch;
 
@@ -135,41 +285,70 @@ export default function ConversationsScreen() {
         onSortChange={setSort}
       />
 
+      {notice ? (
+        <View style={styles.notice}>
+          <Text style={styles.noticeText}>{notice}</Text>
+        </View>
+      ) : null}
+
       {items === null && error === null ? (
         <SkeletonList rows={7} />
       ) : (
         <FlatList
-          data={visible}
-          // The strip scrolls WITH the list rather than pinning above it:
-          // it is a shortcut, not chrome, and a phone screen has no room
-          // to spend five permanent rows on one. Search and the filter
-          // pills stay pinned above, unchanged.
-          ListHeaderComponent={
-            // Hidden while a search or filter is narrowing the list --
-            // "frequent" is about the whole inbox, and showing it beside
-            // filtered results would suggest it had been filtered too.
-            activeSearch || filter !== 'all' ? null : (
-              <FrequentStrip
-                items={items ?? []}
-                onOpen={(id) => router.push({ pathname: '/conversation/[id]', params: { id } })}
-              />
+          data={sections}
+          /*
+            §8 ORDER: search -> controls -> PINNED -> CONVERSATIONS.
+
+            The FREQUENT strip is gone. It was five faces of "recently
+            active", which is what the list underneath it already showed,
+            in the same order -- so the top of the screen said the same
+            thing twice and the second saying cost a row of avatars.
+            Pinned threads are this screen's quick access now, and unlike
+            frequency they are a choice someone made.
+          */
+          /*
+            §8 rev F: scrolling closes whatever is open. On the UI thread
+            via the registry, so a scroll never re-renders a row to do it.
+          */
+          onScrollBeginDrag={closeOpenSwipeRow}
+          keyExtractor={(row) => (row.kind === 'label' ? `label:${row.label}` : row.item.id)}
+          renderItem={({ item: row, index }) =>
+            row.kind === 'label' ? (
+              <Text style={styles.sectionLabel}>{row.label}</Text>
+            ) : (
+              <Appear index={index}>
+              <ConversationSwipe
+                rowId={row.item.id}
+                pinned={row.item.viewerState.isPinned}
+                muted={isMuted(row.item.viewerState)}
+                canArchive={canArchive(row.item)}
+                onTogglePin={() => togglePin(row.item)}
+                onToggleMute={() => toggleMute(row.item)}
+                onArchive={() => archive(row.item)}
+              >
+                <ConversationRow
+                  item={row.item}
+                  viewerUserId={session?.profile.id}
+                  // Object form, not a template string: typed routes describe a
+                  // dynamic route by its literal `[id]` pathname plus params,
+                  // so an interpolated href is (correctly) rejected.
+                  onPress={() =>
+                    router.push({ pathname: '/conversation/[id]', params: { id: row.item.id } })
+                  }
+                />
+              </ConversationSwipe>
+              </Appear>
             )
           }
-          keyExtractor={(item) => item.id}
-          renderItem={({ item, index }) => (
-            <Appear index={index}>
-            <ConversationRow
-              item={item}
-              viewerUserId={session?.profile.id}
-              // Object form, not a template string: typed routes describe a
-              // dynamic route by its literal `[id]` pathname plus params,
-              // so an interpolated href is (correctly) rejected.
-              onPress={() => router.push({ pathname: '/conversation/[id]', params: { id: item.id } })}
-            />
-            </Appear>
-          )}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
-          contentContainerStyle={visible.length === 0 ? styles.emptyContainer : undefined}
+          /*
+            No rule above a section label or below the last row of a
+            section -- the label already separates them, and a hairline
+            plus a label is two dividers doing one job.
+          */
+          ItemSeparatorComponent={({ leadingItem }: { leadingItem?: ListRow }) =>
+            leadingItem?.kind === 'label' ? null : <View style={styles.separator} />
+          }
+          contentContainerStyle={sections.length === 0 ? styles.emptyContainer : undefined}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -217,6 +396,25 @@ export default function ConversationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  separator: { height: 1, backgroundColor: colors.borderSoft, marginLeft: space.lg },
+  /* §8: inset 76 — where the text starts, so the rule divides the content
+     rather than boxing the avatars. */
+  separator: { height: 1, backgroundColor: colors.borderSoft, marginLeft: LIST_SEPARATOR_INSET },
+  /* §8: Jura 10, .2em tracking, 22pt inset. */
+  sectionLabel: {
+    ...type.label,
+    fontSize: 10,
+    letterSpacing: 2,
+    color: colors.fgMuted,
+    paddingHorizontal: LIST_LABEL_INSET,
+    paddingTop: space.lg,
+    paddingBottom: space.sm,
+  },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
+
+  notice: {
+    paddingHorizontal: LIST_INSET,
+    paddingVertical: space.sm,
+    backgroundColor: colors.surfaceRaised,
+  },
+  noticeText: { fontFamily: fonts.body, fontSize: 13, lineHeight: 18, color: colors.fgSecondary },
 });

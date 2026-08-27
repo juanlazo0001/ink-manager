@@ -10,6 +10,7 @@ import { isMessageEdited } from '@/lib/conversations';
 import { deliveryLabel, deliveryState } from '@/lib/deliveryStatus';
 import { linkify, truncateMiddle } from '@/lib/linkify';
 import type { DisplayMessage } from '@/lib/threadRows';
+import { ImageBubble } from '@/components/ImageBubble';
 import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
 import { timeOfDay } from '@/lib/time';
 
@@ -27,8 +28,37 @@ function isImageUrl(url: string): boolean {
   return /\.(jpe?g|png|gif|webp|avif|heic|bmp)(\?|$)/i.test(url) || /\/image\/upload\//.test(url);
 }
 
-/** How far the thread slides to reveal timestamps. Also the gutter width. */
-export const REVEAL_WIDTH = 68;
+/**
+ * §2.3: how far the thread slides to reveal timestamps. Also the gutter
+ * width, so the time lands exactly in the space the bubbles vacate.
+ *
+ * AE shipped 68; the spec ratified 84 and that is the number here.
+ *
+ * Not because 68 clipped anything -- measured in this exact type, the
+ * widest time this format produces (`12:04 AM`) is 48.6pt against 68's
+ * 60pt of usable width, so it fit. The extra travel buys the GESTURE,
+ * not the text: with 0.55 resistance, 84 costs ~153pt of drag, which is
+ * a deliberate pull rather than something a thumb does by accident on
+ * the way to scrolling.
+ */
+/**
+ * §2.5: a solo image's measure. Wider than a tile and narrower than the
+ * bubble's own 78%, so a landscape photo still reads as a message rather
+ * than as the screen.
+ */
+const SOLO_IMAGE_WIDTH = 240;
+
+export const REVEAL_WIDTH = 84;
+
+/** §7: more than 8pt of travel is a scroll, not a long press. */
+const LONG_PRESS_SLOP = { top: 8, bottom: 8, left: 8, right: 8 } as const;
+
+/**
+ * §2.3: the times fade in over the first 24pt of travel, so a small
+ * accidental drag shows nothing and a deliberate one has already
+ * committed to showing them by the time the bubbles have really moved.
+ */
+export const REVEAL_FADE_IN = 24;
 
 /**
  * Message text, with URLs turned into links.
@@ -251,6 +281,16 @@ export function MessageBubble({
 
   const slide = useAnimatedStyle(() => ({ transform: [{ translateX: revealX.value }] }));
 
+  /*
+   * §2.3: the time fades in over the first REVEAL_FADE_IN points of
+   * travel. Derived from the same shared value that moves the bubbles, so
+   * the two can never disagree -- and it costs no re-render: the whole
+   * thread's timestamps track the finger on the UI thread.
+   */
+  const revealFade = useAnimatedStyle(() => ({
+    opacity: Math.min(1, Math.max(0, -revealX.value / REVEAL_FADE_IN)),
+  }));
+
   return (
     <Animated.View
       style={[
@@ -284,7 +324,20 @@ export function MessageBubble({
 
       <Pressable
           onLongPress={onLongPress}
-          delayLongPress={300}
+          /*
+           * §7: 350ms, and a movement of more than 8pt cancels it.
+           *
+           * The cancel is the important half, and it is NOT hand-rolled:
+           * a Pressable already cancels its long-press when the touch
+           * moves outside the pressable plus `pressRetentionOffset`, so
+           * setting that to 8 IS the 8pt rule, enforced by the same
+           * machinery that decides every other press. Rolling our own
+           * distance check would mean two answers to "is this still a
+           * press", which is exactly how a long-press starts firing in
+           * the middle of a scroll.
+           */
+          delayLongPress={350}
+          pressRetentionOffset={LONG_PRESS_SLOP}
           accessibilityRole={onLongPress ? 'button' : undefined}
           accessibilityHint={onLongPress ? 'Long press for message actions' : undefined}
           style={[
@@ -360,14 +413,30 @@ export function MessageBubble({
                   accessibilityRole="button"
                   accessibilityLabel={`Attached image ${index + 1} of ${images.length}. Opens full screen.`}
                   style={({ pressed }) => [
-                    styles.imageWrap,
-                    // One image gets the full width; several tile 2-up.
-                    images.length === 1 ? styles.imageSolo : styles.imageTiled,
-                    bare && styles.imageBare,
+                    // A tile keeps its own frame; a solo image brings its
+                    // own, because it has to size itself to the photo.
+                    images.length > 1 && styles.imageTiled,
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Image source={{ uri: url }} style={styles.image} contentFit="cover" transition={140} />
+                  {images.length === 1 ? (
+                    /*
+                      §2.5. One image keeps the photo's own proportions
+                      under a 280 ceiling -- see ImageBubble on why a
+                      square crop is the wrong default for this app.
+                    */
+                    <ImageBubble url={url} bare={bare} maxWidth={SOLO_IMAGE_WIDTH} />
+                  ) : (
+                    /*
+                      Several images are a COLLAGE, and a collage wants
+                      equal tiles -- Messages does the same. Cropping is
+                      correct here: the grid is an index, and any one of
+                      them opens full-screen.
+                    */
+                    <View style={styles.tileFrame}>
+                      <Image source={{ uri: url }} style={styles.image} contentFit="cover" transition={140} />
+                    </View>
+                  )}
                 </Pressable>
               ))}
             </View>
@@ -415,11 +484,11 @@ export function MessageBubble({
         timestamp was visible at rest, mid-thread, which is the opposite
         of the feature. Measured at 281px inside a 390pt frame before this.
       */}
-      <View style={styles.revealGutter} pointerEvents="none">
+      <Animated.View style={[styles.revealGutter, revealFade]} pointerEvents="none">
         <Text style={styles.revealTime} numberOfLines={1}>
           {timeOfDay(message.createdAt)}
         </Text>
-      </View>
+      </Animated.View>
 
       {/*
         §2.4 DELIVERY STATES — SURFACE-ANCHORED, which is the compensating
@@ -579,25 +648,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: radius.pill,
-    /* A real border against the app ground, so the badge reads as sitting
-       ON the bubble rather than being part of it. */
-    borderWidth: 1,
-    borderColor: colors.bg,
-    backgroundColor: colors.surfaceRaised,
+    /* A real border in the PAGE colour, so the chip reads as sitting ON
+       the bubble rather than being part of it -- the same trick, and the
+       same reason, as the channel badge on a list avatar (§1.1). */
+    borderWidth: 2,
+    borderColor: chat.surface,
+    backgroundColor: chat.surfaceRaised,
   },
   reactionMine: { borderColor: colors.accent, backgroundColor: 'rgba(201, 154, 91, 0.16)' },
   reactionGlyph: { fontSize: 13, lineHeight: 16 },
-  reactionCount: { ...type.meta, color: colors.fgMuted },
+  /* §1.2: every count in this app is Jura. This was Outfit-light via
+     type.meta -- body type doing a metadata job. */
+  reactionCount: { ...type.label, fontSize: 10, color: chat.textMuted },
 
   images: { flexDirection: 'row', flexWrap: 'wrap', gap: 2 },
   /* 2 tiles + the gap between them. Messages' own collage is 2-up. */
   imagesGrid: { width: 104 * 2 + 2 },
   imagesAfterText: { marginTop: space.xs },
-  imageWrap: { borderRadius: radius.input, overflow: 'hidden', backgroundColor: colors.surfaceInset },
-  imageSolo: { width: 220, height: 220 },
   imageTiled: { width: 104, height: 104 },
-  /* A bare image carries the bubble's own radius, since it IS the bubble. */
-  imageBare: { borderRadius: radius.bubble },
+  tileFrame: {
+    width: '100%',
+    height: '100%',
+    borderRadius: radius.input,
+    overflow: 'hidden',
+    backgroundColor: chat.surfaceInset,
+  },
   image: { width: '100%', height: '100%' },
 
   attachmentNote: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.xs },
