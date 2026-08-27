@@ -409,7 +409,7 @@ export default function ConversationScreen() {
     [revealX, revealReduced],
   );
   const [unavailableChannels, setUnavailableChannels] = useState<Set<string>>(new Set());
-  const [sendState, setSendState] = useState<ComposerSendState>({ channel: 'SMS', direction: 'OUTBOUND' });
+  const [sendState, setSendState] = useState<ComposerSendState>({ channel: 'SMS' });
 
   const isClientThread = header?.type === 'CLIENT';
   const isGroupThread = header?.type === 'GROUP';
@@ -595,7 +595,10 @@ export default function ConversationScreen() {
       const optimistic: DisplayMessage = {
         id: tempId,
         channel: isClientThread ? sendState.channel : 'IN_APP',
-        direction: isClientThread ? sendState.direction : 'OUTBOUND',
+        // §3 rev G: always OUTBOUND. The API still accepts INBOUND and a
+        // deliberate manual-logging design can use it -- read spec §3 rev G
+        // before adding a control back.
+        direction: 'OUTBOUND',
         body,
         // Already-uploaded Cloudinary URLs, so the optimistic bubble shows
         // the real images immediately rather than a placeholder.
@@ -625,7 +628,7 @@ export default function ConversationScreen() {
           body,
           ...(replyToId ? { replyToId } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
-          ...(isClientThread ? { channel: sendState.channel, direction: sendState.direction } : {}),
+          ...(isClientThread ? { channel: sendState.channel, direction: 'OUTBOUND' as const } : {}),
         });
         pendingRef.current.delete(tempId);
         setMessages((current) => current.map((m) => (m.id === tempId ? { ...created, status: 'sent' } : m)));

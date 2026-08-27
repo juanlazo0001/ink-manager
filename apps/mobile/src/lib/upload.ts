@@ -92,6 +92,22 @@ export interface PickedImage {
  * several MB, which for the avatar path would exceed the API's 5 MB
  * source cap before the person has done anything wrong.
  */
+/**
+ * A native picker error, in words a person can act on.
+ *
+ * expo-image-picker surfaces platform failures as plain `Error`s whose
+ * messages are written for developers. Showing one is still far better
+ * than the alternative this replaced -- an unhandled rejection, which
+ * React Native turns into a redbox that reads as a crash (session 07,
+ * task G) -- but an empty or opaque message deserves a fallback that at
+ * least says where it came from.
+ */
+export function pickerErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message.trim() : '';
+  if (!raw) return 'Your device would not open the picker. Try again, or restart the app.';
+  return raw;
+}
+
 export async function pickImage(options: { forAvatar?: boolean } = {}): Promise<PickedImage | null> {
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ['images'],

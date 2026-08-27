@@ -118,15 +118,22 @@ export const colors = {
  *
  * ─── THE RED RULING ─────────────────────────────────────────────────
  *
- * `bubbleOwnBg` is red by OWNER RULING (Juan, 2026-08-26), recorded in
- * CLAUDE.md's red-exception entry. Outgoing bubbles are the second
- * sanctioned red fill in this app, alongside the chat entry point.
+ * `bubbleOwnBg` is GOLD, and that is a REVERSAL (owner, rev G) of the
+ * 2026-08-26 ruling that made it red. Red shipped, was used on a real
+ * phone, and proved too distracting: a thread is mostly your own
+ * messages, so a brand fill on every one of them turns the whole screen
+ * into the brand. Gold is what AE shipped originally
+ * (`colors.accent` / `colors.accentFg`), and it is what returns.
  *
- * Its compensating rule is load-bearing and lives in `alert` below: chat
- * failure affordances are SURFACE-ANCHORED, never a recolour of the
- * bubble. Alert-red on brand-red is invisible; alert-red on espresso is
- * not. Any future "just tint the failed bubble" is the thing this rule
- * exists to prevent.
+ * CLAUDE.md's red exception narrows back to the CHAT fab alone.
+ *
+ * The SURFACE-ANCHORED failure rule stays, and keeps its original
+ * rationale rather than being re-justified: failure affordances render on
+ * the espresso surface beside or below the bubble, never as a recolour of
+ * the fill. That argument was always "alert-red must pop against the
+ * fill" -- it was true when the fill was red and it is true now that the
+ * fill is gold. Any future "just tint the failed bubble" is still the
+ * thing it exists to prevent.
  */
 export const chat = {
   /** §1 `chat.surface` — ★#1A1410 → the app's real page ground. */
@@ -142,13 +149,16 @@ export const chat = {
   surfaceInset: colors.surfaceInset,
 
   /** §1 `chat.bubble.own.bg` — exact, and the owner ruling above. */
-  bubbleOwnBg: colors.dangerStrong,
+  bubbleOwnBg: colors.accent,
   /**
-   * §1 `chat.bubble.own.text` — white, not cream, and measured rather
-   * than chosen: CLAUDE.md already records cream on this red at 4.39:1
-   * (under the 4.5:1 AA floor) and white at 5.16:1 (over it).
+   * §1 `chat.bubble.own.text` — INK on gold, which is the pairing the
+   * accent token was built for and the one AE shipped.
+   *
+   * The white-on-red contrast note that stood here (cream 4.39:1 vs white
+   * 5.16:1) belonged to the red fill and went with it. It still applies
+   * to the CHAT fab's label, which is where CLAUDE.md records it.
    */
-  bubbleOwnText: '#ffffff',
+  bubbleOwnText: colors.accentFg,
   /**
    * §1 `chat.bubble.in.bg` — ★#2B231B, "elevated espresso". No token
    * existed; `surfaceRaised` is the palette's own name for exactly that

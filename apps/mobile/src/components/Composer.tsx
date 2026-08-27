@@ -1,4 +1,4 @@
-import { CLIENT_CHANNELS, type ClientChannel, type MessageDirection } from '@ink-manager/shared-types';
+import { CLIENT_CHANNELS, type ClientChannel } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
 import * as Haptics from 'expo-haptics';
 import Animated, {
@@ -21,7 +21,13 @@ import {
   insertableLinks,
   type ShareableLinks,
 } from '@/lib/shareableLinks';
-import { captureImage, ensureCameraPermission, ensureLibraryPermission, pickImage } from '@/lib/upload';
+import {
+  captureImage,
+  ensureCameraPermission,
+  ensureLibraryPermission,
+  pickerErrorMessage,
+  pickImage,
+} from '@/lib/upload';
 import { chat, channelColor, colors, hairline, radius, space, type } from '@/theme';
 import { motion, S3, useReducedMotion } from '@/theme/chatMotion';
 
@@ -42,7 +48,6 @@ const sendEntering = ZoomIn.springify().stiffness(S3.stiffness!).damping(S3.damp
 
 export interface ComposerSendState {
   channel: ClientChannel;
-  direction: MessageDirection;
 }
 
 /**
@@ -195,7 +200,6 @@ export function Composer({
   const wouldSendLive =
     isClientThread &&
     canSendLive &&
-    sendState.direction === 'OUTBOUND' &&
     (sendState.channel === 'SMS' || sendState.channel === 'EMAIL') &&
     !unavailableChannels.has(sendState.channel);
 
@@ -242,24 +246,49 @@ export function Composer({
     setLinksOpen(false);
   }
 
+  /*
+   * ─── WHY THESE ARE WRAPPED (session 07, task G) ────────────────────
+   *
+   * Both of these called into expo-image-picker with NO try/catch, in an
+   * async `onPress`. A native error from the permission call or the
+   * picker itself therefore became an UNHANDLED PROMISE REJECTION, which
+   * in React Native is a redbox -- indistinguishable, from the outside,
+   * from "the app crashed when I picked a photo".
+   *
+   * The asymmetry gave it away: the avatar picker in `ImageFields.tsx`
+   * wraps the identical call, and the avatar path was never reported as
+   * crashing. This is the chat path catching up.
+   *
+   * The catch does not swallow: it surfaces the native message, so if
+   * something underneath is genuinely wrong the next report carries its
+   * text instead of a stack trace nobody can read.
+   */
   async function addFromLibrary() {
     setSourceOpen(false);
-    if (!(await ensureLibraryPermission())) {
-      Alert.alert('Photos access needed', 'Allow photo access in Settings to attach an image.');
-      return;
+    try {
+      if (!(await ensureLibraryPermission())) {
+        Alert.alert('Photos access needed', 'Allow photo access in Settings to attach an image.');
+        return;
+      }
+      const image = await pickImage();
+      if (image) attachments.add(image);
+    } catch (err) {
+      Alert.alert('Could not open your photos', pickerErrorMessage(err));
     }
-    const image = await pickImage();
-    if (image) attachments.add(image);
   }
 
   async function addFromCamera() {
     setSourceOpen(false);
-    if (!(await ensureCameraPermission())) {
-      Alert.alert('Camera access needed', 'Allow camera access in Settings to take a photo.');
-      return;
+    try {
+      if (!(await ensureCameraPermission())) {
+        Alert.alert('Camera access needed', 'Allow camera access in Settings to take a photo.');
+        return;
+      }
+      const image = await captureImage();
+      if (image) attachments.add(image);
+    } catch (err) {
+      Alert.alert('Could not open the camera', pickerErrorMessage(err));
     }
-    const image = await captureImage();
-    if (image) attachments.add(image);
   }
 
   return (
@@ -273,11 +302,9 @@ export function Composer({
         >
           <View style={[styles.dot, { backgroundColor: channelColor(sendState.channel) }]} />
           <Text style={styles.stripLabel}>
-            {sendState.direction === 'INBOUND'
-              ? `Logging what they said on ${channelLabel(sendState.channel)}`
-              : wouldSendLive
-                ? `Sends for real over ${channelLabel(sendState.channel)}`
-                : `Logged to the thread as ${channelLabel(sendState.channel)}`}
+            {wouldSendLive
+              ? `Sends for real over ${channelLabel(sendState.channel)}`
+              : `Logged to the thread as ${channelLabel(sendState.channel)}`}
           </Text>
           <Feather name="chevron-up" size={14} color={colors.fgMuted} />
         </Pressable>
@@ -464,21 +491,18 @@ export function Composer({
               );
             })}
 
-            <Eyebrow style={styles.sheetEyebrow}>Direction</Eyebrow>
-            {(['OUTBOUND', 'INBOUND'] as const).map((direction) => (
-              <Pressable
-                key={direction}
-                onPress={() => onChangeSendState({ ...sendState, direction })}
-                style={({ pressed }) => [styles.option, pressed && styles.pressed]}
-              >
-                <Text
-                  style={[styles.optionLabel, sendState.direction === direction && styles.optionLabelActive]}
-                >
-                  {direction === 'OUTBOUND' ? 'We are writing' : 'Logging what they said'}
-                </Text>
-                {sendState.direction === direction ? <Feather name="check" size={16} color={colors.accent} /> : null}
-              </Pressable>
-            ))}
+            {/*
+              §3 rev G: the DIRECTION control ("We are writing" / "Logging
+              what they said") is REMOVED. It was a testing artifact -- it
+              let anyone write a message into the thread attributed to the
+              CLIENT, which is a record-keeping decision, not a composer
+              setting, and one no real workflow had asked for.
+
+              The API's `direction` parameter stays and still accepts
+              INBOUND; this client just always sends OUTBOUND now. A
+              deliberate manual-logging design can pick it up later --
+              spec §3 rev G is the note to read first.
+            */}
 
             {!canSendLive ? (
               <Text style={styles.sheetNote}>
@@ -568,14 +592,21 @@ const styles = StyleSheet.create({
   /* Holds the button's slot steady while it scales in. */
   sendWrap: { marginBottom: 3 },
   send: {
-    /* §3: 30pt red circle, white arrow. Was a 40pt gold circle — the red
-       is the same brand fill the outgoing bubbles took under the owner's
-       ruling, which is what makes the button read as "this becomes a
-       message". */
+    /*
+     * §3: 30pt red circle, white arrow. Was a 40pt gold circle.
+     *
+     * The red is now PINNED here rather than borrowed from
+     * `chat.bubbleOwnBg`. It was the same token, on the argument that the
+     * button matched the bubble it produced -- and when rev G reverted
+     * the bubbles to gold, that inheritance would have quietly taken the
+     * send button with them. The owner's reversal keeps this red: at
+     * 30pt it is punctuation-scale brand, the same reading as the CHAT
+     * fab, which is the one place CLAUDE.md still sanctions a red fill.
+     */
     width: 30,
     height: 30,
     borderRadius: radius.pill,
-    backgroundColor: chat.bubbleOwnBg,
+    backgroundColor: colors.dangerStrong,
     alignItems: 'center',
     justifyContent: 'center',
   },

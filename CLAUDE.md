@@ -188,12 +188,19 @@ Concise operating rules, not a project history — see REPORT.md for history.
     and recorded it, and the chat label is the smallest type in either client.
   - Its unread badge is **cream fill with dark text** (`--color-fg` on `--color-accent-fg`), the
     same bubble treatment every other count in the app uses — the badge is not red.
-  - **Owner ruling (Juan, 2026-08-26):** `chat.bubble.own.bg` = `colors.dangerStrong` (#C2402F).
-    Outgoing chat bubbles are the second sanctioned red fill, alongside the chat entry point.
-    Compensating rule: failure affordances in chat (failed-send badge, NOT DELIVERED line, unread
-    indicators) are always **surface-anchored** — rendered on the screen surface adjacent to or
-    below the bubble, never as a recolor of the bubble fill — so alert-red remains legible against
-    brand-red.
+  - **Owner REVERSAL (Juan, 2026-08-26 night, spec rev G):** outgoing chat bubbles are **gold**
+    (`colors.accent` fill, `colors.accentFg` ink text) — back to what session AE shipped. An
+    earlier ruling the same day made them `colors.dangerStrong`; it shipped, was used on a real
+    phone, and proved too distracting. A thread is mostly your own messages, so a brand fill on
+    every one of them turns the whole screen into the brand. **The red exception is the CHAT
+    control ONLY**, as it was before — plus the composer's 30pt send button, which is
+    punctuation-scale and reads as the same entry-point brand.
+  - The compensating rule from that ruling is **retained on its original rationale**, not
+    retired with it: failure affordances in chat (failed-send badge, NOT DELIVERED line) are
+    always **surface-anchored** — rendered on the screen surface adjacent to or below the bubble,
+    never as a recolor of the bubble fill. The argument was always "alert-red must pop against
+    the fill"; that was true against red and is true against gold. Any future "just tint the
+    failed bubble" is still the thing this prevents.
 - `backdrop-filter` establishes a containing block for `position: fixed` descendants, same as
   `transform`/`filter` — a fixed-position layer nested inside a `backdrop-filter` ancestor gets
   sized/clipped to that ancestor's box, not the viewport. Portal full-viewport fixed layers
