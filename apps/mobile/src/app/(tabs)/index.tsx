@@ -6,6 +6,7 @@ import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { ScreenShell } from '@/components/ScreenShell';
 import { ConversationRow } from '@/components/ConversationRow';
 import { ConversationSwipe } from '@/components/ConversationSwipe';
+import { EmptySearchStart } from '@/components/EmptySearchStart';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { closeOpenSwipeRow, consumeTapIfRowOpen, openSwipeRow } from '@/lib/swipeRegistry';
 import { TopBar } from '@/components/TopBar';
@@ -254,6 +255,22 @@ export default function ConversationsScreen() {
    * It writes the registry's shared value directly on the UI thread, so
    * no row re-renders to close — the render counter stays at 0.
    */
+  /*
+   * Who already has a thread, so §8 rev G's CTA never offers to "start"
+   * a conversation that exists. Built from the FULL loaded list rather
+   * than the filtered one — a thread hidden by the current search still
+   * counts as existing.
+   */
+  const counterpartIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const item of items ?? []) {
+      if (item.clientId) ids.add(item.clientId);
+      const counterpartId = (item.counterpart as { id?: string } | null)?.id;
+      if (counterpartId) ids.add(counterpartId);
+    }
+    return ids;
+  }, [items]);
+
   const outsideTap = useMemo(
     () =>
       Gesture.Tap()
@@ -403,11 +420,22 @@ export default function ConversationsScreen() {
                 action={{ label: 'Try again', onPress: () => load('refresh') }}
               />
             ) : activeSearch ? (
-              <StateMessage
-                eyebrow="No matches"
-                title={`Nothing matching "${activeSearch}"`}
-                body="Search looks at names and message text. Try fewer words."
-                action={{ label: 'Clear search', onPress: () => setSearch('') }}
+              /*
+                §8 rev G. Branch (A): the find-or-create path is real, so a
+                search that matches a PERSON without a thread offers to
+                start one rather than dead-ending. See EmptySearchStart for
+                which branch shipped and why, and for why an ARTIST sees
+                the text-only version.
+              */
+              <EmptySearchStart
+                token={token ?? ''}
+                studioId={session?.profile.studioId ?? ''}
+                role={session?.profile.role}
+                query={activeSearch}
+                existingCounterpartIds={counterpartIds}
+                onOpened={(id) =>
+                  router.push({ pathname: '/conversation/[id]', params: { id } })
+                }
               />
             ) : filter !== 'all' ? (
               <StateMessage
