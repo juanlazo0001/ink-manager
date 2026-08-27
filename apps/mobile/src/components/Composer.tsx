@@ -7,7 +7,9 @@ import Animated, {
   ZoomIn,
 } from 'react-native-reanimated';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+
+import { Sheet } from '@/components/Sheet';
 
 import { AttachmentTray } from '@/components/AttachmentTray';
 import { channelLabel } from '@/components/ConversationRow';
@@ -374,9 +376,7 @@ export function Composer({
         ) : null}
       </View>
 
-      <Modal visible={sourceOpen} transparent animationType="slide" onRequestClose={() => setSourceOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setSourceOpen(false)}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      <Sheet visible={sourceOpen} onClose={() => setSourceOpen(false)}>
             <Eyebrow style={styles.sheetEyebrow}>Attach</Eyebrow>
 
             <Pressable onPress={addFromLibrary} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
@@ -401,13 +401,9 @@ export function Composer({
             <Pressable onPress={() => setSourceOpen(false)} style={styles.done}>
               <Text style={styles.doneLabel}>CANCEL</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </Sheet>
 
-      <Modal visible={linksOpen} transparent animationType="slide" onRequestClose={() => setLinksOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setLinksOpen(false)}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      <Sheet visible={linksOpen} onClose={() => setLinksOpen(false)}>
             <Eyebrow style={styles.sheetEyebrow}>Insert a link</Eyebrow>
 
             {/* Web's first entry mints a PrefillDraft token, which is a
@@ -444,13 +440,9 @@ export function Composer({
             <Pressable onPress={() => setLinksOpen(false)} style={styles.done}>
               <Text style={styles.doneLabel}>CANCEL</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </Sheet>
 
-      <Modal visible={pickerOpen} transparent animationType="slide" onRequestClose={() => setPickerOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setPickerOpen(false)}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      <Sheet visible={pickerOpen} onClose={() => setPickerOpen(false)}>
             <Eyebrow style={styles.sheetEyebrow}>Channel</Eyebrow>
             {CLIENT_CHANNELS.map((channel) => {
               const off = unavailableChannels.has(channel);
@@ -497,9 +489,7 @@ export function Composer({
             <Pressable onPress={() => setPickerOpen(false)} style={styles.done}>
               <Text style={styles.doneLabel}>DONE</Text>
             </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </Sheet>
     </View>
   );
 }
@@ -591,18 +581,6 @@ const styles = StyleSheet.create({
   },
   sendPressed: { opacity: 0.8 },
 
-  backdrop: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'flex-end' },
-  sheet: {
-    backgroundColor: colors.surfaceRaised,
-    borderTopLeftRadius: radius.card,
-    borderTopRightRadius: radius.card,
-    borderTopWidth: hairline,
-    borderColor: colors.borderStrong,
-    paddingHorizontal: space.lg,
-    paddingTop: space.lg,
-    paddingBottom: space.xxl,
-    gap: space.xs,
-  },
   sheetEyebrow: { marginTop: space.md, marginBottom: space.xs },
   option: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.md - 2 },
   optionLabel: { ...type.body, color: colors.fgSecondary, flex: 1 },

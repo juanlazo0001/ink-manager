@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+
+import { Sheet } from '@/components/Sheet';
 
 import { Eyebrow } from '@/components/ui';
 import { MailPlusIcon, PhonePlusIcon } from '@/components/icons';
@@ -79,9 +81,7 @@ export function ContactAddSheet({
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
-      <Pressable style={styles.backdrop} onPress={close}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+    <Sheet visible={visible} onClose={close}>
           <Eyebrow style={styles.eyebrow}>
             {mode === 'choose' ? 'Add contact info' : mode === 'phone' ? 'Add phone' : 'Add email'}
           </Eyebrow>
@@ -162,24 +162,11 @@ export function ContactAddSheet({
           <Pressable onPress={close} style={styles.done}>
             <Text style={styles.doneLabel}>DONE</Text>
           </Pressable>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: '#000000aa', justifyContent: 'flex-end' },
-  sheet: {
-    backgroundColor: colors.surfaceRaised,
-    borderTopLeftRadius: radius.card,
-    borderTopRightRadius: radius.card,
-    borderTopWidth: hairline,
-    borderColor: colors.borderStrong,
-    paddingHorizontal: space.lg,
-    paddingTop: space.lg,
-    paddingBottom: space.xxl,
-  },
   eyebrow: { marginBottom: space.sm },
 
   action: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.md },
