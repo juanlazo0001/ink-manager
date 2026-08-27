@@ -21,6 +21,7 @@ import {
 } from '@/lib/conversations';
 import { ApiError } from '@/lib/api';
 import { publishChatUnread } from '@/lib/chatUnread';
+import { closeOpenSwipeRow } from '@/lib/swipeRegistry';
 import {
   applyControls,
   isSearchable,
@@ -305,6 +306,11 @@ export default function ConversationsScreen() {
             Pinned threads are this screen's quick access now, and unlike
             frequency they are a choice someone made.
           */
+          /*
+            §8 rev F: scrolling closes whatever is open. On the UI thread
+            via the registry, so a scroll never re-renders a row to do it.
+          */
+          onScrollBeginDrag={closeOpenSwipeRow}
           keyExtractor={(row) => (row.kind === 'label' ? `label:${row.label}` : row.item.id)}
           renderItem={({ item: row, index }) =>
             row.kind === 'label' ? (
@@ -312,6 +318,7 @@ export default function ConversationsScreen() {
             ) : (
               <Appear index={index}>
               <ConversationSwipe
+                rowId={row.item.id}
                 pinned={row.item.viewerState.isPinned}
                 muted={isMuted(row.item.viewerState)}
                 canArchive={canArchive(row.item)}
