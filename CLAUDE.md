@@ -93,6 +93,19 @@ Concise operating rules, not a project history — see REPORT.md for history.
 - If a fix needs to reach production and this session doesn't run it there, say so explicitly as an
   open, unfinished item — don't let "verified on dev" read as "done."
 
+## Branch discipline
+
+- **ONE unmerged mobile line at a time.** Every session merges to `main` at its gate before the
+  next session branches. The primary checkout lives on `main` between sessions. Parallel sessions
+  require explicit owner approval and immediate reconciliation.
+- The rule exists because the alternative already happened: sessions AF-AI built the Clients line
+  on one branch while the chat-UX line built on another, both cut from the same base, and neither
+  was merged. The owner ran the app and reported the Clients work "missing" - it was not missing,
+  it was on a branch he was not on. Session AJ existed only to reconcile the two, and session AK
+  only to merge everything and delete 26 branches.
+- A branch that is gate-passed and not yet merged is a liability, not a checkpoint. `main` is the
+  checkpoint.
+
 ## Concurrent sessions
 
 - Each concurrent session works in its own isolated git worktree (`git worktree add`). Never share

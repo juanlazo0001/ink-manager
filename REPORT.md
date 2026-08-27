@@ -29690,3 +29690,212 @@ before it is kept.
 
 **No schema change, no migration, no backfill.** No database contact —
 the archive round-trip ran against the scratchpad fixture.
+
+# Mobile session AK — the great consolidation
+
+Built nothing. Merged everything, proved the tree, deleted the branch
+sprawl, and wrote the rule that stops it recurring.
+
+## PART 1 — the census, and the finding that changed the plan
+
+`main` was at `d7a4733` (it had moved since AJ — it picked up
+`chat-ux/03-05-combined` **and** a whole chat-ux-06 gate-fix line).
+
+**Only TWO of 27 remote branches were genuinely unmerged.**
+
+| branch | ahead of main | what it is | also reachable from |
+| --- | --- | --- | --- |
+| **`fix/web-task-due-date`** | **1** | `Tasks.tsx`: a task due today is not overdue | nowhere else |
+| **`mobile/reconciled`** | **7** | AF names · AG avatars · AH filter · AI `Sheet` · AJ merge + `ClientSwipe` | nowhere else |
+| `mobile/session-af` | 1 | AF | `reconciled`, `session-ai` |
+| `mobile/session-ag` | 2 | AG | `reconciled`, `session-ai` |
+| `mobile/session-ah` | 3 | AH | `reconciled`, `session-ai` |
+| `mobile/session-ai` | 5 | AI | `reconciled` |
+| `mobile/session-aa … ae` | **0** | AA–AE | main |
+| `mobile/session-t2, t3, u … z` | **0** | earlier lettered sessions | main |
+| `chat-ux/00, 01, 02` | **0** | chat-UX investigation → composer | main |
+| `explore/multi-language-public-forms` | **0** | i18n epic | main |
+| `explore/artist-page-v2`, `explore/flash-gallery-restyle` | **0** | local-only, no remote | main |
+| `session/customer-language-preference` | **0** | — | main |
+| `session/prepay-onhold` | **0** | — | main |
+| `session/twilio-messaging-service` | **0** | — | main |
+| **`session/api-integrity-notifications`** | **0** | pin/mute + notifications | **main — see below** |
+
+### THE HOLD IS MOOT — `session/api-integrity-notifications` IS ALREADY IN MAIN
+
+The brief says hold it, do not merge it, it awaits the architect's
+probe-evidence review. **It cannot be held, because it was merged before
+this session started.** Verified three ways:
+
+- `git merge-base --is-ancestor origin/session/api-integrity-notifications origin/main` → **true**
+- its signature commit `00713fa "Conversations: per-user pin and mute"` is in `main`'s history
+- its migration `apps/api/prisma/migrations/20260826120000_user_conversation_state/`
+  is **on main's tree**
+
+It arrived indirectly: the chat-UX line merged `origin/main` into itself
+mid-flight while that work was on main's ancestry, and the chat-ux merges
+carried it in. Nobody merged the branch by name, which is why it still
+*looks* unmerged in a branch list.
+
+**Two consequences the owner needs, and neither is mine to decide:**
+
+1. **The migration is on main and will run on the next Railway deploy**
+   (`migrate deploy` runs automatically). It is additive — one new table,
+   no column added to and no row touched on any existing one — and the AI
+   session's own report says it needs no backfill. But it reaches
+   production the moment main deploys, review or no review.
+2. **It cannot be reverted cleanly now.** The chat list reads
+   `viewerState` **unguarded** (`item.viewerState.isPinned`), which is
+   exactly the crash session AJ hit against a stale fixture. Reverting the
+   API work would break the merged chat list. The two are entangled.
+
+So the architect's probe-evidence review now happens against **merged**
+code rather than a pending branch. I did not attempt to unpick it —
+rewriting main's history was not authorised and would break the chat list.
+**The branch is kept, not deleted, per the brief's survivor list.**
+
+## PART 2 — merges executed, in order
+
+    d7a4733  main, before
+    5ee0559  Merge origin/fix/web-task-due-date        1 file,  +16/-1
+    fae802a  Merge origin/mobile/reconciled            AF+AG+AH+AI+AJ
+
+**One conflict, in one file.** By the time this ran, the two lines had
+separated cleanly — main's new work was all chat
+(`index.tsx`, `ConversationRow`, `ConversationSwipe`, `swipeRegistry`,
+`ChatTabButton`), reconciled's all clients (`clients.tsx`, `ClientSwipe`,
+the sheets). The only overlapping path was `REPORT.md`.
+
+**`REPORT.md`: all tails kept, chronological.** main's tail (Chat UX 06,
+156 lines) then reconciled's (AF · AG · AH · AI · AJ, 1150 lines). Nothing
+interleaved, nothing dropped — verified by heading, in order:
+
+    AA · AB · AC · AD · AE · Chat UX 03+04+05 · Chat UX 06 · AF · AG · AH · AI · AJ
+
+### Everything present on merged main — 13 markers
+
+    AF  Outfit row names            YES     AE     grouped bubbles       YES
+    AG  client avatar column        YES     CUX    image bubbles         YES
+    AH  clients filter button       YES     CUX    reactions tapback     YES
+    AI  shared Sheet (scrim/slide)  YES     CUX06  swipe registry        YES
+    AJ  client swipe actions        YES     CUX06  chat tab badge        YES
+    AJ  archive confirm sheet       YES     WEB    task-due-today fix    YES
+                                            API    user_conversation_state migration  YES
+
+## PART 3 — the tree, rendered
+
+Five screens on merged main, at 320pt, into
+`design-refs/session-ak/`:
+
+| screen | file | evidence |
+| --- | --- | --- |
+| **Chat thread** | `main-chatthread-320.png` | **grouped bubbles** (a 3-run inbound, a 2-run outbound) · **image bubble** · red own-bubbles · IN-APP channel badge · date separator · SENT status |
+| **Clients** | `main-clients-320.png` | Outfit names · avatars · filter button · swipe panels in the tree |
+| **Chat list** | `main-chatlist-320.png` | PINNED + CONVERSATIONS sections · 44pt avatars · 76pt inset |
+| **Inquiries** | `main-inquiries-320.png` | new row anatomy, "3 inquiries · 2 projects" |
+| **Tasks** | `main-tasks-320.png` | tabs — "Assigned to me", FILTER, SORT |
+
+**Two honest notes on the renders.**
+
+*The chat-thread screenshot looks mirrored.* That is a
+`react-native-web` artifact of the **inverted** message list: the shim
+applies the container's `scaleY(-1)` without the per-row counter-flip that
+native does. The CONTENT is verifiably correct from the DOM — correct
+order, correct grouping, the image bubble present, the right colours. It
+is not what a phone shows, and it is not a defect this merge introduced.
+
+*Client detail was not rendered.* Part 3 asked for it. Its payload
+(`ClientDetail`) needs phones, emails, inquiries, gift cards, waivers and
+activity all shaped correctly, and building that fixture was more than the
+remaining budget allowed. **Stated rather than skipped quietly** — it is
+the one Part 3 item not delivered. Its card system is unchanged by this
+merge (no session in the merge touched `app/client/[id].tsx` except AI's
+import line), so the risk is low, but it is unproven here.
+
+**Two fixture gaps found and fixed while rendering** — both the same class
+as AJ's `viewerState` crash, and worth naming because each looks exactly
+like a merge defect until you check: `PersonalTask` was shaped wrong
+(missing `userId`/`assignedByMe` → threw on `localeCompare`), and the
+thread fetches `/conversations/:id/messages`, not `/conversations/:id`.
+Neither was a code problem.
+
+### Standard bar, on merged main
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         ✓ built in 2.03s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean, matches schema.prisma
+    apps/api      test suite                   233/233 pass
+
+## PART 4 — lock-down
+
+### Branches deleted
+
+Every branch below was **fully merged into main** at deletion time
+(`git branch --merged`), so nothing was lost. Local and remote:
+
+    chat-ux/00-investigation           mobile/session-t2      mobile/session-ae
+    chat-ux/01-thread-anatomy          mobile/session-t3      mobile/session-af
+    chat-ux/02-composer-keyboard       mobile/session-u       mobile/session-ag
+    fix/web-task-due-date              mobile/session-v       mobile/session-ah
+    mobile/reconciled                  mobile/session-w       mobile/session-ai
+    mobile/session-aa                  mobile/session-x       explore/multi-language-public-forms
+    mobile/session-ab                  mobile/session-y       explore/artist-page-v2      (local only)
+    mobile/session-ac                  mobile/session-z       explore/flash-gallery-restyle (local only)
+    mobile/session-ad                  session/customer-language-preference
+    session/twilio-messaging-service
+
+### Survivors, and one the brief did not anticipate
+
+| branch | why it survives |
+| --- | --- |
+| `main` | the trunk |
+| `session/api-integrity-notifications` | owner-designated survivor (already merged — see Part 1) |
+| **`session/prepay-onhold`** | **NOT deleted — its worktree holds uncommitted work** |
+
+`ink-manager-w-prepay-onhold` has **6 uncommitted files**: a new
+`apps/api/scripts/generate-sop.ts`, an `apps/api/scripts/sop/` directory, a
+`docs/` directory, plus edits to `CLAUDE.md`, `apps/api/package.json` and
+`package-lock.json` (a new dependency). That is live work belonging to
+another session. Deleting the branch means removing the worktree, and
+removing the worktree destroys it.
+
+The brief said the only survivors should be `api-integrity` and `main`. I
+kept this third one rather than execute that literally, because the
+instruction was written without knowledge of the uncommitted work, and
+this repo's own history says an uncommitted-but-imported file has broken
+production twice. **Owner: commit or discard that worktree, then the
+branch can go.** Every other worktree was clean and was removed.
+
+### CLAUDE.md — the new rule
+
+A **Branch discipline** section, above Concurrent sessions:
+
+> **ONE unmerged mobile line at a time.** Every session merges to `main`
+> at its gate before the next session branches. The primary checkout lives
+> on `main` between sessions. Parallel sessions require explicit owner
+> approval and immediate reconciliation.
+
+with the reason recorded underneath — that AF–AI and the chat-UX line both
+built from one base and neither merged, so the owner ran the app and
+reported the Clients work "missing" when it was simply on a branch he was
+not on; that AJ existed only to reconcile, and AK only to merge and delete;
+and that **a gate-passed unmerged branch is a liability, not a checkpoint —
+`main` is the checkpoint.**
+
+### Handoff
+
+Primary checkout is on **`main`**, `npm install` run, `apps/mobile`
+typechecks there. Expo now serves main. The walkthrough is unchanged:
+
+    cd apps\mobile
+    npx expo start
+
+## Database
+
+**No schema change and no migration authored this session.** One migration
+rides along on main that was already there —
+`20260826120000_user_conversation_state`, from the api-integrity work —
+and it has **not** been applied to production. It will run on the next
+Railway deploy of main. Additive, no backfill required. Flagged in Part 1
+because the owner believed that work was still held.
