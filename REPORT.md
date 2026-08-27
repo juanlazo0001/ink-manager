@@ -30260,3 +30260,138 @@ inbound SMS to a monitored thread with the mobile app open on the
 conversation list; the gutter dot, preview lift and fab badge must appear
 within one refresh cycle. That single check also closes mobile Session
 07's device-gate item 7, which is deferred pending this deploy.
+
+# Backend micro-fix — /nav-counts counted muted threads
+
+Branch `fix/navcounts-mute` from `main`. One predicate, no schema.
+Origin: carried finding from mobile Session 06-g2.
+
+## Consumer verification (required before the change)
+
+Every consumer of `/nav-counts`, across both clients:
+
+**apps/web**
+- `components/Sidebar.tsx` — the sidebar bubble, gated on
+  `showSidebarBadges`.
+- `components/ConversationsPanel.tsx` — the floating chat FAB's badge,
+  its own `useQuery` on the same endpoint.
+- `lib/useNavCounts.ts` — the shared hook both of the above read through.
+- `lib/useMarkSectionSeen.ts` and `pages/Settings.tsx` — invalidate the
+  cached counts; they never interpret the number.
+
+**apps/mobile**
+- `hooks/useBadgeCounts.ts` — reads `/nav-counts` → `conversations`.
+- `app/(tabs)/_layout.tsx` — the chat tab badge, as
+  `useChatUnread() ?? conversations`, i.e. **the server number is only a
+  fallback** for the window before the list loads.
+- `lib/chatUnread.ts` — computes the mute-excluding count client-side from
+  the `GET /conversations` payload, and wins whenever it is known.
+
+**Every one of them is an interruption surface** — a badge. None wants
+muted threads counted, so no stop condition fired. The reverse is
+strongly true on mobile, which built a whole module to work around this
+endpoint. `chatUnread.ts` says so outright:
+
+> The fab already had a count, from `GET /nav-counts`. Rev F requires it
+> to EXCLUDE MUTED THREADS, and that endpoint cannot: its
+> `getUnreadConversationCount` reads conversations, reads and messages,
+> and never touches `UserConversationState` at all… Teaching the endpoint
+> about mute is the right long-term fix and it is an `apps/api` change,
+> which this session is scoped out of.
+
+This is that change.
+
+## Fix
+
+One clause added to the query `getUnreadConversationCount` was already
+making — no second pass, no per-row lookup, no new N+1:
+
+    viewerStates: { none: { userId, mutedUntil: { gt: new Date() } } }
+
+NULL-safe by construction, which is why it is a `none:` on a
+forward-looking instant rather than a comparison against a value that may
+not exist. All three "not muted" states fail to match the inner filter and
+therefore satisfy `none`: no state row at all (the common case), a row
+with `mutedUntil` null (pinned but never muted), and a row whose
+`mutedUntil` has passed. Only a mute genuinely in the future excludes.
+
+`userId` sits **inside** the filter, not outside it — mute is per-person,
+so a colleague muting a thread must never quiet this caller's badge. There
+is a test whose only job is to make that placement load-bearing.
+
+Its sibling `getUnreadCountForConversation` is deliberately left
+mute-blind. Both now carry a comment naming which they are, because the
+distinction is the product rule and it is not guessable from the code:
+
+    getUnreadCountForConversation  -> the row's dot.    INDICATOR. accrues.
+    getUnreadConversationCount     -> the nav badge.    INTERRUPTION. quiet.
+
+## Tests
+
+Six, in `navCountsMute.test.ts`. Both halves of the rule are asserted
+**against the same event in the same test** — split apart they would
+still pass if one function were broken in the convenient direction;
+together they pin the rule rather than either number.
+
+The sharpest is "both at once": two threads, two identical inbounds, one
+muted — the badge must read exactly **1**, not 0 and not 2. A fix that
+suppressed too much or too little fails there even if each half passed
+alone.
+
+Every inbound is written in the webhook's shape (`authorUserId: null`), so
+these tests stand on the NULL-safe predicate rather than beside it.
+
+Falsifiability check: reverting the clause fails **4 of 6**. The two that
+survive are the deliberate controls with no live mute in them (the
+unmuted twin, and the expired mute).
+
+## Acceptance — and a trap worth recording
+
+The first run of the transcript appeared to show the fix failing: an
+inbound to the supposedly-unmuted control thread left the nav count
+unmoved.
+
+It was not the fix. **The control thread already carried a mute until
+2027-08-26**, left in the dev database by an earlier session's testing.
+The fix had behaved perfectly; the control was not a control. Diagnosed by
+dumping the actual `UserConversationState` rows rather than by re-reading
+the code — and worth recording because the transcript was one careless
+reading away from a false bug report against correct code.
+
+Re-run against two threads confirmed to have **no** `UserConversationState`
+row at all, so nothing pre-existing could contaminate it:
+
+    baseline          nav=6   A[unread=0 muted=no ]  B[unread=0 muted=no ]
+    after mute A      nav=6   A[unread=0 muted=yes]  B[unread=0 muted=no ]
+    inbound -> A      nav=6   A[unread=1 muted=yes]  B[unread=0 muted=no ]   <- indicator up, interruption silent
+    inbound -> B      nav=7   A[unread=1 muted=yes]  B[unread=1 muted=no ]   <- unmuted twin moves both
+    after unmute A    nav=8   A[unread=1 muted=no ]  B[unread=1 muted=no ]   <- accrued unread surfaces
+
+Cleaned up afterwards: the 2 probe messages and the 1 viewer-state row
+this transcript created. The four pre-existing rows on dev — two of them
+muted into 2027 — belong to another session's work and were deliberately
+left alone.
+
+One incidental change to dev data to declare: the first (invalid) run
+issued `mutedUntil: null` against thread `cmrvbeefd…` as its baseline
+setup. If that thread had carried a mute beforehand, it was cleared. Its
+pin was not touched.
+
+Full suite **244/244** (238 before, +6). `apps/api` `tsc` build clean.
+
+## Mobile alignment (recommendation only — no mobile work here)
+
+Once this deploys, `apps/mobile`'s `lib/chatUnread.ts` becomes redundant
+defense over server truth rather than the only source of it.
+
+**Recommendation: keep it, and drop the workaround framing rather than the
+code.** It is no longer a workaround; it is a legitimate optimistic local
+count that updates the badge the instant the list refetches, without
+waiting for a second round trip to `/nav-counts`. Its `null`-means-"not
+loaded-yet" fallback is now strictly better too, because the number it
+falls back to is finally correct. What should change is the comment block
+asserting that `/nav-counts` "cannot" exclude muted threads — that stops
+being true on deploy, and a stale comment claiming a server limitation
+that no longer exists is how the next session gets misled. One-line
+mobile decision for a future session; nothing outside `apps/api` was
+touched here.

@@ -177,9 +177,47 @@ export async function getUnreadCountForConversation(conversationId: string, user
 // for the nav bubble -- a deliberately different strategy from the
 // created-after-seen sections in navCounts.ts (see the section-strategy
 // pattern there).
+//
+// MUTE-AWARE, and its sibling above deliberately is not. The rule, from
+// the pin/mute work: a mute suppresses the INTERRUPTION, not the
+// INDICATOR.
+//
+//   getUnreadCountForConversation  -> the row's own dot. An INDICATOR.
+//                                     Keeps accruing while muted, so a
+//                                     muted thread still visibly has
+//                                     something new. Mute-BLIND.
+//   getUnreadConversationCount     -> the nav/tab badge. An INTERRUPTION
+//                                     surface, same category as push.
+//                                     Mute-AWARE, here.
+//
+// Muting a thread and then watching the badge keep climbing is the exact
+// experience that makes people stop trusting a badge -- and apps/mobile
+// had already worked around this endpoint client-side for that reason
+// (lib/chatUnread.ts computes its own mute-excluding count from the list
+// payload precisely because this function "never touches
+// UserConversationState"). This is that fix, on the server, where it
+// belongs.
 export async function getUnreadConversationCount(studioId: string, userId: string, role: Role): Promise<number> {
   const conversations = await prisma.conversation.findMany({
-    where: await visibleConversationWhere({ studioId, role, userId }),
+    where: {
+      ...(await visibleConversationWhere({ studioId, role, userId })),
+      // Folded into the query that was already being made, rather than a
+      // second pass or a per-row lookup -- same one-query-for-the-page
+      // discipline as the batched viewerState in the list payload.
+      //
+      // NULL-safe by construction, which is why it is `none:` on a
+      // forward-looking instant rather than a comparison on a value that
+      // might not exist. All three "not muted" states fail to match the
+      // inner filter and therefore satisfy `none`:
+      //   - no UserConversationState row at all (the common case)
+      //   - a row with mutedUntil null (pinned but never muted)
+      //   - a row whose mutedUntil is in the past (a lapsed mute)
+      // Only a mute genuinely in the future matches, and excludes.
+      //
+      // Scoped to `userId` INSIDE the filter: mute is per-person, so a
+      // colleague muting a thread must never quiet this caller's badge.
+      viewerStates: { none: { userId, mutedUntil: { gt: new Date() } } },
+    },
     select: { id: true },
   });
 
