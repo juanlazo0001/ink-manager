@@ -199,9 +199,30 @@ export default function ConversationScreen() {
    */
   const onFlyTargetMeasured = useCallback((id: string, size: { width: number; height: number }) => {
     const node = listBoxRef.current;
-    if (!node) return;
+    if (!node) {
+      // Graceful skip: no list to measure against, so the row simply
+      // appears. A mispositioned ghost is worse than no ghost.
+      if (__DEV__) console.log('[send-fly] skipped: list node unavailable');
+      setPendingFly(null);
+      return;
+    }
     node.measureInWindow((listX, listY, listWidth, listHeight) => {
-      if (listWidth === 0 && listHeight === 0) return;
+      /*
+       * A destination we cannot trust is a destination we do not fly to.
+       * Zero dimensions mean the list has not laid out; a zero-height row
+       * means the optimistic bubble has not measured yet. Either way the
+       * clone would land somewhere invented, so the send falls back to a
+       * plain appear and says so once.
+       */
+      if (listWidth === 0 || listHeight === 0 || size.height === 0) {
+        if (__DEV__) {
+          console.log(
+            `[send-fly] skipped: invalid destination (list ${listWidth}x${listHeight}, row h ${size.height})`,
+          );
+        }
+        setPendingFly(null);
+        return;
+      }
       const to: Rect = {
         x: listX,
         // LIST_CONTENT_PAD is the contentContainer's own paddingVertical,
