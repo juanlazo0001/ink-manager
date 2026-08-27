@@ -5,6 +5,7 @@ import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } 
 
 import {
   ensureLibraryPermission,
+  pickerErrorMessage,
   pickImage,
   toAvatarDataUrl,
   uploadToCloudinary,
@@ -156,7 +157,16 @@ export function ImageGridField({
       refusedPermissionAlert();
       return;
     }
-    const picked = await pickImage();
+    // Guarded for the same reason as the chat path -- see Composer's
+    // addFromLibrary. A native picker error here was an unhandled
+    // rejection too.
+    let picked: Awaited<ReturnType<typeof pickImage>>;
+    try {
+      picked = await pickImage();
+    } catch (err) {
+      Alert.alert('Could not open your photos', pickerErrorMessage(err));
+      return;
+    }
     if (!picked) return;
     setUploading(true);
     try {

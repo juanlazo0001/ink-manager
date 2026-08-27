@@ -2,8 +2,7 @@ import type { ConversationListItem } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Avatar, initialsOf } from '@/components/Avatar';
-import { ChannelBadge } from '@/components/ChannelBadge';
+import { THREAD_AVATAR_LIST, ThreadAvatar } from '@/components/ThreadAvatar';
 import { LIST_AVATAR, LIST_INSET } from '@/theme/listMetrics';
 import { chat, colors, fonts, space } from '@/theme';
 import { relativeStamp } from '@/lib/time';
@@ -113,20 +112,23 @@ export function ConversationRow({
           what web does: ProgressRingAvatar takes counterpart.avatarUrl on
           CLIENT, STAFF and GROUP alike and falls back to initials. Mobile
           had only ever drawn initials. */}
+      {/*
+        §8 rev G: one component for the row and the thread header, so the
+        two cannot drift. Group threads get the duo-stack; everything else
+        gets the single avatar it always had. The composite's footprint is
+        LIST_AVATAR either way, so a group row does not sit differently
+        from a client row -- and the separator's 76pt inset
+        (20 + 44 + 12) stays correct without knowing which it is.
+      */}
       <View style={styles.avatarWrap}>
-        <Avatar
-          url={item.counterpart?.avatarUrl}
-          initials={initialsOf(name)}
-          // §8: 44. The separator's 76pt inset is 20 + 44 + 12 -- the rule
-          // starts where the text starts -- so this number and
-          // LIST_SEPARATOR_INSET move together; see theme/listMetrics.ts.
-          size={LIST_AVATAR}
+        <ThreadAvatar
+          name={name}
+          avatarUrl={item.counterpart?.avatarUrl}
+          participants={item.counterpart?.participants}
+          channel={item.lastMessage?.channel ?? null}
+          scale={THREAD_AVATAR_LIST}
           ring={unread ? colors.accent : undefined}
-          labelStyle={styles.avatarLabel}
         />
-        {/* §1.1: the channel as letters ON the avatar, replacing a third
-            line of row furniture. */}
-        {item.lastMessage ? <ChannelBadge channel={item.lastMessage.channel} /> : null}
       </View>
 
       <View style={styles.middle}>
