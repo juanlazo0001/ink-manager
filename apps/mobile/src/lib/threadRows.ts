@@ -7,6 +7,19 @@ export type MessageStatus = 'sent' | 'pending' | 'failed';
 
 export interface DisplayMessage extends Message {
   status: MessageStatus;
+  /**
+   * The list key for this row, fixed for its whole life.
+   *
+   * A sent message's `id` CHANGES at acknowledgement — optimistic rows
+   * carry a `local:` id and the server replaces it with its own. Keying
+   * the list off `id` therefore unmounted and remounted the bubble the
+   * instant it was acked. `rowKey` is assigned once at optimistic-insert
+   * and carried through the swap, so the row React sees is the same row.
+   *
+   * Absent on server-loaded messages, which never re-key — the extractor
+   * falls back to `id` for those.
+   */
+  rowKey?: string;
 }
 
 export type Row =

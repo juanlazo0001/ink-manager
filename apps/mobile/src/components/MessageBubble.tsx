@@ -188,6 +188,29 @@ function EmailBody({ body, own }: { body: string; own: boolean }) {
   );
 }
 
+/**
+ * ─── __DEV__ MOUNT LEDGER (session 10, Task A) ──────────────────
+ *
+ * A re-render cannot blank a loaded image; only an UNMOUNT can. So the
+ * operator's "the image goes blank and the neighbours flash back as
+ * fragments" is a claim about mount lifecycle, and this counts it rather
+ * than arguing about it.
+ *
+ * Expected on a send: one mount (the new row), ZERO unmounts of rows that
+ * were already on screen.
+ */
+export function useMountLedger(id: string, tag: string) {
+  useEffect(() => {
+    if (!__DEV__) return;
+    const g = globalThis as { __mountLedger__?: { mounts: string[]; unmounts: string[] } };
+    g.__mountLedger__ ??= { mounts: [], unmounts: [] };
+    g.__mountLedger__.mounts.push(`${Math.round(performance.now())} ${tag}:${id}`);
+    return () => {
+      g.__mountLedger__!.unmounts.push(`${Math.round(performance.now())} ${tag}:${id}`);
+    };
+  }, [id, tag]);
+}
+
 export function MessageBubble({
   message,
   own,
@@ -232,6 +255,19 @@ export function MessageBubble({
   /** Tapping a quoted reply jumps to the message it quotes. */
   onScrollToMessage?: (messageId: string) => void;
 }) {
+  /*
+   * Session 10 Task A: counts this bubble's mount lifecycle in __DEV__.
+   *
+   * Keyed on `rowKey`, NOT `id`, and that distinction is the instrument
+   * being honest about itself. A sent message's `id` changes at ack, so a
+   * ledger keyed on `id` fires its effect cleanup and re-runs — logging an
+   * unmount and a mount for a row React never actually touched. The first
+   * post-fix measurement showed exactly that phantom, and it was the probe
+   * lying, not the list churning. `rowKey` is stable across the swap, so
+   * what this counts now is real mounting.
+   */
+  useMountLedger(message.rowKey ?? message.id, 'bubble');
+
   /*
    * §2.4 rev D.1. The state is derived, not read off `status`: a message
    * the API stored can still be reported DELIVERED or FAILED by the
