@@ -30395,3 +30395,294 @@ being true on deploy, and a stale comment claiming a server limitation
 that no longer exists is how the next session gets misled. One-line
 mobile decision for a future session; nothing outside `apps/api` was
 touched here.
+
+# Chat UX 07b — the three rulings the first pass never received
+
+## Why this session exists, and what it did NOT redo
+
+The brief was issued as a twelve-edit rev G with Tasks 0 and A–J. **A
+concurrent session was already running an eight-edit rev G of the same
+brief** and, while this session was assessing the collision, finished it
+and merged: Tasks 0 (edits 2–9), A, B, C, D, E, F, G all landed on `main`
+as `00c40a7`.
+
+So the collision was real but resolved itself, and the honest scope left
+was the difference between the two versions of rev G:
+
+| | first pass (merged) | this session |
+| --- | --- | --- |
+| spec edits | 2, 3, 4, 5, 6, 7, 8, 9 | **1, 10, 11, 12** |
+| tasks | 0, A, B, C, D, E, F, G | **H, I, J** |
+
+Nothing here re-does that work. `git log --grep=chat-ux-07` on main was
+checked task by task before a line was written, and H, I and J were the
+three with no commit.
+
+**Branch `chat-ux/07-gate-2b`** off `00c40a7`, worktree per CLAUDE.md.
+Mobile-only writes; `apps/api` was read, never written.
+
+## Task 0 — the four remaining spec edits
+
+Edits **1, 10, 11, 12** applied to `public/prototype/chat-ux-spec.md`.
+Each anchor was asserted present and **unique (exactly 1 occurrence)**
+before replacement.
+
+**No fuzzy matches to report** — all four old-strings matched the repo's
+rev F text verbatim, including the §9 header line the brief warned might
+differ.
+
+Commit `chat-ux-07-0b`.
+
+## Task H — archive panel red
+
+`ConversationSwipe.tsx`: the archive panel takes `colors.dangerStrong`
+with a white icon and label.
+
+**Two things beyond the one-line change:**
+
+The **overscan strip moved with it**. `trailingPanel`'s background was
+`surfaceInset` specifically so the far edge matched the last panel; left
+alone, a rubber-banded overscroll would have shown a near-black band past
+the red panel — the exact seam that strip exists to prevent.
+
+**The file's own reasoning was reversed, and the comment says so.** It
+used to recede deliberately: archive has reach beyond this viewer, so "a
+loud panel would invite the tap rather than warn about it". Cross-surface
+consistency outranks that — `ClientSwipe.tsx` on the clients list already
+ships a red archive panel, and a destructive slot that is red on one list
+and near-black on the other teaches nothing on either. The tap-confirm is
+what keeps the old argument honest: red says consequential, and archive
+still never commits on the swipe.
+
+**White, not cream**: cream on `dangerStrong` measures 4.39:1, under the
+AA floor, and this label is 10pt — the same calculation CLAUDE.md records
+for the chat control.
+
+**Measured on the running screen**, one row's panels:
+
+| panel | fill | label | width |
+| --- | --- | --- | --- |
+| Pin | `rgb(201, 154, 91)` gold | `rgb(23, 18, 8)` ink | 72 |
+| Mute | `rgb(29, 24, 19)` raised-espresso | `rgb(199, 190, 169)` | 72 |
+| **Archive** | **`rgb(194, 64, 47)`** = `#c2402f` | **`rgb(255, 255, 255)`** | 72 |
+
+Pin and mute untouched, as specified.
+
+## Task I — outside tap closes an open row
+
+Two halves against the one shared value, **no new state anywhere**.
+
+**Row taps** — `consumeTapIfRowOpen()` in
+`apps/mobile/src/lib/swipeRegistry.ts:55`, called first in the row's press
+handler at `app/(tabs)/index.tsx:341`. It answers "was this tap spent
+closing a row?" and the caller returns when it says yes. That is both
+halves of the ruling at once: tapping another row never opens that thread,
+and tapping the open row's own front just closes it.
+
+**Background taps** — a `Gesture.Tap().maxDistance(8)` over the list
+catches what is left: a section label, the gap under a short list.
+
+### The design decision worth recording
+
+**`onStartShouldSetResponderCapture` was tried first and is wrong.** It
+fires the instant a finger lands, so putting a finger on an
+already-open row to drag it further would have snap-closed it under the
+hand — the reaction sees `openSwipeRow` go to `''`, animates the front
+home, and then the pan picks up from a moving value. It was written,
+recognised, and reverted before commit. `Gesture.Tap()` only recognises on
+**lift-without-movement**, so a drag never triggers it and the pan keeps
+the touch.
+
+**Render counter stays 0.** Reading `.value` on the JS thread is a
+property read, not a subscription — nothing re-renders, and the close runs
+entirely on the UI thread from one string write. That was a hard
+requirement: the 06-g3 rebuild exists because re-rendering rows
+mid-gesture is what tore the previous implementation. A `useState` mirror
+of "is a row open" would have reintroduced exactly that.
+
+Scroll-to-close (`onScrollBeginDrag`) and other-row-swipe-to-close (the
+pan's `onBegin` claim) are untouched.
+
+**Feel is the gate's** — per CLAUDE.md, gesture-handler is inert to
+synthetic input on this harness, so nothing here is proof that the tap
+lands right on a phone.
+
+## Task J — empty search: **branch (A) shipped**
+
+### The creation path, found before anything was written
+
+`POST /conversations` — **`apps/api/src/routes/conversations.ts:417`** —
+is a genuine **find-or-create**, taking exactly one of `clientId` or
+`staffUserId`. The `staffUserId` arm at `:479` is literally the one team
+DMs are made with (`getOrCreateStaffConversation`). It returns 200 with
+the existing thread, 201 when it creates, and deliberately **un-archives**
+an archived thread, because the route treats a POST as "an intentional
+'start this conversation' click" — its own words. There is also a
+resolve-only `GET /conversations/resolve` at `:508` for paths that must
+never create.
+
+So branch (A) was available and (B)/(C) did not apply. **Nothing was
+invented.**
+
+What was missing was entirely on the mobile side: `lib/conversations.ts`
+had **no create function at all**, which is why every "Message" affordance
+in this app so far either navigated to a thread that already existed or
+said "starting one is done in the portal". `startConversation()` wires it.
+
+### What ships
+
+An empty search renders `NO CONVERSATIONS FOUND` (Jura caps, muted) plus
+one `START CHAT WITH {NAME}` row per matching person **without** a thread
+— gold fill, ink label, the app's standard primary treatment and
+**explicitly not red**, since rev G narrowed the red exception back to the
+CHAT fab.
+
+**An ARTIST sees the text-only state**, and that is the no-inert rule
+working rather than a gap: the route refuses them both ways (404 on
+`clientId`, 403 on any `staffUserId` but their own), so a button would be
+a button that 403s. Branch (C) applied per-role rather than per-app.
+
+Two implementation notes: people are fetched when the empty state mounts,
+not on the screen — otherwise every chat-tab visit pays for a roster and a
+client page it almost never shows. And existing threads are excluded using
+the **full** loaded list rather than the filtered one, so a thread hidden
+by the current search still counts as existing.
+
+### Verified end to end
+
+    typed "Nadia"  ->  GET /conversations?search=Nadia  ->  0 rows
+                   ->  NO CONVERSATIONS FOUND + START CHAT WITH NADIA OKONKWO
+                       CTA fill rgb(201, 154, 91) = colors.accent (gold, not red)
+    tapped the CTA ->  POST /conversations  body={"staffUserId":"u3"}
+
+The payload is the staff-DM find-or-create arm, exactly as intended.
+**What is NOT proven here:** the navigation that follows a successful
+create. The `router.push` fired without error but the preview harness's
+URL did not change, and this harness renders the screen directly rather
+than inside the real stack. It is the same push every other row on this
+screen uses. Gate item.
+
+### One flaw caught in the render
+
+The CTA first carried an avatar. `Avatar` draws on `colors.surface`, so
+inside a gold pill it read as a dark blob with its ink initials invisible
+against that dark ground. The label already names the person, so the
+circle was repeating it illegibly. Replaced with a compose glyph
+(`chat-ux-07-j2`) — caught by looking at the screenshot, not by review.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         ✓ built in 11.65s
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean, matches schema.prisma
+    apps/api      test suite                   233/233 pass
+
+`design-refs/session-07b/empty-search-cta-320.png`.
+
+**Harness limits, stated where they bite:** the swipe reveal and the
+outside tap are gesture-driven and therefore device-gate-only per
+CLAUDE.md — the panel colours above are read off the rendered tree, which
+proves what they *are*, not that the gesture that reveals them feels
+right.
+
+## Escalations
+
+1. **`ClientSwipe` has no outside-tap close.** Task I was scoped to the
+   chat list, and the clients list now differs: swipe a client row open,
+   tap elsewhere, and it stays open. `consumeTapIfRowOpen()` is
+   list-agnostic and `ClientSwipe` would need the same two-line guard.
+   Not done — out of this brief's scope, and worth a ruling since Task H's
+   whole argument was cross-surface consistency.
+2. **`ClientSwipe` does not use `swipeRegistry` at all**, so two client
+   rows can be open at once, unlike chat rows. Same file, same fix, same
+   ruling needed.
+3. Carried, untouched: the four escalations the first pass filed
+   (`apps/api/src/lib/conversations.ts:152/:181` NULL-safe predicate;
+   `/nav-counts` excluding muted; the unconfirmed attachment crash; the
+   outstanding send-fly verdict).
+
+## Database
+
+**No schema change, no migration, no backfill, no database contact.** The
+Task J round-trip ran against the scratchpad fixture.
+
+# Chat UX 07b addendum — the clients list joins the same swipe engine
+
+Owner asked for the two escalations at the end of 07b to be fixed. They
+turned out to be symptoms of something one level down, so this records the
+cause as well as the fix.
+
+## The escalations said "missing registry, missing outside tap". The real gap was the ENGINE.
+
+`ClientSwipe` was built in session AJ on **`ReanimatedSwipeable`**, modelled
+on what `ConversationSwipe` looked like at that moment. `ConversationSwipe`
+was then rebuilt in **06-g3 off that same library**, because frame analysis
+of a device pass found three faults in it: threshold-pop reveals, split
+translation tearing, and off-spec panel widths.
+
+Nobody went back for the clients list. So it was the last consumer of an
+engine that had been condemned with evidence, and the two lists had
+different reveal behaviour, different panel widths (88 vs the spec's 72)
+and different exclusivity semantics — while Task H's entire argument for
+turning archive red was *cross-surface consistency*.
+
+## What shipped
+
+`ClientSwipe` is now the 06-g3 model, ported: one translating front, panels
+riding with it, nothing rendering outside the front. Not a new design — the
+same one, so the two lists answer a thumb identically rather than merely
+looking as though they should.
+
+Both escalated gaps then close **by construction rather than by patch**:
+
+- **Exclusivity** — the row claims `openSwipeRow` on touch, so opening one
+  client row closes any other, and closes an open CHAT row too, since it is
+  one registry for the app. Before, two client rows could sit open at once
+  while two chat rows could not.
+- **Outside tap** — `consumeTapIfRowOpen()` in the clients screen now has
+  something to consume, because the registry is what it reads. Row taps are
+  consumed; a `Gesture.Tap` catches the background; `onScrollBeginDrag`
+  closes on scroll. All three identical to the chat list.
+
+Two deliberate differences from the chat row, both recorded in the file: no
+leading panel (a client row has no per-viewer preference like Pin, so
+`snaps` carries two stops rather than three), and no commit haptic (nothing
+here commits on a swipe).
+
+## Measured
+
+| | before | after |
+| --- | --- | --- |
+| engine | `ReanimatedSwipeable` | single translating front (06-g3 model) |
+| panel width | 88 | **72** — the §8 number, shared with the chat row |
+| rows open at once | unbounded | **1**, app-wide |
+| outside tap closes | no | yes |
+| scroll closes | no | yes |
+| render counters during load | n/a | **all 1** — zero re-renders |
+| console errors, fresh load | **5** | **2** |
+
+That last row is worth stating precisely: the `removeWebAnimation` errors
+are pre-existing `react-native-reanimated` web-shim noise, not this change.
+Attributed by stashing the port and reloading — the OLD engine produced
+FIVE, the port produces two. It reduces them rather than introducing them.
+
+`design-refs/session-07b/clients-swipe-rebuilt-320.png`.
+
+## Not done, deliberately
+
+**The shared core was not extracted.** `ClientSwipe` and
+`ConversationSwipe` now run the same model in two files, and the honest
+next step is one `SwipeRow` taking configurable leading/trailing actions.
+It was not done here because it would mean editing `ConversationSwipe` —
+a file sitting under an unmerged device gate — to serve a refactor. The
+duplication is deliberate for now; extract it once both are gated.
+
+**Feel is the gate's.** Per CLAUDE.md gesture-handler is inert to synthetic
+input on this harness, so nothing above proves the reveal, the exclusivity
+or the outside tap actually behave under a thumb. What is proven is the
+geometry, the colours, the render counters and that the wiring exists.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.

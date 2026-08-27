@@ -8,17 +8,25 @@ import { isMuted } from '@/lib/conversations';
  *
  * ─── WHY THIS EXISTS RATHER THAN `/nav-counts` ──────────────────────
  *
- * The fab already had a count, from `GET /nav-counts`. Rev F requires it
- * to EXCLUDE MUTED THREADS, and that endpoint cannot: its
- * `getUnreadConversationCount` reads conversations, reads and messages,
- * and never touches `UserConversationState` at all — muted threads are in
- * its number by construction. Verified against the running dev API:
- * `/nav-counts` returned `conversations: 3` while one of those three was
- * muted.
+ * CORRECTED (backend `d6f50b7`, now on main). This block used to say the
+ * endpoint "cannot" exclude muted threads. **That is no longer true and
+ * must not be repeated:** `getUnreadConversationCount` is MUTE-AWARE on
+ * the server now, with `navCountsMute.test.ts` covering it. The original
+ * observation was accurate when written — `/nav-counts` really did return
+ * `conversations: 3` with one of the three muted — and it got fixed.
  *
- * Teaching the endpoint about mute is the right long-term fix and it is
- * an `apps/api` change, which this session is scoped out of. So the count
- * is computed where the data already lives.
+ * So the mute argument for this module is spent. What keeps it is the
+ * other one, which was always the stronger: ONE SOURCE, THREE CONSUMERS,
+ * immediately below. The badge, the row dot and the UNREAD filter must
+ * agree, and the only way to guarantee that is to compute all three from
+ * one predicate over one payload. Two independent correct implementations
+ * still drift the first time either changes.
+ *
+ * What DID change: the server fallback is no longer mute-blind. The tab
+ * button falls back to `/nav-counts` until the list speaks, and that
+ * fallback now excludes muted threads too — so the cold-start window
+ * shows a number that may merely be stale, rather than one that is
+ * categorically wrong.
  *
  * ─── ONE SOURCE, THREE CONSUMERS ────────────────────────────────────
  *
@@ -39,14 +47,23 @@ import { isMuted } from '@/lib/conversations';
  *
  * `null` means "the list has not spoken yet", which is different from
  * "zero unread". The tab button falls back to the server count until the
- * list loads, so a cold start on another tab shows the old (mute-blind)
- * number rather than a confident, wrong `0`. The app opens on CHAT, so
- * that window is one request wide in practice.
+ * list loads, so a cold start on another tab shows a possibly-stale
+ * number rather than a confident, wrong `0`. Since `d6f50b7` that
+ * fallback is mute-aware too, so the worst it can now be is out of date
+ * — it is no longer counting threads the viewer muted. The app opens on
+ * CHAT, so the window is one request wide in practice.
  */
 /*
- * ─── KNOWN BLOCKER, SESSION 07 TASK F (server-side) ─────────────────
+ * ─── SESSION 07 TASK F — RESOLVED, kept for the reasoning ───────────
  *
- * None of this fires for a LIVE arrival, and the cause is not here.
+ * FIXED on the server and merged to main (`unreadNullAuthor.test.ts`
+ * covers it). This was a live blocker when written and is not one now —
+ * a future session should not go hunting for it. The diagnosis stays
+ * because the FAILURE MODE is worth knowing, and because it is the
+ * standing example behind CLAUDE.md's falsifiable-tests rule.
+ *
+ * What it was: none of this fired for a LIVE arrival, and not because of
+ * anything here.
  *
  * `apps/api/src/lib/conversations.ts:152` counts unread with
  * `authorUserId: { not: userId }`. On a NULLABLE column that predicate
@@ -59,10 +76,11 @@ import { isMuted } from '@/lib/conversations';
  * INBOUND message with `authorUserId: null` left the count at 0, while
  * the same query with a NULL-safe predicate returned 1.
  *
- * The fix is one predicate in `apps/api` (and the identical one at :181,
- * which feeds `/nav-counts`). Session 07 is mobile-scoped, so it is
- * reported as a backend addendum rather than changed here. Nothing on
- * this side needs to move when it lands.
+ * The fix was one predicate in `apps/api` (and the identical one at :181,
+ * which feeds `/nav-counts`). It landed as a backend addendum and nothing
+ * on this side had to move — which is exactly what the original note
+ * predicted. The one piece still outstanding is an operator check that
+ * the dot appears on a live arrival, once main is deployed.
  */
 let count: number | null = null;
 const listeners = new Set<() => void>();

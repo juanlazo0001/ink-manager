@@ -204,7 +204,10 @@ export function ConversationSwipe({
             label="Archive"
             icon="archive"
             panel={styles.archive}
-            tint={colors.fgMuted}
+            /* White, not cream: cream on dangerStrong measures 4.39:1,
+               under the 4.5:1 AA floor, and this label is 10pt. CLAUDE.md
+               records the same choice for the chat control. */
+            tint="#ffffff"
             // Tap commits, never the swipe -- archive is studio-wide
             // (rev E), and this is the tap it demands.
             onPress={() => commit(onArchive)}
@@ -283,8 +286,14 @@ const styles = StyleSheet.create({
     width: OVERSCAN + PANEL * 2,
     flexDirection: 'row',
     justifyContent: 'flex-start',
-    /* The overscan behind ARCHIVE, so the far edge matches the last panel. */
-    backgroundColor: colors.surfaceInset,
+    /*
+     * The overscan behind ARCHIVE, so the far edge matches the last panel.
+     * Rev G moved archive to red, so this moves with it — left on the old
+     * inset it would have shown a near-black band past the red panel on
+     * every rubber-banded overscroll, which is the seam this strip exists
+     * to prevent.
+     */
+    backgroundColor: colors.dangerStrong,
   },
 
   action: { width: PANEL, alignItems: 'center', justifyContent: 'center', gap: space.xs },
@@ -293,7 +302,19 @@ const styles = StyleSheet.create({
 
   pin: { backgroundColor: colors.accent },
   mute: { backgroundColor: colors.surfaceRaised },
-  /* Recedes on purpose: it is the one action with reach beyond this
-     viewer, and a loud panel would invite the tap rather than warn. */
-  archive: { backgroundColor: colors.surfaceInset },
+  /*
+   * §8 rev G: RED, reversing this file's own earlier reasoning.
+   *
+   * It used to recede, and the comment said why: archive has reach beyond
+   * this viewer, so "a loud panel would invite the tap rather than warn".
+   * The ruling goes the other way for a reason that outranks it —
+   * CROSS-SURFACE CONSISTENCY. The clients list ships a red archive panel
+   * (`ClientSwipe.tsx`), and one destructive slot that is red on one list
+   * and near-black on the other teaches nothing on either. Same gesture,
+   * same position, same colour.
+   *
+   * The tap-confirm is what keeps the old argument honest: red says
+   * "consequential", and archive still never commits on the swipe.
+   */
+  archive: { backgroundColor: colors.dangerStrong },
 });

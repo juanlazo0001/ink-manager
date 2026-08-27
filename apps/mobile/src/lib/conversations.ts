@@ -74,6 +74,42 @@ export function fetchIntegrationStatus(token: string, signal?: AbortSignal): Pro
  * it, so failures are swallowed: it is never worth an error banner, and
  * the worst case is a badge that clears on the next open.
  */
+/**
+ * `POST /conversations` — find-or-create, wired for the first time on mobile.
+ *
+ * §8 rev G's empty-search CTA needs a real creation path or it does not
+ * ship (the no-inert rule). This is it, and it is NOT new API surface:
+ * `apps/api/src/routes/conversations.ts:417` has always been a
+ * find-or-create, taking exactly one of `clientId` or `staffUserId`. It
+ * returns 200 with the existing thread when there is one, 201 when it
+ * makes one, and it deliberately UN-ARCHIVES an archived thread because
+ * the route treats a POST as "an intentional start this conversation
+ * click" (its own words).
+ *
+ * Mobile had never called it — which is why every "Message" affordance in
+ * this app so far has either navigated to a thread that already existed or
+ * said "starting one is done in the portal".
+ *
+ * ROLE LIMITS, straight from the route, and the reason the CTA hides
+ * rather than fails:
+ *
+ *   ARTIST + clientId              → 404 "Conversation not found"
+ *   ARTIST + staffUserId ≠ self    → 403 "You can only open your own conversation"
+ *
+ * So an ARTIST has no counterpart they can start a thread with from here,
+ * and the caller must not offer them a button that 403s.
+ */
+export function startConversation(
+  token: string,
+  target: { clientId: string } | { staffUserId: string },
+): Promise<{ id: string }> {
+  return apiFetch<{ id: string }>('/conversations', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(target),
+  });
+}
+
 export async function markConversationRead(token: string, conversationId: string): Promise<void> {
   try {
     await apiFetch<null>(`/conversations/${encodeURIComponent(conversationId)}/read`, { method: 'POST', token });

@@ -24,3 +24,36 @@ export const openSwipeRow: SharedValue<string> = makeMutable('');
 export function closeOpenSwipeRow() {
   openSwipeRow.value = '';
 }
+
+/**
+ * §8 rev G — the outside tap.
+ *
+ * Call this FIRST in any press handler that would navigate. It answers
+ * "did this tap get spent closing an open row?", and when it says yes the
+ * caller must return without doing anything else: a tap that closes a row
+ * never also opens a thread.
+ *
+ *     onPress={() => {
+ *       if (consumeTapIfRowOpen()) return;
+ *       router.push(...)
+ *     }}
+ *
+ * ─── WHY A PLAIN FUNCTION AND NOT A HOOK OR STATE ───────────────────
+ *
+ * Reading `.value` off a shared value on the JS thread is just a property
+ * read — it does not subscribe, so nothing re-renders and the swipe
+ * render-counter stays at 0 through a drag. That was a hard requirement:
+ * the 06-g3 rebuild exists because re-rendering rows mid-gesture is what
+ * tore the old implementation. A `useState` mirror of "is a row open"
+ * would have re-introduced exactly that.
+ *
+ * Setting the value to '' is what closes: every row's
+ * `useAnimatedReaction` on `openSwipeRow` sees an id that is not its own
+ * and animates its front back with S3. So the close runs entirely on the
+ * UI thread, from one string write.
+ */
+export function consumeTapIfRowOpen(): boolean {
+  if (openSwipeRow.value === '') return false;
+  openSwipeRow.value = '';
+  return true;
+}

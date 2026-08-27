@@ -35,6 +35,8 @@ import {
 import { StatusChip } from '@/components/StatusChip';
 import { ArchiveConfirmSheet } from '@/components/ArchiveConfirmSheet';
 import { ClientSwipe } from '@/components/ClientSwipe';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { closeOpenSwipeRow, consumeTapIfRowOpen, openSwipeRow } from '@/lib/swipeRegistry';
 import { archiveClient, unarchiveClient } from '@/lib/clientWrites';
 import type { AppointmentListItem } from '@ink-manager/shared-types';
 
@@ -177,6 +179,23 @@ export default function ClientsScreen() {
    * the opposite is true (that list includes both), so there the row
    * stays and only its state flips.
    */
+  /*
+   * §8 rev G's outside tap, background half — the same Gesture.Tap the
+   * chat list uses, and a TAP rather than a touch-down handler for the
+   * same reason: a touch-down close would snap an open row shut the
+   * instant a finger landed on it to drag it further.
+   */
+  const outsideTap = useMemo(
+    () =>
+      Gesture.Tap()
+        .maxDistance(8)
+        .onEnd(() => {
+          'worklet';
+          if (openSwipeRow.value !== '') openSwipeRow.value = '';
+        }),
+    [],
+  );
+
   const toggleArchive = useCallback(
     async (client: ClientListItem) => {
       if (!token) return;
@@ -356,12 +375,17 @@ export default function ClientsScreen() {
           action={{ label: 'Try again', onPress: () => void load() }}
         />
       ) : (
+        <GestureDetector gesture={outsideTap}>
         <FlatList
+          /* Scrolling closes whatever is open, on the UI thread via the
+             registry, so a scroll never re-renders a row to do it. */
+          onScrollBeginDrag={closeOpenSwipeRow}
           data={visible}
           keyExtractor={(c) => c.id}
           renderItem={({ item, index }) => (
             <Appear index={index}>
               <ClientSwipe
+                rowId={item.id}
                 archived={item.archivedAt !== null}
                 hasThread={!!threadsByClient[item.id]}
                 onMessage={() => {
@@ -372,7 +396,12 @@ export default function ClientsScreen() {
               >
                 <ClientRow
                   client={item}
-                  onPress={() => router.push({ pathname: '/client/[id]', params: { id: item.id } })}
+                  onPress={() => {
+                    // §8 rev G, ported to this list: a tap with a row open
+                    // is spent closing it and never also navigates.
+                    if (consumeTapIfRowOpen()) return;
+                    router.push({ pathname: '/client/[id]', params: { id: item.id } });
+                  }}
                   upcoming={upcoming[item.id]}
                 />
               </ClientSwipe>
@@ -399,6 +428,7 @@ export default function ClientsScreen() {
             />
           }
         />
+        </GestureDetector>
       )}
 
       {note ? (
