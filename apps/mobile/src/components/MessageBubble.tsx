@@ -690,7 +690,17 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     width: REVEAL_WIDTH,
-    paddingLeft: space.sm,
+    /*
+     * §2.3 rev G: times RIGHT-ALIGN within the gutter, and that is what
+     * creates the daylight the gate asked for. Left-aligned, every time
+     * started hard against the bubble it belonged to, and a long bubble
+     * with a short time looked crowded while a short bubble with a long
+     * time looked fine -- the spacing depended on the message. Right
+     * aligned they form a column, and the gap is bounded below by the
+     * widest time rather than by the widest bubble.
+     */
+    alignItems: 'flex-end',
+    paddingRight: space.sm,
     justifyContent: 'center',
   },
   revealTime: { ...type.label, fontSize: 10, color: chat.textMuted },
