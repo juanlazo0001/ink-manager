@@ -87,21 +87,27 @@ export function ConversationRow({
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
       {/*
-        §8: the unread dot leads the row IN FLEX FLOW, not pinned to the
-        edge. Pinned, it floats in the margin and every row's text starts
-        in the same place whether or not anything is unread -- so the dot
-        has to be looked FOR. In flow it displaces the row, which is what
-        makes a screen of threads scannable at arm's length.
+        §8 rev F: the unread dot is GUTTER-ANCHORED -- absolutely
+        positioned, vertically centred, inside the 20pt inset, occupying
+        no layout width at all.
 
-        Its space is reserved either way, so reading a thread does not
-        make the column jog sideways.
+        It was in flex flow, on the argument that displacing the row makes
+        unread threads scannable. The gate measured what that actually
+        cost: every row carried ~35pt of lead-in against the spec's 20,
+        because a reserved 8pt slot plus its gap pushes EVERY avatar in --
+        read and unread alike -- to pay for a dot most rows do not draw.
+        The whole list was indented to make room for an exception.
+
+        Out of flow, the avatar sits at exactly 20 and read and unread
+        rows align identically; the dot lives in the space that inset was
+        always going to leave anyway.
 
         Red -- and this reverses an earlier note here that argued for gold
         because "an unread count is data". §8 asks for red and §8 is
         right: at 8pt this is punctuation, not a fill, which is precisely
         what CLAUDE.md reserves red for.
       */}
-      <View style={styles.dotSlot}>{unread ? <View style={styles.unreadDot} /> : null}</View>
+      {unread ? <View style={styles.unreadDot} /> : null}
 
       {/* The counterpart's own photo, for every thread type -- which is
           what web does: ProgressRingAvatar takes counterpart.avatarUrl on
@@ -173,9 +179,18 @@ const styles = StyleSheet.create({
   },
   pressed: { backgroundColor: colors.surface },
 
-  /* Reserved whether or not the dot is drawn -- see the render. */
-  dotSlot: { width: UNREAD_DOT, alignItems: 'center', justifyContent: 'center' },
+  /*
+   * Centred in the gutter the 20pt inset already provides, and taking no
+   * layout width -- see the render for why that is the whole point.
+   * `top: '50%'` plus half the dot is the vertical centre without needing
+   * to know the row's height, which varies with a one- or two-line
+   * preview.
+   */
   unreadDot: {
+    position: 'absolute',
+    left: (LIST_INSET - UNREAD_DOT) / 2,
+    top: '50%',
+    marginTop: -UNREAD_DOT / 2,
     width: UNREAD_DOT,
     height: UNREAD_DOT,
     borderRadius: UNREAD_DOT / 2,
