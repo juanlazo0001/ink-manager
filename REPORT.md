@@ -31205,3 +31205,153 @@ is not "tested it", and the gesture-driven ones are device-gate regardless.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 12 — the thread header's context-chip row is removed
+
+Branch `chat-ux/12-remove-context-chips` from `main` (`21d32f8`), in its
+own worktree per `CLAUDE.md`. Mobile-only, no dependencies. One commit.
+
+## What the row actually was
+
+The brief describes it as "conversation tags like TEST · TEST · NEW".
+Read against the code before touching it, that is one word off in a way
+worth recording, because it changes what "tag data stays untouched" means:
+
+    ThreadHeader.tsx:81-88 (deleted)
+      /* `tags` are deliberately NOT rendered as chips.
+         ConversationThreadTag types only id/entityType/entityId ... */
+
+The row rendered **exactly one chip, built from `header.primaryInquiry`**
+— `description · placement · status`. The gate's thread had an inquiry
+whose description was "TEST", whose placement was "TEST" and whose status
+was `NEW`, which is character-for-character the pill in the screenshot.
+**Tags were never on screen at all.** So tag data is untouched not because
+the change was careful with it, but because nothing ever read it — and the
+fixture proves that end of it: both threads are served a two-element
+`tags` array and neither renders anything from it.
+
+## Consumers, checked before deleting
+
+| symbol | importers outside its own file | verdict |
+| --- | --- | --- |
+| `CHIP_ROW_HEIGHT` (exported) | **0** | deleted |
+| `ThreadHeader` | 1 — `conversation/[id]` | kept, narrowed |
+| `collapse` prop | 1 call site | deleted |
+| `onPressInquiry` prop | 1 call site | deleted |
+| `primaryInquiry` | still read by `conversationListControls.ts` (NEEDS_ACTION) and by the screen's own `subtitle` | **untouched** |
+
+No chip component existed to delete separately — the chip was inline JSX
+inside `ThreadHeader`, so it went with the row.
+
+## The measured before and after
+
+Fixture serves two threads: `t1` with the gate's exact `primaryInquiry`
+(the thread the removal has to be proven on) and `t2` with
+`primaryInquiry: null` (the control that never had a chip row). 393pt
+viewport, `insets.top = 0` in the harness.
+
+### Header anatomy
+
+| | before (`t1`) | after (`t1`) | after (`t2`) |
+| --- | --- | --- | --- |
+| children of the header wrap | **5** — blur · tint · row · **chip row** · hairline | **4** | **4** |
+| chip text present | **`TEST · TEST · NEW`** | **none** | none |
+| header height | **97** | **53** | **53** |
+| row top | 8 | 8 | 8 |
+| hairline top | **96** | **52** | **52** |
+
+`53 = 8 + 44 + 1` — padding, the one standard row, the hairline. The
+hairline is the row's immediate next sibling, which is the acceptance
+stated structurally rather than by eye.
+
+### The scroll pass, and why it is a real test
+
+Seven samples per thread, 0 → 480 → 0, both directions, measuring the
+wrap height, the row top and the hairline top at each.
+
+**Before**, the same probe on the same thread:
+
+    rest      wrapH 97      chipRow 44
+    down 120  wrapH 62.70   chipRow  9.70
+    down 240  wrapH 53.81   chipRow  0.81
+    down 360  wrapH 53      chipRow  0
+    down 480  wrapH 53      chipRow  0
+    up   240  wrapH 87.36   chipRow 34.36
+    up     0  wrapH 96.59   chipRow 43.59
+
+    6 distinct header heights
+
+**After**, tagged and untagged alike:
+
+    1 distinct header height  (53)
+    1 distinct row top        (8)
+    1 distinct hairline top   (52)
+
+That before/after pair is the point. `CLAUDE.md` warns that reanimated
+travel is device-gate-only inside this screen's subtree, which would have
+made a flat "after" line prove nothing. **It does not apply to this
+animation** — the collapse demonstrably ran in the harness, through six
+intermediate heights. So the flat after-line is a result, not a harness
+artifact: the probe could have failed and did not.
+
+The row top never moved in either version — the identity row was always
+fixed and the collapse only ever ate the strip beneath it. Which is also
+why there is no layout jump to hunt for: nothing above the thread changes
+height any more, at any offset.
+
+## Console
+
+One error on the page, `Accessing element.ref was removed in React 19` —
+the pre-existing `react-native-web` shim noise present before this branch.
+Zero new errors, zero warnings introduced.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 13.05s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+Screenshots in `design-refs/session-12/`: `cux12-before-tagged-t1-393.png`
+(the pill, present), `cux12-after-tagged-t1-393.png` (gone),
+`cux12-after-untagged-t2-393.png` (the control, unchanged).
+
+### Retested vs untouched
+
+**Retested:** header anatomy on both thread kinds, header height, the
+hairline's position, the full scroll pass in both directions, thread
+render and boot, all four typechecks.
+
+**Untouched and NOT retested** — stated rather than implied: blur
+rendering and scroll-under (device; `expo-blur` is iOS-only in practice),
+group threads' duo-stack header avatar, keyboard choreography, send and
+the send-fly, swipe rows. The diff is one component's second row plus the
+shared values that drove it; nothing else was modified. "Did not touch it"
+is not "tested it".
+
+## Escalations
+
+1. **§9's context now has no home on screen.** The ⓘ is not wired:
+   `ThreadHeader` accepts `onInfo`, `conversation/[id]` does not pass it,
+   and the harness confirms the button renders with `aria-disabled=true`.
+   The chip's tap was the **only** path from a thread to its linked
+   inquiry (`/staff-inquiry/[id]`), and it is gone. Under this spec's own
+   no-inert-affordances rule the ⓘ must either get its sheet or stop
+   rendering. **Not fixed here** — building a details sheet is a feature,
+   not the removal that was asked for. Recorded in §9 rev H as an open
+   item so it cannot read as shipped.
+2. **`chat-ux/11-header-inset` is unmerged and this branch is cut from
+   `main`, as instructed.** Both branches touch `ThreadHeader.tsx` and
+   `conversation/[id].tsx`, so whichever merges second will conflict —
+   small and mechanical (11 changes a `ScreenShell` prop and adds a
+   comment; 12 removes the chip row), but it will not be a fast-forward.
+   Flagging it rather than pre-empting the merge order.
+3. **Three pre-existing dead symbols in `ThreadHeader`**, left alone to
+   keep the diff readable: the `handle` prop (declared, never passed,
+   never read), the `isGroup` local (computed, never used), and the
+   `styles.identity` block (defined, never referenced). All three predate
+   this session.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
