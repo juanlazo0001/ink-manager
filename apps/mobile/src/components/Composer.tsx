@@ -21,7 +21,13 @@ import {
   insertableLinks,
   type ShareableLinks,
 } from '@/lib/shareableLinks';
-import { captureImage, ensureCameraPermission, ensureLibraryPermission, pickImage } from '@/lib/upload';
+import {
+  captureImage,
+  ensureCameraPermission,
+  ensureLibraryPermission,
+  pickerErrorMessage,
+  pickImage,
+} from '@/lib/upload';
 import { chat, channelColor, colors, hairline, radius, space, type } from '@/theme';
 import { motion, S3, useReducedMotion } from '@/theme/chatMotion';
 
@@ -242,24 +248,49 @@ export function Composer({
     setLinksOpen(false);
   }
 
+  /*
+   * ─── WHY THESE ARE WRAPPED (session 07, task G) ────────────────────
+   *
+   * Both of these called into expo-image-picker with NO try/catch, in an
+   * async `onPress`. A native error from the permission call or the
+   * picker itself therefore became an UNHANDLED PROMISE REJECTION, which
+   * in React Native is a redbox -- indistinguishable, from the outside,
+   * from "the app crashed when I picked a photo".
+   *
+   * The asymmetry gave it away: the avatar picker in `ImageFields.tsx`
+   * wraps the identical call, and the avatar path was never reported as
+   * crashing. This is the chat path catching up.
+   *
+   * The catch does not swallow: it surfaces the native message, so if
+   * something underneath is genuinely wrong the next report carries its
+   * text instead of a stack trace nobody can read.
+   */
   async function addFromLibrary() {
     setSourceOpen(false);
-    if (!(await ensureLibraryPermission())) {
-      Alert.alert('Photos access needed', 'Allow photo access in Settings to attach an image.');
-      return;
+    try {
+      if (!(await ensureLibraryPermission())) {
+        Alert.alert('Photos access needed', 'Allow photo access in Settings to attach an image.');
+        return;
+      }
+      const image = await pickImage();
+      if (image) attachments.add(image);
+    } catch (err) {
+      Alert.alert('Could not open your photos', pickerErrorMessage(err));
     }
-    const image = await pickImage();
-    if (image) attachments.add(image);
   }
 
   async function addFromCamera() {
     setSourceOpen(false);
-    if (!(await ensureCameraPermission())) {
-      Alert.alert('Camera access needed', 'Allow camera access in Settings to take a photo.');
-      return;
+    try {
+      if (!(await ensureCameraPermission())) {
+        Alert.alert('Camera access needed', 'Allow camera access in Settings to take a photo.');
+        return;
+      }
+      const image = await captureImage();
+      if (image) attachments.add(image);
+    } catch (err) {
+      Alert.alert('Could not open the camera', pickerErrorMessage(err));
     }
-    const image = await captureImage();
-    if (image) attachments.add(image);
   }
 
   return (
