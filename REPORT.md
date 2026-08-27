@@ -31710,3 +31710,145 @@ prop.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Backend micro-fix — merge-search phone matching, and a coded consent refusal
+
+Branch `fix/merge-search-phone` from `main`. Two commits, no schema.
+Origin: Session 15 Task A.
+
+## Stop conditions, checked first
+
+All three cleared, and one of them mattered:
+
+- **`phones` is the relation name on Client.** Verified against
+  `schema.prisma` before writing anything: `phones ClientPhone[]`.
+- **No existing consumer asserts on the consent 400's body shape.**
+  Grepped the message string and the `no_consent` reason across
+  `apps/` and `packages/`. The only assertions on `no_consent` anywhere
+  (`smsConsentOptional.test.ts:240`) are against `sendClientSms`'s own
+  RETURN OBJECT, not the HTTP response. `apps/web/src/lib/sendResult.ts`
+  handles a different shape entirely (`{ reason }`, from the gift-card /
+  share-link send result). Adding `code` is purely additive.
+- **The per-word AND absorbs the phone arms** — but not in the shape the
+  order sketched. See below.
+
+## The order's sketch could not pass its own headline test
+
+The fix as sketched — normalize each word, add phone arms when that word's
+digit run is ≥ 4 — cannot match `"(305) 555-0142"`, which is the first
+required test. Demonstrated before writing the fix:
+
+    query "(305) 555-0142" splits into ["(305)", "555-0142"]
+      "(305)"    -> digits "305"     len 3  -> NO phone arm (below 4)
+      "555-0142" -> digits "5550142" len 7  -> phone arms ADDED
+
+The per-word AND then requires `"(305)"` to match *something*, and a
+`contains "(305)"` against a name, an email, or a bare-digits phone column
+matches nothing. One word fails, the AND fails, no result.
+
+A second, subtler trap on the way to fixing it: adding the whole-query
+phone match as an extra top-level `OR` **also** fails, because Prisma ANDs
+top-level keys together — the `OR` sits beside the per-word `AND` rather
+than replacing it, so `"(305)"` still has to match and still doesn't. I
+wrote that version first and caught it before running anything.
+
+What shipped, therefore, is two layers:
+
+1. **Per-word arms, as specified.** For any word normalizing to ≥ 4
+   digits, add `phone: { contains: digits }` and
+   `phones: { some: { phone: { contains: digits } } }` to that word's own
+   OR group. This is what makes `"maria 0142"` work while preserving the
+   AND — it widens what *that word* can match, never what the query
+   requires.
+2. **A whole-query match that REPLACES the per-word split when the query
+   is entirely phone-shaped** — no letters, and ≥ 4 digits after
+   normalizing. Splitting a phone number on whitespace is meaningless
+   anyway; the digits are one value.
+
+The "no letters" gate is load-bearing and not interchangeable with
+"normalizes to digits", since *every* string normalizes to digits. Without
+it, `"maria 0142"` would match anyone whose number contains `0142` while
+ignoring `"maria"` outright — silently destroying the per-word AND this
+route exists to provide. There is a test whose only job is that case.
+
+The original raw-text `phone: { contains: word }` arm is kept untouched,
+so nothing that matched before stops matching.
+
+## Commit 2 — the consent code
+
+`conversations.ts` now returns
+`{ error: "<unchanged prose>", code: "no_sms_consent" }` on the
+consent refusal. Only `no_consent` is coded today, deliberately: it is the
+one reason a client has a distinct treatment for. It is written as a map
+rather than an inline ternary so the next reason that earns a code is a
+one-line addition.
+
+## Tests
+
+Nine, in `mergeSearchPhone.test.ts`. The falsifier is first and fails on
+main. The rest guard what a fix could plausibly break getting past it.
+
+Verified by reverting both source files to `origin/main` and re-running:
+**4 fail, 5 pass.** The four failures are exactly the four new
+capabilities (formatted query, other human formats, secondary-phone-only,
+the consent code). The five that pass on main are the regression guards —
+raw digits, the empty-result negative, the per-word AND, and name/email
+matching — which is precisely what they are for.
+
+Two fixture details that make assertions meaningful rather than
+accidentally true: a second client (`Tomas`) shares the `0142` digit run
+with Maria, so `"maria 0142"` returning only Maria proves the AND rather
+than proving there was only ever one match; and `Dana` has **no `phone`
+scalar at all**, so she is reachable only through the relation arm.
+
+One test-fixture finding worth recording: the first draft of the consent
+test asserted a 400 and got **201**. The consent gate lives inside
+`sendClientSms`, and the route only *calls* it when the studio's SMS
+integration is `CONNECTED` — otherwise the send falls through to the
+log-only path and succeeds. The fixture now connects an integration, which
+is safe without credentials because `sendClientSms` refuses on consent
+*before* it looks at the integration or dials anything.
+
+## Acceptance, through the API
+
+    === MERGE-SEARCH: the formatted-phone falsifier ===
+      "(305) 555-0142"       -> 4 hit(s)  AcceptProbe Primary, + 3 pre-existing
+      "305-555-0142"         -> 4 hit(s)  same
+      "+1 (305) 555-0142"    -> 4 hit(s)  same
+    === raw digits (must not regress) ===
+      "3055550142"           -> 4 hit(s)  same
+    === secondary ClientPhone only (no phone scalar at all) ===
+      "(718) 555-9911"       -> 1 hit(s)  AcceptProbe SecondaryOnly
+      "7185559911"           -> 1 hit(s)  AcceptProbe SecondaryOnly
+    === misses ===
+      "(212) 555-0000"       -> 0 hit(s)
+      "2125550000"           -> 0 hit(s)
+    === mixed name + digits ===
+      "AcceptProbe 0142"     -> 1 hit(s)  AcceptProbe Primary
+      "SecondaryOnly 0142"   -> 0 hit(s)
+
+The three extra hits were checked rather than assumed: they are real
+leftover dev fixtures that genuinely hold `3055550142`, one of them
+reachable **only** through a secondary `ClientPhone` row
+(`scalar=null, secondary=[3055550142]`) — an incidental confirmation of
+the relation arm against real data rather than a purpose-built fixture.
+
+The consent refusal, against a consent-less client with SMS connected:
+
+    status: 400
+    body  : {"error":"This client has no SMS consent on file and cannot be texted","code":"no_sms_consent"}
+
+That probe ran in a **throwaway studio**, not dev-studio, deliberately:
+demonstrating it needs a CONNECTED SMS integration, and flipping that on a
+shared dev studio would put any concurrent session's sends onto the
+real-send path for the duration. Everything seeded — two probe clients and
+the whole throwaway studio — was removed afterwards.
+
+Full suite **253/253** (244 before, +9). `apps/api` `tsc` build clean.
+
+## Sequencing note for mobile
+
+Session 15's duplicate-falsifier includes a formatted-phone search: that
+half of its gate is valid **only after this deploys**. The raw-digit half
+works against production today. Mobile's `no_sms_consent`-keyed treatment
+ships in Session 15 against the code added here.

@@ -930,7 +930,24 @@ router.post("/:id/messages", async (req, res) => {
           opted_out: "This client has opted out of SMS and cannot be texted",
           send_failed: result.error ?? "Failed to send the SMS",
         };
-        return res.status(400).json({ error: errorMessages[result.reason] });
+        // Machine-readable discriminator alongside the unchanged prose.
+        // A client that needs to do something SPECIFIC about a refusal --
+        // apps/mobile offers an opt-in prompt for this one -- otherwise
+        // has to match on the message text, which breaks the first time
+        // the wording is edited.
+        //
+        // Only no_consent is coded today, deliberately: it is the one
+        // reason a client currently has a distinct treatment for. The map
+        // is here rather than an inline ternary so the next reason that
+        // earns one is a one-line addition, not a restructure. Additive --
+        // nothing asserts on this body shape (checked: the only
+        // "no_consent" assertions in the repo are against
+        // sendClientSms's own return object, not the HTTP response).
+        const errorCodes: Partial<Record<typeof result.reason, string>> = {
+          no_consent: "no_sms_consent",
+        };
+        const code = errorCodes[result.reason];
+        return res.status(400).json({ error: errorMessages[result.reason], ...(code ? { code } : {}) });
       }
 
       const created = await prisma.message.findUnique({
