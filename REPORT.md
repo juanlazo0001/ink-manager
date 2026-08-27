@@ -30504,3 +30504,102 @@ change plus a spec note either way.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 09 addendum — the closeout table, regenerated against merged main
+
+**This supersedes the table in "Chat UX 09" above.** That one is left
+untouched, because REPORT.md is append-only and because it is the honest
+record of what was true when it was written: five arc items were sitting
+unmerged on `chat-ux/07-gate-2b`, and a table that had called them
+"shipped" would have been wrong.
+
+They are merged now — **`74051c0`**, `Merge remote-tracking branch
+'origin/chat-ux/07-gate-2b'`, main `d6f50b7 → 74051c0`. So the rows that
+read **GATED** are re-stated here as shipped, with the commits that carry
+them, and three other rows moved as well.
+
+Every status below was **verified against `74051c0`**, not carried
+forward: each commit by `git merge-base --is-ancestor`, each spec edit by
+`grep -F` on the merged file, each closed deferral by reading the code
+that closed it.
+
+## What changed since the first table
+
+| row | was | is now | why |
+| --- | --- | --- | --- |
+| 14 | GATED | **shipped @ `1c7366c`** | merged in `74051c0` |
+| 15 | GATED | **shipped @ `3e00104`** | merged in `74051c0` |
+| 16 | GATED | **shipped @ `6a32352`** | merged in `74051c0` |
+| 17 | GATED | **shipped @ `61fac3b`, `31f1ef1`, `07174af`** | merged; `07174af` is new since the first table |
+| 18 | GATED | **shipped @ `edee9fa`** | merged in `74051c0` |
+| 26 | deferred | **shipped @ `d6f50b7`** | `/nav-counts` is mute-aware on the server; the deferral was already stale when the first table was written |
+| 12 | finding | **shipped** — fix in main, awaiting deploy | `unreadNullAuthor.test.ts` is in main's tree |
+| — | — | **new row 28** | `chat-ux-07-l`, the stale-comment correction |
+
+## THE CLOSEOUT TABLE (authoritative as of `74051c0`)
+
+Vocabulary: **shipped @ commit** (verified ancestor of main) · **deferred**
+(named, out of arc scope) · **operator-action** · **outstanding**.
+
+| # | arc item | status |
+| --- | --- | --- |
+| 1 | Thread anatomy, composer, keyboard choreography (01–02) | shipped |
+| 2 | Motion: send-fly, incoming pop, scroll pill, typing row (03) | shipped @ `589bb3f`…`dc507bb` |
+| 3 | List furniture, row anatomy, conversation row swipes (04) | shipped @ `6c64cd7`…`061dd53` |
+| 4 | Long-press overlay, reactions, image bubbles, viewer (05) | shipped @ `f334210`…`bde68da` |
+| 5 | Gate round 1: gutter dot, chat tab badge, swipe rebuild (06) | shipped @ `848650e`…`ade949c` |
+| 6 | Spec rev G, edits 2–9 | shipped @ `540e954` |
+| 7 | Task A — gold reversal, ink text, red narrowed to the CHAT fab | shipped @ `78eeb5c` |
+| 8 | Task B — single-line header + duo-stack group avatars | shipped @ `6a9bd93` |
+| 9 | Task C — opaque reaction balloons | shipped @ `548637d` |
+| 10 | Task D — reveal gap ≥12pt | shipped @ `ade510a` |
+| 11 | Task E — DIRECTION control removed | shipped @ `f4bab9a` |
+| 12 | Task F — live unread | diagnosed @ `9a30a59`; **fix shipped** (backend, `unreadNullAuthor.test.ts`) — **awaiting deploy**, see 27 |
+| 13 | Task G — attachment crash guard | shipped @ `9c81668` |
+| 14 | **Spec rev G, edits 1, 10, 11, 12** | **shipped @ `1c7366c`** |
+| 15 | **Task H — archive swipe panel red** | **shipped @ `3e00104`** |
+| 16 | **Task I — outside tap closes an open row, consumed** | **shipped @ `6a32352`** |
+| 17 | **Task J — empty-search CTA, branch (A)** | **shipped @ `61fac3b`, `31f1ef1`, `07174af`** |
+| 18 | **Task K — clients list on the chat swipe engine** | **shipped @ `edee9fa`** |
+| 19 | Task M — attachment hang (`Sheet` never unmounted) | shipped @ `9c4307c` — **device-unconfirmed** |
+| 20 | Task N — motion-probe tool | shipped @ `ac410ae` — selftest 3/3 |
+| 21 | Task O — three house rules | shipped @ `abeb5ff` |
+| 22 | Task P — send-fly verdict | **outstanding** — verdict line left blank, task skipped, nothing guessed |
+| 23 | §15 web parity | deferred |
+| 24 | Phase D signals | deferred |
+| 25 | §2.6 internal notes | deferred |
+| 26 | `/nav-counts` excludes muted threads | **shipped @ `d6f50b7`** — was deferred; closed on the server |
+| 27 | Live-unread dot on a real arrival | **operator-action** — code is in main; check after main deploys |
+| 28 | `chatUnread.ts` comment asserting `/nav-counts` "cannot" exclude muted | **shipped @ `75127d9`** — three stale blocks corrected |
+
+**Spec rev G: 12 of 12 edits verified present on `74051c0`.**
+
+## What is actually left
+
+Three things, and only one of them is code:
+
+1. **The send-fly verdict** (row 22) — `chatDevToggles.sendFly` still ships
+   its current default because the verdict line was left blank and this
+   session refused to guess it. One line plus a spec note whenever the
+   call is made; the `__DEV__` toggle stays either way, per the standing
+   ruling that it is the sanctioned mechanism for revisiting on a signed
+   build.
+2. **Two device confirmations** — the attachment hang (row 19; a
+   native-modal race the web harness cannot present) and the live-unread
+   dot (row 27; needs a deploy, not a change).
+3. **Three named deferrals** (rows 23–25), untouched and out of arc scope
+   by design.
+
+Everything else in the arc is on main.
+
+## The arc's own audit note
+
+The first version of this table is worth keeping next to this one for a
+reason beyond honesty. It was produced by a session asked to "formally
+close the arc", and the closing did not happen: the mandated
+`git merge-base --is-ancestor` check found five items unmerged, and the
+table said so instead of saying what the brief assumed. That is the
+merge-verification house rule (`abeb5ff`) catching a real gap on its first
+use, one commit after being written.
+
+Both tables together are the record: what was true, and what is true.
