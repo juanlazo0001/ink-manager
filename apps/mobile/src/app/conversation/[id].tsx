@@ -875,7 +875,31 @@ export default function ConversationScreen() {
   }
 
   return (
-    <ScreenShell edges={['top']}>
+    /*
+     * ─── NO TOP EDGE HERE, AND THAT IS THE FIX ────────────────────
+     *
+     * This read `edges={['top']}`, and `ThreadHeader` ALSO applies
+     * `insets.top + 8` (ThreadHeader.tsx:172). The safe-area inset was
+     * therefore paid TWICE: the row's top edge landed at
+     * `2 x insets.top + 8` instead of `insets.top + 8`. On a Dynamic
+     * Island phone that is 126 rather than 67 — a 59pt excess, which is
+     * the 60-70pt the operator measured.
+     *
+     * Session 07 Task B could not have caught it: it measured the row's
+     * HEIGHT, and the defect is entirely in the stack above the row.
+     *
+     * ThreadHeader keeps the inset rather than ScreenShell, and that
+     * direction is forced: the header is a translucent blur layer the
+     * thread scrolls BENEATH (zIndex 10 vs the list's 9). If the shell
+     * consumed the inset the blur would start below the status bar and
+     * the scroll-under would end at the wrong line. The header owns its
+     * own top because it is the thing that has to reach the top.
+     *
+     * The two branches above KEEP `edges={['top']}` — they render the
+     * generic `ScreenHeader`, which applies no inset of its own, so the
+     * shell is their only source.
+     */
+    <ScreenShell edges={[]}>
       {/*
         §9. Replaces the generic ScreenHeader on this screen only: chat
         needs a translucent unit carrying identity, channel and the context
