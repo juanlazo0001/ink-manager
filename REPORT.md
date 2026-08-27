@@ -31710,3 +31710,187 @@ prop.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 14 — the tapback row was never placed, only offset
+
+Branch `chat-ux/14-tapback-placement` from `main` (`db6a334`), worktree
+per `CLAUDE.md`. Mobile-only, no dependencies. One commit — the diagnosis
+folded into the fix, with the before-numbers here as the brief requires.
+
+Serial discipline: `chat-ux/13-details-sheet` was merged and deleted
+before this branch was cut, so there is one unmerged line, not two.
+
+## The hypothesis is dead, and the arithmetic kills it
+
+The brief's theory was an above/below decision reading a y measured
+inside the inverted list. Two facts rule it out, both from the source
+rather than from a run:
+
+1. **There is no above/below decision.** The row was unconditionally
+   above — `MessageOverlay.tsx:91`, `translateY: -TAPBACK_GAP - 6 * (1 -
+   lift)`, with `TAPBACK_GAP = 52`. No branch, so no branch input to be
+   wrong.
+2. **The row and the clone are placed from the SAME rect.** Both read
+   `rect` (`:113` and `:121`), which `rowScreenRect` has already resolved
+   out of the mirrored list — with a documented `Platform.OS` branch and
+   its own measurements. A mirrored y would have moved the clone too, and
+   the operator reports the clone correct.
+
+So the third candidate the brief listed is the right one: **the row is
+mounted, opaque, correctly positioned — and painted over.**
+
+## Root cause
+
+    apps/mobile/src/components/MessageOverlay.tsx:91    row offset -52 from the bubble, always
+    apps/mobile/src/components/MessageOverlay.tsx:99     sheetAtBottom when the bubble is low
+    apps/mobile/src/components/MessageOverlay.tsx:127    the sheet is the LAST sibling — it paints last
+
+The two rules collide. `sheetAtBottom` fires precisely for a bubble low
+on screen; a bubble low on screen is precisely when the row — which sits
+just above it — lands inside the band the bottom-anchored sheet has
+grown into. Nothing compares them, and nothing clamps.
+
+### Before-numbers, 393×852, own bubble at `rect.y = 712`
+
+    row    [660, 710]     50pt tall
+    clone  [711, 766]
+    sheet  [674, 852]     178pt tall, anchored bottom
+
+    row covered   36pt        row visible   14pt
+    invariant rowBottom <= sheetTop - 12   FALSE
+
+The onset is exact: overlap begins at `rect.y > sheetTop + 2`, and the
+row is gone completely from `rect.y >= sheetTop + 52` — 726 here. The
+sheet's height is content-driven, so a taller sheet (a FAILED message
+adds items; a device adds bottom safe-area) moves both thresholds up.
+
+### One thing the harness could NOT reproduce, stated rather than buried
+
+The operator saw **clone correct, row absent**. Under the shipped code
+those two cannot both hold: the row is fully hidden only when
+`rect.y - 52 >= sheetTop`, and the clone is fully visible only when
+`rect.y + height <= sheetTop`. Together they require `-52 >= height`,
+which is impossible. In the harness at `rect.y = 712` the clone is buried
+too — visible in `cux14-before-bottom-own-393.png`, where the only thing
+above the sheet is the top 14pt of the tapback pill.
+
+So the device's exact `rect.y` is **not** confirmed by this session, and
+I am not going to claim it. What is confirmed is a real occlusion
+mechanism that hides the row for low bubbles, on the same code path, with
+numbers. The fix below makes the row visible for **every** `rect.y` by
+construction, so it covers the device's value whatever it turns out to
+be — and the gate is what will say so.
+
+## The fix
+
+Placement is computed from window coordinates and clamped:
+
+    sheetTop  = sheetAtBottom ? screenHeight - sheetHeight
+                              : rect.y + rect.height + space.md
+    preferred = spaceAbove >= rowHeight + GAP
+                  ? rect.y - GAP - rowHeight        // above, the §7 default
+                  : rect.y + rect.height + GAP      // below, near the top
+    rowTop    = clamp(preferred, safeTop + GAP, sheetTop - rowHeight - GAP)
+
+`GAP = 12`. Both the row and the sheet report real heights via
+`onLayout`, because both are content-sized; until both are known the row
+is held invisible for one frame rather than placed from a guess. The row
+layer takes `zIndex: 2` to cover a re-measure frame the clamp already
+rules out.
+
+`TAPBACK_GAP = 52` is retired. **It was never a gap** — it was the row's
+own height plus two, expressed as an offset, which is why the row read as
+flush against the bubble.
+
+## The six cases, after
+
+Direct mounts with known rects (the SendFly pattern). `insets.top = 0` in
+the harness, so `minRowTop = 12`.
+
+| case | rect.y | own | row | clone top | sheet top | branch | `rowBottom ≤ sheetTop − 12` | on screen |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| top | 120 | own | [58, 108] | 118.9 | 192 | above | ✅ | ✅ |
+| middle | 400 | own | [338, 388] | 398.9 | 472 | above | ✅ | ✅ |
+| **bottom** | **712** | **own** | **[612, 662]** | 710.9 | **674** | above | ✅ (=, clamped) | ✅ |
+| top | 120 | incoming | [58, 108] | 118.5 | 192 | above | ✅ | ✅ |
+| middle | 400 | incoming | [338, 388] | 398.5 | 472 | above | ✅ | ✅ |
+| **bottom** | **712** | **incoming** | **[612, 662]** | 710.5 | **674** | above | ✅ | ✅ |
+
+The bottom cases are the clamp doing its job: preferred was 650, the
+bound was 662, and the row sits exactly on the bound — margin 0.0 by
+construction, which is what "clamped" means.
+
+**Alignment (§7), from the pill's own rect:** own → `[113, 377]`,
+right-anchored to the 16pt row inset; incoming → `[16, 280]`,
+left-anchored. Both sides verified at the bottom, which is what the brief
+asked for.
+
+**The `below` branch fires and was proven, not assumed** — `rect.y = 30`:
+`spaceAbove` 18 < `rowHeight + GAP` 62, branch **below**, row `[40, 90]`,
+sheet top 102, invariant holds, on screen. Worth one caveat: with the
+sheet 16pt under the bubble there is no room for a 50pt row between them,
+so the clamp pulls the row up onto the bubble. Visible beats hidden, and
+that is the contract, but it is a real cosmetic limitation — and it is
+close to unreachable in production, since the header occupies the top
+53pt and the branch needs `rect.y < 74`.
+
+**Reactions still dispatch from the row:** clicking ❤️ called
+`onReact('❤️')`, the label flipped to `Remove ❤️ reaction`, a second
+click dispatched again and the selected state cleared. That exercises the
+row's own semantics; `handleReact` and the storage path are untouched by
+this diff.
+
+**Control case:** still the `above` branch, same shape — and one honest
+delta. The row moves from 348 to 338, because the gap to the bubble is
+now the spec's 12 instead of the old rule's incidental 2. That is a
+deliberate 10pt change, not a regression, but it is not pixel-identical
+to the operator's working screenshot and should not be reported as such.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 12.89s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+Console on the overlay harness: **zero errors**.
+
+Screenshots in `design-refs/session-14/`:
+`cux14-before-bottom-own-393.png` (14pt of pill above the sheet),
+`cux14-after-bottom-own-393.png` (the full row, right-anchored, clear of
+the sheet), `cux14-after-bottom-incoming-393.png` (left-anchored).
+
+### Retested vs untouched
+
+**Retested:** placement across six cases plus the `below` branch, the
+clamp invariant numerically, both alignment sides, reaction dispatch and
+its selected-state flip, all four typechecks, console.
+
+**Untouched and NOT retested:** the lift/scale spring and the dismissal,
+the blur and dim layers, the long-press gesture itself (gesture-handler
+is inert to synthetic input — device-gate by definition), `MessageActions`
+and every other `Sheet` consumer, and the iOS branch of `rowScreenRect`,
+which the harness cannot exercise and which this diff does not touch.
+
+## Escalations
+
+1. **The device's failing geometry is unexplained.** Clone-visible and
+   row-absent are arithmetically incompatible under the shipped code, so
+   either the clone was partly buried too, or something outside this
+   file contributes. The fix does not depend on the answer, but the gate
+   should confirm the row is visible at the *actual* bottom bubble.
+2. **The CLAUDE.md rule was NOT added.** The brief conditions it on the
+   mirrored-y hypothesis being confirmed, and it was killed. Writing
+   "never use in-list measurements" here would record a cause that did
+   not occur. The earned rule, if wanted, is a different one:
+   *"A floating layer positioned relative to an anchor must be clamped
+   against every sibling that can move under it — an offset from the
+   anchor is not a position. The tapback row was offset -52 from the
+   bubble and the bottom-anchored sheet grew into it."*
+   Say the word and it goes in.
+3. **The near-top `below` case overlaps the bubble** (see above) — real,
+   bounded, and almost certainly unreachable behind the header.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
