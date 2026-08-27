@@ -28384,3 +28384,159 @@ All on the dev database, none on production, all reversible:
 - 1 reaction on a fixture message
 
 Left deliberately, per the architect's ruling, so the gate walk has something to walk.
+
+# Chat UX 06 — Gate Fixes (list inset · tab badge · swipe rebuild)
+
+**Branch case: NOT MERGED.** `chat-ux/03-05-combined` had not landed on main
+(`origin/main` at `bb157da`), so these gate fixes go onto that branch, before its
+merge, as `chat-ux-06-0` and `chat-ux-06-g1..g3`. Worktree `ink-manager-w-chat-ux-06`
+per `CLAUDE.md`; the primary checkout was moved to `main` to free the branch, and the
+`.env*` copy `new-session.ps1` does was replicated by hand (the script only ever cuts a
+NEW branch from main, so it could not be used to continue this one).
+
+Mobile-scoped throughout. No `apps/api`/`apps/web` writes, no dependencies added.
+
+| | commit |
+|---|---|
+| spec rev F, four edits | `ee6055e` |
+| Fix A — row lead-in + gutter dot | `848650e` |
+| Fix B — chat tab badge | `f3c9eae` |
+| Fix C — swipe rebuild | `ade949c` |
+
+## Fix A — the measurement
+
+The dot left flex flow: absolutely positioned, vertically centred, inside the 20pt
+inset, occupying no layout width. Measured, 390pt frame, 28 rendered rows:
+
+    avatar.x        20 for EVERY row -- one unique value, all within +-0.5
+    read row        avatar.x 20, no dot
+    unread row      avatar.x 20, identical
+    dot             x=6, centre x=10   (exactly half the 20pt inset)
+                    centre y=43 in an 86pt row (exact vertical centre)
+
+The old lead-in was 20 + 8 (slot) + 12 (gap) = 40: every row paid for a dot most rows
+never drew. The hairline inset stays 76 because it never depended on the dot — it is
+`20 + 44 + 12`, derived in `theme/listMetrics.ts`.
+
+## Fix B — two things were wrong, and only one was the missing badge
+
+**The treatment was a fork.** `ChatTabButton` drew its own bubble in local styles,
+byte-identical to the shared one. `Badge` was *exported* but *housed* inside
+`TopBar.tsx`, which is how a second copy came to exist: the fab could not import it
+without importing the top bar. It now has its own module, TopBar re-exports it, and the
+fab's local `badge`/`badgeText` styles are deleted. What remains on the fab is one
+positional override — `right/top: -10`, because the halo sits 8pt outside the button and
+the shared `-4` would have straddled the ring.
+
+**The count came from the wrong source.** `/nav-counts` cannot satisfy rev F:
+`getUnreadConversationCount` reads conversations, reads and messages and never touches
+`UserConversationState`, so muted threads are in its number by construction. Verified
+live — it returned `conversations: 3` while one of those three was muted.
+
+So the count is the Q9 source: the list's own `GET /conversations` payload, which already
+carries `viewerState`. `countUnreadConversations` is the single predicate behind the row
+dot, the UNREAD filter and now the badge, so the three cannot drift. The list publishes
+it on its existing refresh path — no second fetch — and deliberately does not publish
+while a search is narrowing the list, because a badge that counts search results is not
+a badge. `null` means "the list has not loaded yet", where the server count still beats a
+confident, wrong zero; the app opens on CHAT, so that window is one request wide.
+
+Verified with the real component and the real API:
+
+    3 unread        badge "3"   row dots 3   aria "Chat, 3 unread"
+    mute one        badge "2"   row dots 3   <- dot still lit
+    mark one read   badge "1"   row dots 2
+
+The middle line is the point. Treatment measured: cream fill `rgb(242,236,224)`, dark
+text `rgb(23,18,8)`, overhanging the fab 10pt right and top — clear of the 8pt halo.
+Never red-on-red.
+
+## Fix C — swipe rebuild
+
+`ReanimatedSwipeable` is gone. One shared value the finger writes, one container that
+reads it.
+
+    threshold pop     x is written 1:1 on the UI thread from the first millimetre;
+                      there is no threshold anywhere in the component
+    split tearing     `children` is the ENTIRE row, trailing time/pin column
+                      included -- structurally impossible now, not merely fixed
+    38pt panel        72, measured
+    unclamped front   rubber-band at 0.55 past the range, S3 to nearest of
+                      0 / +72 / -144
+
+Forcing the layout to each value `onEnd` snaps to:
+
+    offset    front    revealed leading   revealed trailing   panels cover
+         0        0                   0                   0       yes
+       +72      +72                  72                   0       yes
+      -144     -144                   0                 144       yes
+       +96      +96                  96                   0       yes   <- overshoot
+      -170     -170                   0                 170       yes   <- overshoot
+
+Panels measured 72 / 72 / 72 — pin gold, mute espresso, archive inset. At rest the
+leading panel's right edge is exactly the clip's left edge: entirely outside, nothing
+showing through.
+
+**Deviation, deliberate.** Rev F says panels sit absolutely behind the front, which
+assumes an opaque front. This app's rows are transparent — the shared photo ground shows
+through them and `ScreenShell` THROWS in development if a screen paints over it, an
+assertion that exists because the "looks fine, just flat" version of that bug shipped
+once. So the panels sit just outside the container and translate in lockstep with the
+front, clipped by `overflow: hidden`. Front and panels are one rigid system, so this is
+not the split translation that caused the tearing: nothing inside the row moves
+independently of anything else inside it. Each panel carries 260pt of overscan on its
+outer side so rubber-banding cannot open a gap at the screen edge — which the +96 and
+-170 rows above confirm.
+
+**Render counter.** A `__DEV__` counter is mounted per row. Across a full
+`touchStart` → 6 × `touchMove` → `touchEnd` sequence, all 86 rows' counts were identical
+before and after: zero re-renders.
+
+Being precise about what that does and does not establish: the gesture did not ACTIVATE
+under synthetic input, so it proves no re-render from touch reaching the row, not from an
+active drag. What closes the gap is static and checkable — the component has zero
+`useState`/`setState`/`useReducer`, the gesture writes only to shared values, the animated
+style is transform-only, and `runOnJS` is not imported at all, so nothing in the drag path
+can cross to the JS thread.
+
+Exclusivity is a shared value too (`lib/swipeRegistry.ts`): a row claims it on TOUCH, not
+on release, so another open row starts closing the moment this one is touched — and the
+list's `onScrollBeginDrag` closes whatever is open without re-rendering a row to do it.
+
+## Regressions held
+
+- Action semantics untouched. `lib/conversations.ts` has no diff this session, and
+  `(tabs)/index.tsx` is +17 lines with zero changes to any line touching `togglePin`,
+  `toggleMute`, `archive`, `PIN_LIMIT` or the API helpers. Confirmed live: the pin cap
+  still answers `409 {"code":"PIN_LIMIT"}`.
+- Thread screen and its gestures: no diff at all.
+- `tsc` clean in `apps/mobile`, `apps/api`, and `packages/shared-types` (which also
+  re-derives its enums from `schema.prisma` and reports a match).
+- List screen boots with **zero** console errors. The thread screen shows three, all
+  pre-existing React-19/react-native-web noise (`element.ref` deprecation, nested-button
+  hydration warnings) on a screen this session did not touch.
+
+## Escalations
+
+- **`/nav-counts` should exclude muted threads.** That is the right long-term fix and
+  would let the badge drop the store entirely. It is an `apps/api` change and this
+  session is mobile-scoped.
+- **The feel of the swipe is device-gate only.** Attachment, rubber-band and spring
+  cannot be exercised here: the harness freezes animation travel in this subtree, and
+  gesture-handler ignores synthetic input — real CDP mouse drags AND CDP touch events
+  were both tried, and neither activated the pan. Geometry, panel widths, snap targets,
+  structure, exclusivity and the render counter are what the harness can and did show.
+- The 5A iOS `layout.y` branch from the combined run remains unverified; unchanged here.
+
+## Stop conditions
+
+None triggered. The shipped swipe took pure callbacks (`onTogglePin`, `onToggleMute`,
+`onArchive`, `canArchive`) with all action logic in the list screen, so rebuilding the
+presentation touched no action semantics. Nothing wanted a dependency; no `apps/api` or
+`apps/web` write was necessary.
+
+## Dev-database state added this session
+
+Two logged INBOUND fixture messages (Referred ClientE-Browser, Casey Testperson), one
+extra mute, one extra pin, and one thread marked read — all dev, all per-user or
+reversible, all left in place so the gate has the badge states to walk.
