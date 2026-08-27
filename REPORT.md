@@ -30686,3 +30686,346 @@ geometry, the colours, the render counters and that the wiring exists.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 09 — closeout attempt, Tier 0, and the reason the arc does not close yet
+
+## The headline: THE ARC IS NOT CLOSEABLE TODAY
+
+The brief's premise is that the arc has landed and needs formalising. It
+has not. The ancestor check the brief itself mandates is what found it:
+
+    git merge-base --is-ancestor origin/chat-ux/07-gate-2b origin/main   ->  FAIL
+    git rev-list --count origin/main..origin/chat-ux/07-gate-2b          ->  7
+
+**Seven commits are sitting on `chat-ux/07-gate-2b`, unmerged, awaiting
+the operator's device gate.** They are not stragglers — they are four
+shipped tasks and a third of rev G:
+
+| on the gated branch | what it is |
+| --- | --- |
+| `1c7366c` | spec rev G edits **1, 10, 11, 12** |
+| `3e00104` | Task H — archive swipe panel red |
+| `6a32352` | Task I — outside tap closes an open row |
+| `61fac3b` + `31f1ef1` | Task J — empty-search CTA, branch (A) |
+| `edee9fa` | Task K — clients list ported to the chat swipe engine |
+
+So a closeout table produced today cannot say "shipped" for any of them,
+and this session did not pretend otherwise. **Merge that branch first**;
+the table below is written to be correct either way, with the gated rows
+marked.
+
+This is precisely the failure mode the arc's own new merge-verification
+rule exists for — and it caught it on its first use.
+
+## Task L — ledger
+
+### L.1 Branch ancestor check (content, not merge-commit presence)
+
+| branch | tip | ancestor of main | unique | action |
+| --- | --- | --- | --- | --- |
+| `chat-ux/07-gate-2` (local + origin) | `cb192b3` | **PASS** | 0 | **deleted, both** |
+| `chat-ux/07-gate-2b` (origin) | `edee9fa` | **FAIL** | **7** | **kept — real outstanding work, see above** |
+| `chat-ux/09-closeout-tier0` | this session | FAIL | 4 | kept — this session |
+
+One hygiene find: the **local** `chat-ux/07-gate-2b` ref was stale at
+`e1c91db` (6 commits) while origin was at `edee9fa` (7), because the last
+commit was pushed as `HEAD:chat-ux/07-gate-2b` from a worktree and never
+updated the local branch. Corrected. Worth noting because a local-only
+ancestor check would have measured the wrong tip — the same class of
+mistake the rule is about.
+
+### L.2 Spec rev G — twelve edits
+
+| edits | where |
+| --- | --- |
+| 2, 3, 4, 5, 6, 7, 8, 9 | **on main** |
+| **1, 10, 11, 12** | **only on the gated branch** |
+
+All twelve exist and each matched its anchor **exactly and uniquely** —
+`grep -cF` returned 1 for every one, in both passes. **No fuzzy matches
+occurred in either session**, including the §9 header line Session 07's
+brief warned might differ; it matched verbatim. Nothing to reconcile.
+
+### L.3 Session 07 escalations
+
+Task J's branch decision is **resolved, not outstanding**: branch (A)
+shipped, and the report records the creation path it rests on
+(`POST /conversations`, `apps/api/src/routes/conversations.ts:417`,
+find-or-create, `staffUserId` arm at `:479`). Nothing was invented and no
+endpoint was assumed.
+
+Two escalations from 07b were closed by 07b's own follow-up (`edee9fa`):
+`ClientSwipe` had neither the swipe registry nor the outside-tap close.
+Both now close by construction.
+
+Still open and correctly open: the `/nav-counts` muted-exclusion carry
+from 06-g2, and the §15 web-parity / Phase D / §2.6 deferrals.
+
+### L.4 — THE CLOSEOUT TABLE
+
+Status vocabulary: **shipped @ commit** (on main), **GATED** (done, on
+`chat-ux/07-gate-2b`, awaiting device gate), **deferred**,
+**operator-action**.
+
+| # | arc item | status |
+| --- | --- | --- |
+| 1 | Thread anatomy, composer, keyboard choreography (01–02) | shipped — merged pre-arc-close |
+| 2 | Motion: send-fly, incoming pop, scroll pill, typing row (03) | shipped @ `589bb3f`…`dc507bb` |
+| 3 | List furniture, row anatomy, conversation row swipes (04) | shipped @ `6c64cd7`…`061dd53` |
+| 4 | Long-press overlay, reactions, image bubbles, viewer (05) | shipped @ `f334210`…`bde68da` |
+| 5 | Gate round 1 fixes: gutter dot, chat tab badge, swipe rebuild (06) | shipped @ `848650e`…`ade949c` |
+| 6 | Rev G edits 2–9 | shipped @ `540e954` |
+| 7 | Task A — gold reversal, ink text, red narrowed to the CHAT fab | shipped @ `78eeb5c` |
+| 8 | Task B — single-line header + duo-stack group avatars | shipped @ `6a9bd93` |
+| 9 | Task C — opaque reaction balloons | shipped @ `548637d` |
+| 10 | Task D — reveal gap ≥12pt | shipped @ `ade510a` |
+| 11 | Task E — DIRECTION control removed | shipped @ `f4bab9a` |
+| 12 | Task F — live unread | **finding**: root cause server-side; fix **now in main** (see below) |
+| 13 | Task G — attachment crash guard | shipped @ `9c81668` |
+| 14 | **Rev G edits 1, 10, 11, 12** | **GATED** @ `1c7366c` |
+| 15 | **Task H — archive panel red** | **GATED** @ `3e00104` |
+| 16 | **Task I — outside tap closes an open row** | **GATED** @ `6a32352` |
+| 17 | **Task J — empty-search CTA, branch (A)** | **GATED** @ `61fac3b`, `31f1ef1` |
+| 18 | **Task K — clients list on the chat swipe engine** | **GATED** @ `edee9fa` |
+| 19 | Task M — attachment hang | shipped @ `9c4307c` (this session) |
+| 20 | Task N — motion-probe tool | shipped @ `ac410ae` (this session) |
+| 21 | Task O — three house rules | shipped @ `abeb5ff` (this session) |
+| 22 | Task P — send-fly verdict | **SKIPPED — verdict line left blank** |
+| 23 | §15 web parity | deferred |
+| 24 | Phase D signals | deferred |
+| 25 | §2.6 internal notes | deferred |
+| 26 | `/nav-counts` excludes muted threads | deferred — carried from 06-g2 |
+| 27 | Live-unread dot check after deploy | **operator-action** — see below |
+
+**Item 27 has moved on.** The brief says the remaining operator item is
+"the live-unread dot check once the backend NULL-author fix deploys". That
+fix is **already merged into main** — `origin/fix/unread-null-author` is an
+ancestor of `origin/main` with 0 unique commits, and main carries the
+NULL-safe predicate with its explanatory comment in
+`apps/api/src/lib/conversations.ts`. So the item is no longer "waiting for
+the fix to land"; it is "waiting for **main** to deploy". Same check,
+different blocker.
+
+## Task M — attachment hang: ROOT CAUSE
+
+**It is this repo's own shared `Sheet`, not `expo-image-picker`.**
+
+    apps/mobile/src/components/Sheet.tsx:99
+        if (finished && !visible) runOnJS(setMounted)(false);
+
+The unmount only ran when the close animation reported `finished === true`.
+An **interrupted** animation reports `false`, and then nothing ever
+unmounted the Modal. That is not cosmetic: this Modal is transparent and
+full-screen, so one left mounted swallows every touch while the app
+renders normally underneath — **alive on screen, dead to the finger**, and
+nothing thrown, so no error UI. Exactly the reported symptom, including
+the "no error" part that made it read as a freeze rather than a crash.
+
+The path is exact:
+
+    Composer.tsx:267   setSourceOpen(false)      -> starts a 300ms dismissal
+    Composer.tsx:273   await pickImage()         -> native picker takes the screen
+    Sheet.tsx:99       finished === false        -> setMounted(false) never runs
+                       <Modal visible={true}>    -> still mounted, eating input
+
+**The other two suspects were ruled out with evidence, not assumed:**
+
+- *Payload weight.* Chat attachments already request `base64: false`
+  (`upload.ts:117` — base64 is avatar-only) and upload from the file URI
+  via `FormData`, so nothing materialises a full-size HEIC on the JS
+  thread. The suspect was real but had already been designed out.
+- *Un-awaited rejection.* Both attach handlers are fully `try`/`catch`ed
+  with an `Alert` (`Composer.tsx:266–292`) — Session 07-g's guard doing
+  its job.
+
+**Fix:** the unmount can no longer depend on the animation completing. A
+backstop fires on the animation's own duration regardless; the effect
+cleanup cancels it if the sheet re-opens first. The completion callback
+stays as the fast path.
+
+**Scope worth noting:** `Sheet` is shared by **all 14 sheets**. Any of
+them could have stuck; the attach flow is simply the only place that
+reliably races a native modal against a dismissal.
+
+**Device confirmation is the gate's.** This is a native-modal race and the
+web harness cannot present one — stated rather than implied, per the arc's
+own motion/feel rule.
+
+## Task N — motion-probe
+
+`tools/motion-probe/` — `sheet`, `track`, `panel`, `selftest`. Python 3
+standard library only; ffmpeg is the sole prerequisite and the only thing
+that reads video. **ffmpeg is not installed on this machine**, which is
+why the tool degrades with an explicit install message rather than a
+traceback — and why the self-test was built not to need it.
+
+### Self-test output
+
+    motion-probe selftest
+      synthetic: 30 frames, 24px block moving 3px/frame
+      scripted net travel: 87px
+      track net_px = 87.0 (tolerance +/-2)  ...  PASS
+      verdict = TRACKED (finger-attached)
+      static-ROI QA guard fired = True  ...  PASS
+      verdict = NO-MOTION (check ROI/ref)
+      stall->jump reads as STATE-POP = True  ...  PASS
+    SELFTEST: PASS
+
+**The self-test deliberately does not go through ffmpeg**, and the reason
+is the falsifiable-test rule rather than convenience: ffmpeg is the
+video→frames *adapter*, while the tracker is the part that can be wrong.
+Encoding a synthetic to h264 and decoding it back would add compression
+noise to the one test whose entire value is a known-exact answer, and
+would make it unrunnable on a machine that has not installed ffmpeg — the
+machine most likely to run it first.
+
+The **QA guard** is the piece that exists because of an incident: a hand
+pass in this arc once reported "no motion" from a reference frame sitting
+on a frozen overlay — a wrong answer indistinguishable from a right one.
+`track` now refuses to present near-zero match error plus zero motion as a
+result, and says the ROI or reference is suspect instead. Assertion 2 of
+the self-test is that guard firing.
+
+## Task O — house rules
+
+All three were **absent** — checked before writing, none duplicated:
+
+| rule | status |
+| --- | --- |
+| Motion verification protocol | **new** |
+| Merge verification | **new** |
+| Falsifiable tests | **new** |
+
+The merge-verification rule earned its place immediately: it is what
+produced this session's headline finding.
+
+## Task P — SKIPPED
+
+The `SEND-FLY VERDICT:` line was left as the literal `____` placeholder.
+Per the brief's own instruction and stop condition, Task P was skipped
+entirely and nothing was guessed. `chatDevToggles.sendFly` is untouched;
+spec §10 has no verdict line appended.
+
+**To apply it, re-issue with the line filled in** — it is a one-line
+change plus a spec note either way.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/web      tsc -b && vite build         clean
+    apps/api      tsc                          clean
+    shared-types  generate-enums --check + tsc clean
+    motion-probe  selftest                     PASS (3/3)
+
+## Escalations
+
+1. **`chat-ux/07-gate-2b` is unmerged with 7 commits.** The arc cannot be
+   closed until it is gated and merged. Everything else here is written to
+   survive that merge unchanged.
+2. **The attachment fix is unconfirmed on device.** A native-modal race
+   cannot be reproduced in the web harness.
+3. `/nav-counts` muted exclusion — carried, still open.
+4. Send-fly verdict — outstanding, Task P skipped.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 09 addendum — the closeout table, regenerated against merged main
+
+**This supersedes the table in "Chat UX 09" above.** That one is left
+untouched, because REPORT.md is append-only and because it is the honest
+record of what was true when it was written: five arc items were sitting
+unmerged on `chat-ux/07-gate-2b`, and a table that had called them
+"shipped" would have been wrong.
+
+They are merged now — **`74051c0`**, `Merge remote-tracking branch
+'origin/chat-ux/07-gate-2b'`, main `d6f50b7 → 74051c0`. So the rows that
+read **GATED** are re-stated here as shipped, with the commits that carry
+them, and three other rows moved as well.
+
+Every status below was **verified against `74051c0`**, not carried
+forward: each commit by `git merge-base --is-ancestor`, each spec edit by
+`grep -F` on the merged file, each closed deferral by reading the code
+that closed it.
+
+## What changed since the first table
+
+| row | was | is now | why |
+| --- | --- | --- | --- |
+| 14 | GATED | **shipped @ `1c7366c`** | merged in `74051c0` |
+| 15 | GATED | **shipped @ `3e00104`** | merged in `74051c0` |
+| 16 | GATED | **shipped @ `6a32352`** | merged in `74051c0` |
+| 17 | GATED | **shipped @ `61fac3b`, `31f1ef1`, `07174af`** | merged; `07174af` is new since the first table |
+| 18 | GATED | **shipped @ `edee9fa`** | merged in `74051c0` |
+| 26 | deferred | **shipped @ `d6f50b7`** | `/nav-counts` is mute-aware on the server; the deferral was already stale when the first table was written |
+| 12 | finding | **shipped** — fix in main, awaiting deploy | `unreadNullAuthor.test.ts` is in main's tree |
+| — | — | **new row 28** | `chat-ux-07-l`, the stale-comment correction |
+
+## THE CLOSEOUT TABLE (authoritative as of `74051c0`)
+
+Vocabulary: **shipped @ commit** (verified ancestor of main) · **deferred**
+(named, out of arc scope) · **operator-action** · **outstanding**.
+
+| # | arc item | status |
+| --- | --- | --- |
+| 1 | Thread anatomy, composer, keyboard choreography (01–02) | shipped |
+| 2 | Motion: send-fly, incoming pop, scroll pill, typing row (03) | shipped @ `589bb3f`…`dc507bb` |
+| 3 | List furniture, row anatomy, conversation row swipes (04) | shipped @ `6c64cd7`…`061dd53` |
+| 4 | Long-press overlay, reactions, image bubbles, viewer (05) | shipped @ `f334210`…`bde68da` |
+| 5 | Gate round 1: gutter dot, chat tab badge, swipe rebuild (06) | shipped @ `848650e`…`ade949c` |
+| 6 | Spec rev G, edits 2–9 | shipped @ `540e954` |
+| 7 | Task A — gold reversal, ink text, red narrowed to the CHAT fab | shipped @ `78eeb5c` |
+| 8 | Task B — single-line header + duo-stack group avatars | shipped @ `6a9bd93` |
+| 9 | Task C — opaque reaction balloons | shipped @ `548637d` |
+| 10 | Task D — reveal gap ≥12pt | shipped @ `ade510a` |
+| 11 | Task E — DIRECTION control removed | shipped @ `f4bab9a` |
+| 12 | Task F — live unread | diagnosed @ `9a30a59`; **fix shipped** (backend, `unreadNullAuthor.test.ts`) — **awaiting deploy**, see 27 |
+| 13 | Task G — attachment crash guard | shipped @ `9c81668` |
+| 14 | **Spec rev G, edits 1, 10, 11, 12** | **shipped @ `1c7366c`** |
+| 15 | **Task H — archive swipe panel red** | **shipped @ `3e00104`** |
+| 16 | **Task I — outside tap closes an open row, consumed** | **shipped @ `6a32352`** |
+| 17 | **Task J — empty-search CTA, branch (A)** | **shipped @ `61fac3b`, `31f1ef1`, `07174af`** |
+| 18 | **Task K — clients list on the chat swipe engine** | **shipped @ `edee9fa`** |
+| 19 | Task M — attachment hang (`Sheet` never unmounted) | shipped @ `9c4307c` — **device-unconfirmed** |
+| 20 | Task N — motion-probe tool | shipped @ `ac410ae` — selftest 3/3 |
+| 21 | Task O — three house rules | shipped @ `abeb5ff` |
+| 22 | Task P — send-fly verdict | **outstanding** — verdict line left blank, task skipped, nothing guessed |
+| 23 | §15 web parity | deferred |
+| 24 | Phase D signals | deferred |
+| 25 | §2.6 internal notes | deferred |
+| 26 | `/nav-counts` excludes muted threads | **shipped @ `d6f50b7`** — was deferred; closed on the server |
+| 27 | Live-unread dot on a real arrival | **operator-action** — code is in main; check after main deploys |
+| 28 | `chatUnread.ts` comment asserting `/nav-counts` "cannot" exclude muted | **shipped @ `75127d9`** — three stale blocks corrected |
+
+**Spec rev G: 12 of 12 edits verified present on `74051c0`.**
+
+## What is actually left
+
+Three things, and only one of them is code:
+
+1. **The send-fly verdict** (row 22) — `chatDevToggles.sendFly` still ships
+   its current default because the verdict line was left blank and this
+   session refused to guess it. One line plus a spec note whenever the
+   call is made; the `__DEV__` toggle stays either way, per the standing
+   ruling that it is the sanctioned mechanism for revisiting on a signed
+   build.
+2. **Two device confirmations** — the attachment hang (row 19; a
+   native-modal race the web harness cannot present) and the live-unread
+   dot (row 27; needs a deploy, not a change).
+3. **Three named deferrals** (rows 23–25), untouched and out of arc scope
+   by design.
+
+Everything else in the arc is on main.
+
+## The arc's own audit note
+
+The first version of this table is worth keeping next to this one for a
+reason beyond honesty. It was produced by a session asked to "formally
+close the arc", and the closing did not happen: the mandated
+`git merge-base --is-ancestor` check found five items unmerged, and the
+table said so instead of saying what the brief assumed. That is the
+merge-verification house rule (`abeb5ff`) catching a real gap on its first
+use, one commit after being written.
+
+Both tables together are the record: what was true, and what is true.
