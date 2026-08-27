@@ -31353,3 +31353,85 @@ one deleted line — but "did not touch it" is not "tested it".
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 11 addendum — the app-wide sweep, and the third screen the brief asked for
+
+Two things the section above asserted or substituted are now checked. No
+code changed; this is verification only.
+
+## 1. "The thread was the only screen paying twice" — swept, not asserted
+
+The original section claimed this from the three screens it happened to
+measure. Now every file in `apps/mobile/src` was searched for the pairing
+that causes the defect — a top-edge safe-area shell **and** a manual
+`insets.top` in the same tree:
+
+    files using insets.top at all, app-wide:  3
+      components/ThreadHeader.tsx:172   the thread header      <- the intended single source
+      components/NavDrawer.tsx:152      inside a RN <Modal>    <- separate native root
+      components/PhotoViewer.tsx:148    inside a RN <Modal>    <- separate native root
+
+    files pairing edges={['top']} with insets.top:  1
+      app/conversation/[id].tsx   <- and post-fix this is the explanatory
+                                     COMMENT at :882-884, not live code
+
+The two `Modal` cases are correct by construction: a React Native `Modal`
+is its own native root, so it sits outside whatever `SafeAreaView` the
+screen behind it uses and its `insets.top` is that root's only consumer.
+They are not second sightings.
+
+The live props in `conversation/[id].tsx` after the fix:
+
+    :854  <ScreenShell edges={['top']}>   loading branch  -> ScreenHeader, no inset
+    :863  <ScreenShell edges={['top']}>   error branch    -> ScreenHeader, no inset
+    :902  <ScreenShell edges={[]}>        thread          -> ThreadHeader owns the inset
+
+So the claim holds app-wide, and the grep that would find a recurrence is
+recorded here rather than left to memory.
+
+## 2. Third screen: client detail, which is what the brief actually asked for
+
+The table above used the **clients list** as its third row. That is a tab,
+not a stack screen; the brief said "one more stack screen's header (e.g.,
+client detail)". Corrected:
+
+| screen | kind | inset consumers | source |
+| --- | --- | --- | --- |
+| thread header | stack | **1** | `ThreadHeader` — `insets.top + 8` |
+| **client detail** | **stack** | **1** | `ScreenShell edges={['top']}` at `client/[id].tsx:440`; **zero** `insets.top` references in the file |
+| conversation list | tab | **1** | `ScreenShell edges={['top']}` |
+| clients list | tab | **1** | `ScreenShell edges={['top']}` |
+
+Four screens, one consumer each. Client detail is the closest structural
+sibling to the thread — both are stack screens pushed over a tab — and it
+consumes the inset exactly once, which is what the thread now does.
+
+## 3. Task C: FLASH navigation is unaffected, and here is why
+
+The section above listed FLASH tab navigation as untouched-and-not-tested.
+It can be settled from the routing model without a device:
+
+    the only navigation into FLASH, app-wide:
+      app/account.tsx:85   router.push('/flash')
+
+    what that resolves to:
+      app/(tabs)/flash.tsx          exists
+      app/(tabs)/_layout.tsx:111    name="flash", the tab declaration
+
+`(tabs)` is a **route group**, so it is transparent in the URL — `/flash`
+has always resolved through the group to the tab file. In expo-router the
+**filesystem** creates routes; a `<Stack.Screen>` only supplies options
+for a child the router already found. The deleted line therefore named a
+child the root stack does not have, which is what produced the warning,
+and it was never on any navigation path. Removing it cannot break a route
+it never served.
+
+Still device-gate: that the Metro warning is actually gone. That warning
+is emitted by the router at runtime on Metro and does not appear in the
+web dev-server output, before or after — as the section above states.
+
+## Verification
+
+No files changed. `apps/mobile tsc --noEmit` clean in the primary
+checkout after `npm install` (re-run there per the handoff rule, not
+carried over from the worktree).
