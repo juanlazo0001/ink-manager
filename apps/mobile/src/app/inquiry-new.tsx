@@ -6,6 +6,7 @@ import { FormDivider, RadioField, TextField } from '@/components/form/Fields';
 import { ImageGridField } from '@/components/form/ImageFields';
 import { FormScreen, useUnsavedChangesGuard } from '@/components/form/FormScreen';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { PhoneField } from '@/components/form/PhoneField';
 import { ScreenShell } from '@/components/ScreenShell';
 import { useAuth } from '@/context/auth';
 import { artistLabel, fetchArtists, type ArtistOption } from '@/lib/artists';
@@ -109,8 +110,8 @@ export default function InquiryNewScreen() {
         errors.email = 'That does not look like an email address.';
       }
       // Web's rule exactly: blank is fine, ten digits is fine, nothing else.
-      const digits = values.phone.replace(/\D/g, '');
-      if (values.phone.trim() && digits.length !== 10) {
+      const digits = values.phone;
+      if (digits.length > 0 && digits.length !== 10) {
         errors.phone = 'Enter a complete 10-digit phone number, or leave it blank.';
       }
       if (values.channel === 'REFERRAL' && !values.referralCode.trim()) {
@@ -242,12 +243,11 @@ export default function InquiryNewScreen() {
             keyboardType="email-address"
             autoCapitalize="none"
           />
-          <TextField
+          <PhoneField
             label="Phone"
             value={form.values.phone}
-            onChange={(v) => form.setField('phone', v)}
+            onChange={(digits) => form.setField('phone', digits)}
             error={form.errors.phone}
-            keyboardType="phone-pad"
             hint="Optional."
           />
 
