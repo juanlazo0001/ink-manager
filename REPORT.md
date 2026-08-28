@@ -32075,3 +32075,58 @@ paths were modified.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 15 addendum — the backend companion landed while this ran
+
+The section above says `fix/merge-search-phone` had not deployed, and
+that was true when the verification ran: it was absent from the tree and
+absent from origin, checked both ways. It is on origin **now**
+(`b9bd793`), and two of that section's escalations are answered by it.
+Correcting the record rather than leaving a stale "not deployed" to be
+read later as the current state.
+
+## What is actually on that branch
+
+    57253a3  merge-search: match phones the way they are actually stored
+    b9bd793  Conversations: a stable code on the SMS-consent refusal
+
+    apps/api/src/routes/clients.ts
+    apps/api/src/routes/conversations.ts
+    apps/api/src/routes/mergeSearchPhone.test.ts   <- it ships a test
+
+`57253a3` normalizes the query for phone matching **and** adds the
+relation arm this session could not reach from the client:
+
+    { phone: { contains: digits } },
+    { phones: { some: { phone: { contains: digits } } } },
+
+with a 4-digit floor, on the reasoning that a shorter run appears inside
+most numbers in a studio.
+
+## What that changes here
+
+| escalation above | now |
+| --- | --- |
+| **1 — secondary numbers can still duplicate** | **answered** by `57253a3`'s `phones: { some: ... }` arm. This was the one gap no client-side phrasing could close, and it is closed. |
+| **3 — the `no_sms_consent` path is dead** | **answered** by `b9bd793`. The keyed line stops being fixture-only the moment that branch merges and deploys. |
+| 2 — manual creation captures no consent | unchanged; still a product decision |
+| 4 — `GET /clients` has no search parameter | unchanged; the Clients screen still filters 100 rows locally |
+
+Neither branch depends on the other to merge, and they do not touch the
+same files.
+
+## One thing to tidy afterwards, deliberately not done now
+
+`searchClients` sends a second, normalized query for phone-shaped input.
+That exists **because** the server could not match a formatted number.
+Once `57253a3` is deployed the first query matches on its own, and the
+second becomes a redundant round trip — harmless (results are deduped by
+id, and it still returns the same row) but no longer earning its keep.
+
+It is left in place on purpose. Removing it now would make this branch
+depend on a backend branch that has not merged, and the failure mode of
+getting that order wrong is the exact thing this session exists to
+prevent: a formatted search silently offering CREATE for a client who
+exists. **Delete it in a follow-up once the API change is deployed and
+verified**, not before — and the falsifier above is the test that says
+whether it is safe to.
