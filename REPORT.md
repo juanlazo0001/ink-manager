@@ -32873,3 +32873,156 @@ container's presence was checked), the long-press overlay's gesture
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 19 — growth follows content size, whatever wrote the content
+
+Branch `chat-ux/19-programmatic-growth` from a clean `main` (`dc4e6bb`),
+worktree per `CLAUDE.md`. Mobile-only, no dependencies. Serial check
+passed: no chat-ux branch was unmerged at cut time.
+
+## Root cause, file:line
+
+`Composer.tsx:256` — `onContentSize`, the only place a measured height
+reaches `inputHeight`:
+
+    const next = bodyRef.current.length === 0 ? COMPOSER_MIN_HEIGHT : clamp(height);
+
+`bodyRef` was written in exactly three places, **all of them the path a
+keystroke takes**: `onChangeBody`, the edit-seed effect, and the
+post-send clear. The two programmatic writers — `insertTemplate` and
+`insertLink` — wrote the draft through `setBody` and left the ref stale.
+
+So the applied height was gated on the `onChangeText` path rather than on
+the content-size change itself, exactly as suspected.
+
+## The consequence was not a lag — the measurement was LOST
+
+This is the part worth recording, because it changes what "fixed" means.
+`onContentSizeChange` fires only when the content size **changes**. So
+inserting into an empty field fired the single event carrying the new
+height, the empty-ref branch discarded it, and **it was never sent
+again**. Measured on `main` before the fix:
+
+| step | height | content needed |
+| --- | --- | --- |
+| empty, at rest | 36 | — |
+| insert a 2-line template, 0 keystrokes | **36** ✗ | 82 |
+| one keystroke, same wrap | **36** ✗ | 82 |
+| one keystroke that adds a line | 105 ✓ | 105 |
+
+The field could therefore sit at the wrong height indefinitely while
+someone typed — it only appeared to self-correct when a keystroke
+happened to change the wrap. "Grows on typing but not on insertion" is
+the visible half of that; the other half is that typing does not
+reliably fix it either.
+
+## The fix — one write, not five
+
+`setBody` (`Composer.tsx:129`) is where every source already passes:
+keystroke, template, link, paste, edit-seed, send-clear. The ref is
+written there, and the three per-path writes are deleted. Nothing has to
+remember, and there are no per-source branches to keep in step.
+
+    bodyRef writes, before:  3  (all keystroke-path)
+    bodyRef writes, after:   1  (line 172, inside setBody)
+    bodyRef reads:           1  (line 256, onContentSize)
+
+**On StrictMode**, since a ref write inside a state updater deserves the
+question: the assignment is idempotent — the same `current` yields the
+same `value`, so a double invocation writes the same string. It sits
+inside rather than outside because the functional form's result is only
+knowable with `current` in hand, and computing it twice — once for the
+ref, once for the state — is the version that could actually disagree.
+The code says so in place.
+
+**Spec §3** gains the clause: *"growth follows content size regardless of
+how the content arrived (keystroke, template, link, paste)."*
+
+## Evidence — six items, all measured
+
+| # | case | keystrokes | result |
+| --- | --- | --- | --- |
+| 1 | empty → 3-line template | **0** | **36 → 82** immediately |
+| 2 | insert a URL via Attach link | **0** | 36 → **59** |
+| 3 | template exceeding five lines (9 lines) | **0** | **120** capped, scrollHeight **427** → internal scroll |
+| 4 | send | — | collapse to **exactly 36** (twice) |
+| 5 | Session 18 typing table, re-run | typed | **unchanged** — see below |
+| 6 | **the measurement-lost case**: multi-line template into an empty composer, then *no* further keystrokes or events | **0** | height **82**, correct and stable with nothing else happening |
+
+Item 6 is item 1 held still: no keystroke, no resize, no second event —
+the height is right because the insert's own measurement was used, not
+because something later happened to re-fire it. That is the case the
+original five would have passed even with the bug half-fixed.
+
+### Item 5, the Session 18 table re-run
+
+    rest 36 · 1 line 36 · 2 lines 59 · 3 lines 82 · 4 lines 105
+    5 lines 120 (scrollH 128) · 6 lines 120 · 7 lines 120 · cleared 36
+
+Identical to session 18's, to the point. The 82.1 on three lines is the
+spring's landing frame, not a different number.
+
+## Regressions
+
+| check | result |
+| --- | --- |
+| keyboard-ride container | present, transform intact (`matrix(1,0,0,1,0,0)` at rest) |
+| attach menu, per the 17 logger | reaches **`interaction-ready` in 7ms**, then a clean `dismiss-start → dismissed` |
+
+    [attach     0ms] item-selected     menu (plus tapped)
+    [attach     0ms] present-called    menu
+    [attach     6ms] presented         menu
+    [attach     7ms] interaction-ready menu
+    [attach   916ms] dismiss-start     menu
+    [attach  1233ms] dismissed         menu
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 12.72s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+Console: one error, the pre-existing React 19 `element.ref` shim message.
+Screenshot: `design-refs/session-19/cux19-template-insert-grown-393.png`
+— three lines of template in a field that grew to hold them, zero
+keystrokes.
+
+### Retested vs untouched
+
+**Retested:** all six evidence items, the full typing table, the
+keyboard-ride container, the attach menu's logged sequence, all four
+typechecks.
+
+**Untouched and NOT retested:** the S3 growth *animation* (a spring —
+values prove in harness, feel does not), the keyboard ride's actual
+travel (device-only), the native picker, and the long-press overlay.
+
+## Housekeeping done this session
+
+- Removed the idle `ink-manager-w-api-integrity-notifications` worktree
+  (authorised). Its branch had been merged and deleted two sessions
+  earlier and its tree was clean.
+- Primary checkout is back on `main` proper, verified at `dc4e6bb`.
+- `CLAUDE.md` gains the rule this earned, with its exception: a worktree
+  whose branch is unmerged **and** whose tree is dirty is removed by the
+  session that owns it, never by a passer-by.
+
+**`git worktree list` shows the primary and one other**, not the primary
+alone: `ink-manager-w-prepay-onhold` is on the unmerged
+`session/prepay-onhold` with **6 uncommitted files**. That is exactly the
+case the new rule exempts, so it was left alone — removing it would have
+destroyed work I do not own.
+
+## Escalations
+
+1. **`session/prepay-onhold` is still parked** with 6 uncommitted files
+   on an unmerged branch. It does not hold `main`, so it blocks nothing;
+   but it has outlived its session and only its owner can safely finish
+   it.
+2. The composer ceiling still admits ~4.6 lines rather than §3's five
+   (carried from session 18, unchanged and deliberately not touched).
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
