@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
+import { SmsConsentActions } from '@/components/SmsConsentActions';
+import { CONSENT_SOURCE_LABELS } from '@/lib/consentLabels';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
@@ -611,11 +613,35 @@ export default function ClientScreen() {
             <Text style={styles.consentLine}>
               <Text style={styles.consentLabel}>SMS Consent: </Text>
               {client.smsConsentGivenAt ? (
-                <Text style={styles.consentGiven}>Given {stamp(client.smsConsentGivenAt)}</Text>
+                <Text style={styles.consentGiven}>
+                  Given {stamp(client.smsConsentGivenAt)}
+                  {/* Web appends the source in the same line — the record
+                      is only useful if it says where it came from. */}
+                  {client.smsConsentSource
+                    ? ` · ${CONSENT_SOURCE_LABELS[client.smsConsentSource] ?? client.smsConsentSource}`
+                    : ''}
+                </Text>
               ) : (
                 <Text style={styles.consentMissing}>Not yet given</Text>
               )}
             </Text>
+
+            {/*
+              Both grant paths, side by side as web offers them: recording
+              is right for someone at the counter, the link is right for
+              everyone else and is the stronger record. Absent once
+              consent is on file — there is nothing left to grant.
+            */}
+            <SmsConsentActions
+              clientId={client.id}
+              token={token}
+              consentGivenAt={client.smsConsentGivenAt}
+              onRecorded={(patch) =>
+                setClient((current) =>
+                  current ? { ...current, ...patch } : current,
+                )
+              }
+            />
 
             {/* Web's own second line, and its wording. An opt-out is not
                 the absence of consent — outbound texts are refused. */}
