@@ -91,6 +91,27 @@ export function useAttachments(token: string | null) {
     [start],
   );
 
+  /**
+   * Adopt an ALREADY-HOSTED image — a portfolio piece — without
+   * uploading anything.
+   *
+   * It lands as a finished item, so from here on it is indistinguishable
+   * from a picked photo: same tray, same preview, same removal, same
+   * `uploadedUrls` the send reads. That is exactly what apps/web does
+   * for its own portfolio picker
+   * (`ConversationsPanel.tsx:3822` — `setAttachments((c) => [...c, url])`),
+   * and it is why no new message type is needed: the wire shape is a
+   * string array of URLs either way.
+   *
+   * No `images.current` entry, deliberately: retry re-uploads a local
+   * file, and there is nothing here to re-upload. A remote item cannot
+   * fail, so it can never offer retry.
+   */
+  const addRemote = useCallback((url: string) => {
+    const id = `att-${nextId.current++}`;
+    setItems((current) => [...current, { id, localUri: url, status: 'done', progress: 1, url }]);
+  }, []);
+
   const retry = useCallback(
     (id: string) => {
       const image = images.current[id];
@@ -116,6 +137,7 @@ export function useAttachments(token: string | null) {
   return {
     items,
     add,
+    addRemote,
     retry,
     remove,
     clear,

@@ -9,6 +9,8 @@ import { ScreenShell } from '@/components/ScreenShell';
 import { useAuth } from '@/context/auth';
 import { createClient } from '@/lib/clientWrites';
 import { startConversation } from '@/lib/conversations';
+import { PhoneField } from '@/components/form/PhoneField';
+import { phoneDigits } from '@/lib/phoneMask';
 import { screenErrorMessage } from '@/lib/screenError';
 import { useForm } from '@/lib/useForm';
 import { space } from '@/theme';
@@ -74,14 +76,22 @@ export default function ClientNewScreen() {
       firstName: params.firstName ?? '',
       lastName: params.lastName ?? '',
       email: params.email ?? '',
-      phone: params.phone ?? '',
+      /*
+       * Digits, always — including session 15's prefill, which
+       * arrives as whatever was typed into chat's search box. The
+       * mask is applied at render, so a prefilled field shows
+       * masked on mount without the stored value ever being the
+       * masked string.
+       */
+      phone: phoneDigits(params.phone ?? ''),
     },
     (values) => {
       const errors: Record<string, string> = {};
       if (!values.firstName.trim()) errors.firstName = 'A first name is required.';
       if (!values.lastName.trim()) errors.lastName = 'A last name is required.';
-      const digits = values.phone.replace(/\D/g, '');
-      if (values.phone.trim() && digits.length !== 10) {
+      // The field's value IS digits now; this stays a length check.
+      const digits = values.phone;
+      if (digits.length > 0 && digits.length !== 10) {
         errors.phone = 'Enter a complete 10-digit phone number.';
       }
       if (values.email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(values.email.trim())) {
@@ -172,12 +182,11 @@ export default function ClientNewScreen() {
             autoCapitalize="none"
             hint="Optional. More addresses can be added afterwards."
           />
-          <TextField
+          <PhoneField
             label="Phone"
             value={form.values.phone}
-            onChange={(v) => form.setField('phone', v)}
+            onChange={(digits) => form.setField('phone', digits)}
             error={form.errors.phone}
-            keyboardType="phone-pad"
             hint="Optional. More numbers can be added afterwards."
           />
         </ScrollView>

@@ -215,6 +215,67 @@ export interface SendOptions {
  * integration connected and the caller holds `conversations.sendLive`.
  * Every other combination is written to the thread and goes nowhere.
  */
+/**
+ * The thread's client context — read for ONE thing here: which artist is
+ * assigned to the featured inquiry, so the portfolio picker can default
+ * to them. Web reads the same endpoint for the same purpose
+ * (`ConversationsPanel.tsx:2106`).
+ *
+ * `requireRole(OWNER, FRONT_DESK)` (`routes/conversations.ts:1522`), so
+ * an ARTIST gets a 404 here. Callers must treat that as "no default",
+ * never as an error worth surfacing.
+ */
+export interface ConversationContextInquiry {
+  id: string;
+  status: string;
+  description: string | null;
+  assignedArtist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } } | null;
+}
+
+export interface ConversationContextResponse {
+  inquiries: ConversationContextInquiry[];
+}
+
+export function fetchConversationContext(
+  token: string,
+  conversationId: string,
+  signal?: AbortSignal,
+): Promise<ConversationContextResponse> {
+  return apiFetch<ConversationContextResponse>(
+    `/conversations/${encodeURIComponent(conversationId)}/context`,
+    { token, signal },
+  );
+}
+
+/**
+ * The studio's premade messages, for the composer's Insert template.
+ *
+ * They live on `StudioSettings.messageTemplates` — an open-ended
+ * `{ id, name, body }[]` whose own API comment calls it "an open-ended
+ * array the composer's 'insert template' menu lists"
+ * (`routes/studioSettings.ts:272`), validated at `:321`. Web reads it the
+ * same way, off the same route (`ConversationsPanel.tsx:1881`).
+ *
+ * `GET /studio-settings` is `requireRole(OWNER, FRONT_DESK, ARTIST)`
+ * (`routes/studioSettings.ts:144`) — every role that can open a thread
+ * can also list templates, so this needs no gating of its own.
+ */
+export interface MessageTemplate {
+  id: string;
+  name: string;
+  body: string;
+}
+
+export function fetchMessageTemplates(
+  token: string,
+  signal?: AbortSignal,
+): Promise<MessageTemplate[]> {
+  return apiFetch<{ messageTemplates: MessageTemplate[] | null }>('/studio-settings', {
+    token,
+    signal,
+  }).then((res) => res.messageTemplates ?? []);
+}
+
 export function sendMessage(token: string, conversationId: string, options: SendOptions): Promise<Message> {
   const payload: SendMessageRequest = {
     body: options.body,

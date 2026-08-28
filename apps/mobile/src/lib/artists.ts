@@ -42,6 +42,16 @@ import { apiFetch } from './api';
 export interface ArtistOption {
   id: string;
   user: { name: string | null; email: string; avatarUrl: string | null };
+  /**
+   * Cloudinary URLs on the artist record.
+   *
+   * `GET /artists` has always selected this (`artistListSelect` in
+   * routes/artists.ts); the type simply never declared it, because no
+   * mobile screen read it until the composer's portfolio picker. Optional
+   * rather than required so that nothing already destructuring an
+   * `ArtistOption` has to change.
+   */
+  portfolioImages?: string[];
 }
 
 export function fetchArtists(token: string, signal?: AbortSignal): Promise<ArtistOption[]> {

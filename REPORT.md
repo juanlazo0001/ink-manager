@@ -32272,3 +32272,412 @@ Session 15's duplicate-falsifier includes a formatted-phone search: that
 half of its gate is valid **only after this deploys**. The raw-digit half
 works against production today. Mobile's `no_sms_consent`-keyed treatment
 ships in Session 15 against the code added here.
+
+# Chat UX 16 — composer attach v2, and a phone field that behaves
+
+Branch `chat-ux/16-composer-attach` from `main` (`efb718a`), worktree per
+`CLAUDE.md`. Mobile-only; **zero `apps/api` writes**. Serial discipline
+held — `chat-ux/15-create-from-search` was merged and deleted first.
+
+**Web was read before anything was built.** Three of the four tasks
+describe web's behaviour differently from how web actually behaves, and
+each correction is cited below.
+
+## Task A — phone mask
+
+`formatPhone` **already existed** (`lib/format.ts:37`), already handling
+the leading-1 strip, non-NANP passthrough and already-formatted input. So
+A is a mask hook plus a `PhoneField` wrapper, not a new display util.
+
+**The sweep found four phone inputs, one more than the brief named:**
+
+| screen | line | applied |
+| --- | --- | --- |
+| `client-new.tsx` | 176 | **yes** |
+| `client-edit.tsx` | 202 | **yes** |
+| `inquiry-new.tsx` | 246 | **yes** — a client phone, not in the brief |
+| `profile-edit.tsx` | 594 | **no** — a STAFF phone; see escalations |
+
+### Typing, from the live input
+
+    key 3 -> "(3"            key 9 -> "(305) 299"
+    key 0 -> "(30"           key 7 -> "(305) 299-7"
+    key 5 -> "(305"          key 9 -> "(305) 299-79"
+    key 2 -> "(305) 2"       key 5 -> "(305) 299-795"
+    key 9 -> "(305) 29"      key 7 -> "(305) 299-7957"
+    an 11th key                    -> "(305) 299-7957"   (capped)
+
+### Backspace, full to empty, deleting one CHARACTER each press
+
+    "(305) 299-7957" -> "(305) 299-795" -> … -> "(305) 2" -> "(305"
+    -> "(30" -> "(3" -> ""
+
+    10 presses, stuck: false, ended empty: true
+
+The two punctuation-crossing steps are the whole point: `"(305) 2"` →
+`"(305"` and `"(3"` → `""`. Without the rule both would return the same
+string forever and backspace would appear dead on `)`.
+
+### Paste
+
+    "1 (305) 299-7957" -> (305) 299-7957      "3052997957"   -> (305) 299-7957
+    "+1 305 299 7957"  -> (305) 299-7957      "305.299.7957" -> (305) 299-7957
+
+Session 15's prefill renders **masked on mount**: `?phone=8085551234`
+shows `(808) 555-1234` with the stored value still `8085551234`.
+
+**Mid-string editing is unchanged v1 behaviour**, recorded as the brief
+asks: the caret is end-anchored, so an edit in the middle re-masks from
+the resulting digits rather than holding position.
+
+**Web parity note:** web's `PhoneInput.tsx` already masks for display and
+stores digits — the same contract, arrived at separately. No web change
+wanted.
+
+## Task B — the premise is wrong: mobile's item was never inert
+
+    mobile   Composer.tsx:229  openLinks()   fetches the client's shareable links
+             Composer.tsx:241  insertLink()  appends the chosen one
+             Composer.tsx:433  the sheet     intake / estimate / deposit / waiver / flash
+    web      ConversationsPanel.tsx:3658     the identical list
+             ConversationsPanel.tsx:3686     `body ? `${body}\n${url}` : url`
+
+Mobile's `appendLink` is that same expression. The two clients were
+already doing the same thing; the only divergence was the **label**, and
+web's is adopted: **Attach link**.
+
+**The brief's "single URL field, prepend `https://`" is not what web
+does** — web has no free URL entry at all. Building it would have
+replaced a working client-links picker with a different feature.
+
+Verified live: the menu lists `Prefilled intake link` (disabled, "portal
+only"), `Intake form`, `Estimate #1` ("sent"); tapping Estimate appended
+`https://inkmanager.app/e/est-1` on a new line under existing text.
+
+**The one real gap:** web's prefilled intake row works, minting a draft
+through `POST /prefill-drafts` (`ConversationsPanel.tsx:1967`) from
+client contact fields. Mobile's thread payload carries no email/phone for
+the client, so the row stays disabled. Endpoint and blocker recorded, not
+faked.
+
+## Task C — the portfolio is not flash-backed
+
+**Web reads `Artist.portfolioImages`** — a plain `String[]` of Cloudinary
+URLs on the artist record (`ConversationsPanel.tsx:2170-2174`, fetching
+`/artists/:id`). `FlashPiece` is a different model with prices and
+availability and web's picker never touches it. The brief's "flash-backed"
+framing would have built the wrong grid.
+
+| | web | mobile (this session) |
+| --- | --- | --- |
+| source | `GET /artists/:id` → `portfolioImages` | `GET /artists` — already selects `portfolioImages` for every artist |
+| requests | one per artist shown | **one, total** — All is the same payload filtered |
+| assigned artist | `/conversations/:id/context` → `inquiries[].assignedArtist` | same endpoint, same pick |
+| no artist assigned | **dead end** — "assign one to pull from their portfolio" | **All artists, sectioned by name** (owner spec) |
+| selection | `setAttachments((c) => [...c, url])` `:3822` | `attachments.addRemote(url)` — same adoption |
+
+### C3 cleared, and proven rather than argued
+
+The send route validates `attachments` as a plain string array
+(`conversations.ts:859`, `isStringArray`). A portfolio piece therefore
+sends as-is:
+
+    POST /conversations/t1/messages
+      -> SENT body="" attachments=["https://picsum.photos/seed/marcus1/400/400"]
+
+    upload-signature requests during the whole run: 0
+
+Zero signature requests is the no-re-upload evidence: a re-upload cannot
+happen without one.
+
+### The three states, measured
+
+| thread | assigned | picker opens on | sections | pieces |
+| --- | --- | --- | --- | --- |
+| `t1`, OWNER | Rosa Klein | **assigned artist**, with an `ALL ARTISTS` toggle | ROSA KLEIN | 4 |
+| `t1`, toggled | — | All | ROSA KLEIN · MARCUS DELACROIX | 6 |
+| `t2`, OWNER | none | **All**, no toggle (nothing to toggle to) | ROSA KLEIN · MARCUS DELACROIX | 6 |
+| `t1`, **ARTIST** | unavailable | **All**, silently | ROSA KLEIN · MARCUS DELACROIX | 6 |
+
+The artist with an empty portfolio (Jo Ng) is omitted from All rather
+than rendered as an empty section.
+
+**Role finding:** `/conversations/:id/context` is
+`requireRole(OWNER, FRONT_DESK)` (`conversations.ts:1522`), so an ARTIST
+cannot ask who is assigned. The call is **skipped**, not fired and
+swallowed — the ARTIST run made `GET /artists` and no context request at
+all — so the picker opens on All with no error surfaced.
+
+## Task D — the store exists and was built for this
+
+`StudioSettings.messageTemplates`, `{ id, name, body }[]`, validated at
+`studioSettings.ts:321`. Its own API comment (`:272`) calls it *"an
+open-ended array the composer's 'insert template' menu lists"*.
+`GET /studio-settings` is `requireRole(OWNER, FRONT_DESK, ARTIST)`
+(`:144`) and mobile already calls it for `timezone`, so nothing is gated
+out and the hide-the-item branch never fires.
+
+**No variable semantics to mirror:** web inserts `template.body`
+verbatim (`ConversationsPanel.tsx:3644`). None were invented.
+
+Verified: three templates listed by name; selecting *Aftercare* put its
+body in the composer exactly.
+
+**Field-name correction:** the brief says templates have a `title`; the
+store's field is `name`.
+
+## Sheet composition, as rendered
+
+    ATTACH
+      Photo library
+      Take photo
+      Attach link
+      Insert template
+      Add from Portfolio
+      CANCEL
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 13.17s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+Console: **one** error, the pre-existing React 19 `element.ref` shim
+message. Nothing new.
+
+Screenshots in `design-refs/session-16/`: the masked prefilled field, the
+attach sheet, the assigned-artist default, All-artists sectioned, no
+assigned artist, a piece in the tray, the sent image bubble, the template
+picker, and a sent message carrying a template body plus a link.
+
+### The parity pairs could not be captured, and here is the measurement
+
+The brief asks for web's own menus screenshotted beside mobile's. I got
+as far as minting a session against the dev database and stopped, because
+the dev data cannot exercise these features:
+
+    studios                              124
+    studioSettings rows                   41
+      with messageTemplates set            0     <- every web template menu would be empty
+    CLIENT conversations                  90
+    artists                               75
+      with >= 1 portfolio image            2
+
+So web's template picker would screenshot its own "No templates
+configured" state in every studio, and the portfolio picker would need
+one of two artists to be the assigned artist on a client conversation in
+their own studio. **That is a finding about dev data, not a property of
+either client.** What stands in its place is stronger on semantics and
+weaker on pixels: every mirrored behaviour is cited to web's file:line
+above, and the mobile side is screenshotted against a fixture that
+reproduces the real routes' shapes.
+
+To produce the pairs: seed `messageTemplates` on a dev studio and give an
+assigned artist some `portfolioImages`, or run the web capture against
+production.
+
+### Retested vs untouched
+
+**Retested:** the mask (typing, cap, backspace to empty, four paste
+spellings, prefill on mount), the sheet's composition and order, Attach
+link's list and insertion, the template list and insertion, the portfolio
+picker in four states, selection into the tray, the send and its exact
+payload, and all four typechecks.
+
+**Untouched and NOT retested:** the photo pick-and-send regression the
+brief names — `expo-image-picker` has no web implementation, so the
+picker itself is device-gate. What *was* exercised is the rest of that
+path: a portfolio piece travels the same tray, the same preview, the same
+`uploadedUrls`, and the same send as a picked photo, and it sent
+correctly. The picker call is the one link not covered. Also untouched:
+the channel selector, reply/edit, reactions, and every other `Sheet`
+consumer.
+
+## Escalations
+
+1. **`profile-edit`'s staff phone is unmasked**, deliberately. It is not
+   a client phone and it writes through the artist-profile route, which I
+   did not confirm normalizes the way `lib/phone.ts` does for clients. A
+   mask there would make the field *look* canonical without proving the
+   stored value is. One line to add once that write path is checked.
+2. **The prefilled intake link stays disabled on mobile** — needs client
+   contact fields the thread payload does not carry.
+3. **Dev data cannot demonstrate templates or portfolios** (numbers
+   above) — worth seeding regardless of this session.
+4. **Web-only composer features, for the parity ledger** (observed, not
+   built): @ mentions, `/` shortcuts, and the per-message channel
+   selector. Mobile has its own channel control, so only the first two
+   are genuine gaps.
+
+## Database
+
+No schema change, no migration, no backfill. Read-only queries against
+dev for the parity assessment; nothing written.
+
+# Chat UX 17 — the attach-flow deadlock, found in the source
+
+**Branch case: `chat-ux/16-composer-attach` was UNMERGED**, so this is
+`chat-ux-16-g1`/`g2` on that branch — gate fixes before its merge, as the
+brief specifies. Mobile-only, no dependencies.
+
+## Task A — the race map
+
+Every surface in the attach path, and what presents it:
+
+| surface | implementation | how it was reached |
+| --- | --- | --- |
+| the `+` menu | `Sheet` → RN `<Modal>` (`Sheet.tsx:147`) | `setSourceOpen(true)` from the composer bar |
+| Attach link | `Sheet` → a **second** RN `<Modal>` | `Composer.tsx:241-242` — `setSourceOpen(false)` **then** `setLinksOpen(true)`, same tick |
+| Insert template | `Sheet` → a **third** RN `<Modal>` | `Composer.tsx:258-259` — same shape |
+| Add from Portfolio | `Sheet` inside `PortfolioPicker` → a **fourth** | `Composer.tsx:480-481` — same shape |
+| attachment preview | `AttachmentTray`, inline in the composer | not presented — never implicated |
+| native picker | `expo-image-picker`, a real iOS modal | `Composer.tsx:307` `setSourceOpen(false)` then `:313` `await pickImage()` |
+| channel picker | `Sheet` → RN `<Modal>` | from the composer BAR, never chained from another sheet |
+
+### The race, by construction
+
+`Sheet` deliberately keeps its Modal mounted after `visible` goes false —
+it drives its own exit and unmounts only when the animation lands, with a
+backstop at `duration.slow + 80` (`Sheet.tsx:171`). `duration.slow` is
+**300ms** (`theme/motion.ts:26`).
+
+So for ~300ms after every menu tap there were **two RN `<Modal>`s alive
+at once**: the menu dismissing, and the next surface presenting. That is
+the iOS presentation deadlock exactly — present while a dismissal is in
+flight and the queue silently wedges; the app renders normally and stops
+accepting touches, with nothing thrown.
+
+It is the same shape at all four sites, which is why the operator saw it
+on **every** item including the two that never touch the camera. The
+image-centric theories were exonerated because images were never
+involved: `Attach link` and `Add from Portfolio` present a modal over a
+dismissing modal just as the photo rows do.
+
+**Why three preview-verified fixes missed it:** react-native-web has no
+iOS presentation queue. Two `<Modal>`s there are two `<div>`s and nothing
+races. The bug cannot exist in the harness, so a passing harness proved
+nothing about it.
+
+### The reference, corrected
+
+The brief says the long-press overlay is stable because it is not an RN
+`Modal`. **It is one** — `MessageOverlay.tsx:163`,
+`<Modal visible transparent animationType="none" …>`.
+
+Its stability has a different cause, and it is the one that generalises:
+it presents **one** modal and swaps its *contents* inside it — the
+tapback row, the lifted clone and the action sheet are all children of
+that single Modal. It never dismisses a modal to present another. So the
+discriminator is **one host with swapping content vs N sequential
+hosts**, not Modal vs not-Modal — and the overlay is this app's own
+on-device proof that the first pattern holds.
+
+## Task B — pattern 1, the single host
+
+Chosen because the app already runs it successfully on the device, and
+because it does not merely order the operations — it **removes** them:
+moving between menu, links, templates and portfolio now presents and
+dismisses nothing at all, so there is no second modal to race.
+
+- One `<Sheet>`; `attachView` (`'menu' | 'links' | 'templates' |
+  'portfolio' | 'library' | 'camera'`) names its contents.
+- `PortfolioPicker` → `PortfolioContent`: it used to wrap itself in its
+  own `Sheet`, which is precisely what made opening it a
+  dismiss-and-present. It is now the host's contents.
+- **The native picker is the one surface that still needs a true
+  dismissal**, so `Sheet` gained an optional `onDismissed` that fires
+  when the Modal has really unmounted — through the animation callback
+  **or** the backstop, exactly once either way. The picker is staged in a
+  ref and launched from there, never from the tap.
+- **No `setTimeout` choreography** anywhere in the path.
+
+`onDismissed` is additive and optional; no existing `Sheet` consumer
+changes, and `MessageOverlay` is untouched — the stop condition about
+altering the overlay's contract never applied.
+
+## Task C — the sequence logger
+
+`lib/attachTrace.ts`, `__DEV__`-only, permanent. Steps:
+`item-selected → dismiss-start → dismissed → present-called → presented →
+interaction-ready`, keyed on the **surface name** (stable identity, per
+the instrumentation rule — not a counter and not anything the flow
+mutates). Timestamps are relative to the start of each flow, because the
+gap between two lines is the whole signal.
+
+What a stall means, by step: after `dismiss-start` with no `dismissed` is
+a dismissal that never completed; after `present-called` with no
+`presented` is the presentation queue refusing — the deadlock itself.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         clean
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+Console: one error, the pre-existing React 19 `element.ref` shim message.
+
+All four surfaces render through the single host, and the logger's own
+output is the structural evidence:
+
+    [attach     0ms] item-selected     menu (plus tapped)
+    [attach     1ms] present-called    menu
+    [attach     7ms] presented         menu
+    [attach     7ms] interaction-ready menu
+    [attach   715ms] item-selected     links
+    [attach   716ms] present-called    links (content swap, host stays mounted)
+    [attach   725ms] presented         links
+    [attach   726ms] interaction-ready links
+    [attach  1919ms] dismiss-start     links
+    [attach  2245ms] dismissed         menu
+
+**Read what is missing between `item-selected links` and `presented
+links`: there is no `dismiss-start`.** Under the old code every one of
+those transitions began with one. That absence is the fix, visible in the
+trace.
+
+The downstream still works: a portfolio piece selected from inside the
+host reached the tray, the host dismissed, and the send carried
+`attachments:["https://picsum.photos/seed/rosa1/400/400"]`.
+
+### The deadlock itself is device-only, and this is not proof of it
+
+Stated plainly, because it is the whole lesson of the incident: the
+harness **cannot** reproduce this bug, so nothing above is evidence that
+the freeze is gone. What the harness shows is that the restructure did
+not break the surfaces, and what the source shows is that the racing
+construct no longer exists — there is one modal where there were two.
+
+**The gate's logged sequence is the proof.** Each item should reach
+`interaction-ready`; a freeze would leave the last line naming its own
+stall point.
+
+### Retested vs untouched
+
+**Retested:** all four in-app surfaces rendering through the host, the
+trace for menu/links/templates/portfolio, selection into the tray, the
+send and its payload, all four typechecks.
+
+**Untouched and NOT retested:** the native picker launch (`expo-image-picker`
+has no web implementation — device-gate by definition, and the reason its
+new completion-callback launch can only be proven at the gate), the
+channel picker (unchanged and never chained), the long-press overlay, and
+every other `Sheet` consumer.
+
+## Escalations
+
+1. **The photo path's new launch order is unverifiable here.** Staging in
+   a ref and launching from `onDismissed` is the fix most likely to
+   matter on device and the one the harness can say least about.
+2. **The channel picker is still a separate `Sheet`.** It is reached from
+   the composer bar, which is behind any open sheet, so it cannot chain
+   today. Left alone deliberately — folding it in would widen this diff
+   past the freeze it exists to fix.
+3. **`Sheet` remains easy to misuse.** Nothing prevents the next
+   `setThisOpen(false); setThatOpen(true);` pair. The CLAUDE.md rule
+   names the shape; a lint rule or a host-level guard would be stronger.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.

@@ -15,6 +15,9 @@ import { AttachmentTray } from '@/components/AttachmentTray';
 import { channelLabel } from '@/components/ConversationRow';
 import { Eyebrow } from '@/components/ui';
 import { useAttachments } from '@/hooks/useAttachments';
+import { PortfolioContent } from '@/components/PortfolioPicker';
+import { resetAttachTrace, traceAttach, type AttachSurface } from '@/lib/attachTrace';
+import { fetchMessageTemplates, type MessageTemplate } from '@/lib/conversations';
 import {
   appendLink,
   fetchShareableLinks,
@@ -87,6 +90,8 @@ export function Composer({
   editingInitialBody,
   onCancelEdit,
   clientId,
+  conversationId,
+  canReadContext,
 }: {
   isClientThread: boolean;
   sendState: ComposerSendState;
@@ -107,6 +112,10 @@ export function Composer({
   onCancelEdit?: () => void;
   /** CLIENT threads only — whose links the insert menu offers. */
   clientId?: string | null;
+  /** The thread, for the portfolio picker's assigned-artist default. */
+  conversationId?: string;
+  /** OWNER/FRONT_DESK: `/conversations/:id/context` refuses anyone else. */
+  canReadContext?: boolean;
 }) {
   const [bodyState, setBodyState] = useState('');
   /*
@@ -124,9 +133,43 @@ export function Composer({
     });
   };
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [sourceOpen, setSourceOpen] = useState(false);
-  const [linksOpen, setLinksOpen] = useState(false);
+  /*
+   * ─── ONE HOST, SWAPPING CONTENT (session 17) ──────────────────────
+   *
+   * This was five independent booleans driving five `<Sheet>`s, and
+   * every menu item did `setSourceOpen(false)` and `setSomethingElse(true)`
+   * IN THE SAME TICK. `Sheet` deliberately keeps its Modal mounted for
+   * `duration.slow` after `visible` goes false (so a dismissal can be
+   * seen rather than cut off at frame zero), so for ~300ms after every
+   * tap there were TWO RN `<Modal>`s alive: one dismissing, one
+   * presenting.
+   *
+   * On iOS that is the presentation deadlock — presenting while a
+   * dismissal is in flight silently wedges the queue, the app renders
+   * normally and stops accepting touches. On react-native-web those are
+   * two divs and nothing races, which is exactly why three
+   * preview-verified fixes never touched it.
+   *
+   * The fix is structural, and the app already contained its own proof:
+   * `MessageOverlay` — the long-press system, stable on device — is ALSO
+   * an RN Modal, but it presents ONE and swaps its contents (tapback
+   * row, lifted clone, action sheet) inside it. It never dismisses a
+   * modal to present another. That is the difference, not Modal-vs-not.
+   *
+   * So: one `<Sheet>`, and `attachView` names what is inside it.
+   * Switching between in-app surfaces is now a content swap with no
+   * dismount/present cycle at all — there is no second modal to race.
+   */
+  const [attachView, setAttachView] = useState<AttachSurface | null>(null);
   const [links, setLinks] = useState<ShareableLinks | null>(null);
+  /*
+   * The ONE thing that still needs a true dismissal first: the native
+   * picker is a real iOS modal, so it cannot be presented over a sheet
+   * that is still going away. It is staged here and launched from the
+   * host's `onDismissed` — the completion signal — never from the tap.
+   */
+  const pendingLaunch = useRef<'library' | 'camera' | null>(null);
+  const [templates, setTemplates] = useState<MessageTemplate[] | null>(null);
   const attachments = useAttachments(token);
 
   /*
@@ -226,9 +269,48 @@ export function Composer({
    * are plain messages, and this is a per-client round trip that would
    * otherwise happen every time anyone opened a conversation.
    */
+  /*
+   * Closes the sequence for whichever in-app surface is now up. It runs
+   * after the render that mounted it, which for a content swap IS the
+   * moment it is on screen and touchable — there is no presentation
+   * animation to wait on, because nothing was presented.
+   *
+   * A freeze would therefore show `present-called` with no `presented`
+   * following it, and the surface's name says which one stalled.
+   */
+  useEffect(() => {
+    if (!attachView) return;
+    traceAttach('presented', attachView);
+    traceAttach('interaction-ready', attachView);
+  }, [attachView]);
+
+  /** A content swap: no dismissal, so nothing to race. */
+  function showAttachView(next: AttachSurface) {
+    traceAttach('item-selected', next);
+    traceAttach('present-called', next, 'content swap, host stays mounted');
+    setAttachView(next);
+  }
+
+  function closeAttach() {
+    if (attachView) traceAttach('dismiss-start', attachView);
+    setAttachView(null);
+  }
+
+  /*
+   * Fired by the host when the Modal is REALLY gone. Anything that
+   * presents a native surface waits for this.
+   */
+  function onAttachDismissed() {
+    traceAttach('dismissed', 'menu');
+    const launch = pendingLaunch.current;
+    pendingLaunch.current = null;
+    if (launch === 'library') void runLibrary();
+    else if (launch === 'camera') void runCamera();
+    else resetAttachTrace();
+  }
+
   async function openLinks() {
-    setSourceOpen(false);
-    setLinksOpen(true);
+    showAttachView('links');
     if (links || !token || !clientId) return;
     try {
       setLinks(await fetchShareableLinks(token, clientId));
@@ -238,12 +320,40 @@ export function Composer({
     }
   }
 
+  /*
+   * Same on-demand shape as `openLinks` above, and for the same reason:
+   * the studio settings row is not worth fetching on every thread open
+   * when the menu is what needs it. Cached for the composer's life.
+   */
+  async function openTemplates() {
+    showAttachView('templates');
+    if (templates || !token) return;
+    try {
+      setTemplates(await fetchMessageTemplates(token));
+    } catch {
+      // The sheet shows its empty line rather than an alert, matching
+      // how the links sheet treats a failed lookup.
+      setTemplates([]);
+    }
+  }
+
+  /*
+   * Web appends the body with a newline and performs NO variable
+   * substitution (`ConversationsPanel.tsx:3644`). There are no
+   * placeholder semantics in the store to mirror, so inventing any here
+   * would be inventing product.
+   */
+  function insertTemplate(template: MessageTemplate) {
+    setBody((current) => (current ? `${current}\n${template.body}` : template.body));
+    closeAttach();
+  }
+
   function insertLink(url: string | null | undefined) {
     // A row with no url is rendered disabled, so this should not fire —
     // but it stays a no-op rather than a crash if it ever does.
     if (!url) return;
     setBody((current) => appendLink(current, url));
-    setLinksOpen(false);
+    closeAttach();
   }
 
   /*
@@ -263,28 +373,51 @@ export function Composer({
    * something underneath is genuinely wrong the next report carries its
    * text instead of a stack trace nobody can read.
    */
-  async function addFromLibrary() {
-    setSourceOpen(false);
+  /*
+   * Stage, then close. The launch happens in `onAttachDismissed`.
+   * Session 09 fixed the sheet being left MOUNTED after this race; this
+   * removes the race itself, so the two fixes are complementary rather
+   * than one superseding the other.
+   */
+  function addFromLibrary() {
+    traceAttach('item-selected', 'library');
+    pendingLaunch.current = 'library';
+    closeAttach();
+  }
+
+  function addFromCamera() {
+    traceAttach('item-selected', 'camera');
+    pendingLaunch.current = 'camera';
+    closeAttach();
+  }
+
+  async function runLibrary() {
+    traceAttach('present-called', 'library', 'native picker, after dismissal');
     try {
       if (!(await ensureLibraryPermission())) {
         Alert.alert('Photos access needed', 'Allow photo access in Settings to attach an image.');
         return;
       }
       const image = await pickImage();
+      traceAttach('presented', 'library', image ? 'image chosen' : 'cancelled');
       if (image) attachments.add(image);
     } catch (err) {
       Alert.alert('Could not open your photos', pickerErrorMessage(err));
+    } finally {
+      traceAttach('interaction-ready', 'library');
+      resetAttachTrace();
     }
   }
 
-  async function addFromCamera() {
-    setSourceOpen(false);
+  async function runCamera() {
+    traceAttach('present-called', 'camera', 'native camera, after dismissal');
     try {
       if (!(await ensureCameraPermission())) {
         Alert.alert('Camera access needed', 'Allow camera access in Settings to take a photo.');
         return;
       }
       const image = await captureImage();
+      traceAttach('presented', 'camera', image ? 'image captured' : 'cancelled');
       if (image) attachments.add(image);
     } catch (err) {
       Alert.alert('Could not open the camera', pickerErrorMessage(err));
@@ -351,7 +484,11 @@ export function Composer({
         */}
         {editing ? null : (
           <Pressable
-            onPress={() => setSourceOpen(true)}
+            onPress={() => {
+              traceAttach('item-selected', 'menu', 'plus tapped');
+              traceAttach('present-called', 'menu');
+              setAttachView('menu');
+            }}
             disabled={disabled}
             accessibilityRole="button"
             accessibilityLabel="Attach an image"
@@ -403,34 +540,21 @@ export function Composer({
         ) : null}
       </View>
 
-      <Sheet visible={sourceOpen} onClose={() => setSourceOpen(false)}>
-            <Eyebrow style={styles.sheetEyebrow}>Attach</Eyebrow>
-
-            <Pressable onPress={addFromLibrary} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
-              <Feather name="image" size={16} color={colors.fgSecondary} />
-              <Text style={styles.optionLabel}>Photo library</Text>
-            </Pressable>
-
-            <Pressable onPress={addFromCamera} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
-              <Feather name="camera" size={16} color={colors.fgSecondary} />
-              <Text style={styles.optionLabel}>Take photo</Text>
-            </Pressable>
-
-            {/* Web's composer can drop a shareable link into the draft.
-                CLIENT threads only, because the links belong to a client. */}
-            {clientId ? (
-              <Pressable onPress={openLinks} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
-                <Feather name="link" size={16} color={colors.fgSecondary} />
-                <Text style={styles.optionLabel}>Insert a link</Text>
-              </Pressable>
-            ) : null}
-
-            <Pressable onPress={() => setSourceOpen(false)} style={styles.done}>
-              <Text style={styles.doneLabel}>CANCEL</Text>
-            </Pressable>
-      </Sheet>
-
-      <Sheet visible={linksOpen} onClose={() => setLinksOpen(false)}>
+      {/*
+        ─── THE ONE HOST ────────────────────────────────────────────────
+        One `<Sheet>` for the whole attach flow. `attachView` names its
+        contents; moving between them is a content swap, so no dismissal
+        is ever in flight while something else presents. See the note on
+        `attachView` above for why that is the fix rather than a tidy-up.
+      */}
+      <Sheet
+        visible={attachView !== null}
+        onClose={closeAttach}
+        onDismissed={onAttachDismissed}
+        accessibilityLabel="Close the attach menu"
+      >
+        {attachView === 'links' ? (
+          <>
             <Eyebrow style={styles.sheetEyebrow}>Insert a link</Eyebrow>
 
             {/* Web's first entry mints a PrefillDraft token, which is a
@@ -464,10 +588,101 @@ export function Composer({
               <Text style={styles.sheetNote}>No shareable links for this client yet.</Text>
             ) : null}
 
-            <Pressable onPress={() => setLinksOpen(false)} style={styles.done}>
+            <Pressable onPress={closeAttach} style={styles.done}>
               <Text style={styles.doneLabel}>CANCEL</Text>
             </Pressable>
+          </>
+        ) : attachView === 'templates' ? (
+          <>
+            <Eyebrow style={styles.sheetEyebrow}>Insert template</Eyebrow>
+
+            {templates === null ? (
+              <Text style={styles.sheetNote}>Loading…</Text>
+            ) : templates.length === 0 ? (
+              /* Web's own copy, which names where they are configured
+                 rather than leaving a blank menu. */
+              <Text style={styles.sheetNote}>No templates configured (Settings → Policies &amp; Defaults).</Text>
+            ) : (
+              templates.map((template) => (
+                <Pressable
+                  key={template.id}
+                  onPress={() => insertTemplate(template)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Insert template ${template.name}`}
+                  style={({ pressed }) => [styles.option, pressed && styles.pressed]}
+                >
+                  <Feather name="file-text" size={16} color={colors.fgSecondary} />
+                  <Text style={styles.optionLabel} numberOfLines={1}>
+                    {template.name}
+                  </Text>
+                </Pressable>
+              ))
+            )}
+
+            <Pressable onPress={closeAttach} style={styles.done}>
+              <Text style={styles.doneLabel}>CANCEL</Text>
+            </Pressable>
+          </>
+        ) : attachView === 'portfolio' && conversationId ? (
+          <PortfolioContent
+            token={token}
+            conversationId={conversationId}
+            canReadContext={!!canReadContext}
+            onPick={(url) => {
+              attachments.addRemote(url);
+              closeAttach();
+            }}
+            onCancel={closeAttach}
+          />
+        ) : (
+          <>
+            <Eyebrow style={styles.sheetEyebrow}>Attach</Eyebrow>
+
+            <Pressable onPress={addFromLibrary} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
+              <Feather name="image" size={16} color={colors.fgSecondary} />
+              <Text style={styles.optionLabel}>Photo library</Text>
+            </Pressable>
+
+            <Pressable onPress={addFromCamera} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
+              <Feather name="camera" size={16} color={colors.fgSecondary} />
+              <Text style={styles.optionLabel}>Take photo</Text>
+            </Pressable>
+
+            {/* Web's composer can drop a shareable link into the draft.
+                CLIENT threads only, because the links belong to a client.
+                Web's own label is "Attach link" — adopted here so the two
+                clients name the same control the same way. */}
+            {clientId ? (
+              <Pressable onPress={openLinks} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
+                <Feather name="link" size={16} color={colors.fgSecondary} />
+                <Text style={styles.optionLabel}>Attach link</Text>
+              </Pressable>
+            ) : null}
+
+            {clientId ? (
+              <Pressable onPress={openTemplates} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
+                <Feather name="file-text" size={16} color={colors.fgSecondary} />
+                <Text style={styles.optionLabel}>Insert template</Text>
+              </Pressable>
+            ) : null}
+
+            {clientId && conversationId ? (
+              <Pressable
+                onPress={() => showAttachView('portfolio')}
+                style={({ pressed }) => [styles.option, pressed && styles.pressed]}
+              >
+                <Feather name="grid" size={16} color={colors.fgSecondary} />
+                <Text style={styles.optionLabel}>Add from Portfolio</Text>
+              </Pressable>
+            ) : null}
+
+            <Pressable onPress={closeAttach} style={styles.done}>
+              <Text style={styles.doneLabel}>CANCEL</Text>
+            </Pressable>
+          </>
+        )}
       </Sheet>
+
 
       <Sheet visible={pickerOpen} onClose={() => setPickerOpen(false)}>
             <Eyebrow style={styles.sheetEyebrow}>Channel</Eyebrow>

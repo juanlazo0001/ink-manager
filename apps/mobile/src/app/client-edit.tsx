@@ -5,6 +5,8 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { FormDivider, TextField } from '@/components/form/Fields';
 import { FormScreen, useUnsavedChangesGuard } from '@/components/form/FormScreen';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { PhoneField } from '@/components/form/PhoneField';
+import { phoneDigits } from '@/lib/phoneMask';
 import { ScreenShell } from '@/components/ScreenShell';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -66,8 +68,8 @@ export default function ClientEditScreen() {
       const errors: Record<string, string> = {};
       if (!values.firstName.trim()) errors.firstName = 'A first name is required.';
       if (!values.lastName.trim()) errors.lastName = 'A last name is required.';
-      const digits = values.phone.replace(/\D/g, '');
-      if (values.phone.trim() && digits.length < 10) {
+      const digits = values.phone;
+      if (digits.length > 0 && digits.length < 10) {
         errors.phone = 'That does not look like a complete phone number.';
       }
       if (values.email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(values.email.trim())) {
@@ -87,7 +89,10 @@ export default function ClientEditScreen() {
         firstName: next.firstName ?? '',
         lastName: next.lastName ?? '',
         email: next.email ?? '',
-        phone: next.phone ?? '',
+        // Already bare digits from the server (lib/phone.ts
+        // normalizes on write); run through anyway so an older row
+        // written before that cannot arrive formatted.
+        phone: phoneDigits(next.phone ?? ''),
         instagramHandle: next.instagramHandle ?? '',
         facebookProfileUrl: next.facebookProfileUrl ?? '',
         otherContact: next.otherContact ?? '',
@@ -198,12 +203,11 @@ export default function ClientEditScreen() {
             autoCapitalize="none"
             hint="The primary address. Others live in Contact info."
           />
-          <TextField
+          <PhoneField
             label="Phone"
             value={form.values.phone}
-            onChange={(v) => form.setField('phone', v)}
+            onChange={(digits) => form.setField('phone', digits)}
             error={form.errors.phone}
-            keyboardType="phone-pad"
             hint="The primary number. Others live in Contact info."
           />
 
