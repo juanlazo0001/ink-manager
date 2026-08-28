@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import Feather from '@expo/vector-icons/Feather';
+import { useRouter } from 'expo-router';
 import { startConversation } from '@/lib/conversations';
-import { clientName, fetchClients } from '@/lib/clients';
+import { parseSearchPrefill } from '@/lib/searchPrefill';
+import { clientName, searchClients } from '@/lib/clients';
 import { fetchTeamUsers } from '@/lib/team';
 import { colors, hairline, radius, space, type } from '@/theme';
 
@@ -32,9 +34,26 @@ import { colors, hairline, radius, space, type } from '@/theme';
  *
  * On demand, when this component mounts, which only happens when a search
  * has already returned nothing. Putting it on the list screen would mean
- * every chat-tab visit paying for a roster and a client page it almost
- * never shows. The lists are small and already capped server-side
- * (`GET /clients` takes 100).
+ * every chat-tab visit paying for a roster and a client lookup it almost
+ * never shows.
+ *
+ * ─── THE CLIENT HALF IS A SERVER SEARCH NOW (§8 rev H) ──────────────
+ *
+ * It used to be `fetchClients()` — `GET /clients`, which has NO search
+ * parameter and `take: 100` — filtered here by `name.includes(q)`. Three
+ * things were wrong with that, and they only matter now that a CREATE
+ * button hangs off the result:
+ *
+ *   1. It could not match a phone number or an email at all.
+ *   2. It saw only the hundred most-recently-created clients, so a
+ *      studio past a hundred could be told a client does not exist
+ *      purely because they are old.
+ *   3. Both failures are SILENT and look identical to a true miss.
+ *
+ * A wrong "nobody" used to mean a slightly unhelpful empty state. It now
+ * means a duplicate client record, so the query has to be the real one:
+ * `/clients/merge-search`, which matches name, email and phone
+ * server-side across the whole studio. See `searchClients`.
  *
  * ─── WHY AN ARTIST SEES NO BUTTONS ──────────────────────────────────
  *
@@ -64,8 +83,33 @@ export function EmptySearchStart({
   const [people, setPeople] = useState<Person[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  /*
+   * FAIL CLOSED. `people: []` is reached both by "the search ran and
+   * matched nobody" and by "the search threw", and only the first may
+   * ever offer to create a client. So the searched-cleanly state is
+   * tracked separately rather than inferred from an empty array.
+   */
+  const [searchOk, setSearchOk] = useState(false);
 
+  const router = useRouter();
   const canStart = role !== 'ARTIST';
+
+  /*
+   * §8 rev H step 3. Three conditions, all required, and each one is
+   * load-bearing:
+   *
+   *   searchOk        the people query RAN. A thrown search is "unknown".
+   *   people.length   it matched nobody. Not "nobody in the newest 100".
+   *   canStart        an ARTIST cannot create the conversation afterwards
+   *                   (the route 404s them), so offering the whole flow
+   *                   would be offering a dead end — the no-inert rule.
+   *
+   * A two-character minimum is implicit: `searchClients` does not call
+   * the route below that, so `searchOk` never becomes true for a
+   * one-character query and the row cannot appear on a stray keystroke.
+   */
+  const prefill = parseSearchPrefill(query);
+  const canCreate = canStart && searchOk && people !== null && people.length === 0;
 
   useEffect(() => {
     if (!canStart) {
@@ -73,16 +117,29 @@ export function EmptySearchStart({
       return;
     }
     let cancelled = false;
-    const q = query.trim().toLowerCase();
+    const raw = query.trim();
+    const q = raw.toLowerCase();
+    setSearchOk(false);
 
-    Promise.all([
-      fetchTeamUsers(token, studioId).catch(() => []),
-      fetchClients(token).catch(() => []),
-    ])
+    /*
+     * The two halves are asked differently ON PURPOSE. Clients are
+     * searched by the server, across the whole studio, on name + email +
+     * phone. Staff are a small roster this screen already loads whole, so
+     * they are matched here — on name AND email, since the ruling's
+     * people layer is matched by both and a staff member's "name" can be
+     * null (the row falls back to their email).
+     *
+     * `Promise.all` with a per-half `catch` would hide a failed client
+     * search as an empty one, which is the exact confusion that must not
+     * reach the CREATE row — so the client search is NOT caught here. It
+     * rejects into the `.catch` below, which leaves `searchOk` false.
+     */
+    Promise.all([fetchTeamUsers(token, studioId).catch(() => []), searchClients(token, raw)])
       .then(([users, clients]) => {
         if (cancelled) return;
         const staff: Person[] = users
           .filter((u) => u.isActive && !u.pending)
+          .filter((u) => `${u.name ?? ''} ${u.email}`.toLowerCase().includes(q))
           .map((u) => ({
             key: `u:${u.id}`,
             id: u.id,
@@ -90,22 +147,23 @@ export function EmptySearchStart({
             name: u.name ?? u.email,
             avatarUrl: u.avatarUrl,
           }));
-        const people: Person[] = clients.map((c) => ({
+        /* No client-side filter: the server already matched these. */
+        const matched: Person[] = clients.map((c) => ({
           key: `c:${c.id}`,
           id: c.id,
           kind: 'client' as const,
           name: clientName(c),
           avatarUrl: null,
         }));
-        setPeople(
-          [...staff, ...people]
-            .filter((p) => p.name.toLowerCase().includes(q))
-            .filter((p) => !existingCounterpartIds.has(p.id))
-            .slice(0, 6),
-        );
+        setPeople([...staff, ...matched].filter((p) => !existingCounterpartIds.has(p.id)).slice(0, 6));
+        setSearchOk(true);
       })
       .catch(() => {
-        if (!cancelled) setPeople([]);
+        if (cancelled) return;
+        // Rows AND the create offer both stay away: this is "we do not
+        // know", and it must not read as "nobody".
+        setPeople([]);
+        setSearchOk(false);
       });
 
     return () => {
@@ -190,6 +248,35 @@ export function EmptySearchStart({
           {failed ? <Text style={styles.failed}>That didn&apos;t open. Try again.</Text> : null}
         </View>
       )}
+
+      {canCreate ? (
+        <View style={styles.offers}>
+          <Pressable
+            onPress={() =>
+              router.push({
+                pathname: '/client-new',
+                params: {
+                  firstName: prefill.firstName,
+                  lastName: prefill.lastName,
+                  email: prefill.email,
+                  phone: prefill.phone,
+                  /* The intent. `client-new` lands in the thread instead
+                     of the client record when this is set. */
+                  startChat: '1',
+                },
+              })
+            }
+            accessibilityRole="button"
+            accessibilityLabel={`Create client ${query.trim()}`}
+            style={({ pressed }) => [styles.offer, pressed && styles.pressed]}
+          >
+            <Feather name="user-plus" size={14} color={colors.accentFg} />
+            <Text style={styles.offerLabel} numberOfLines={1}>
+              CREATE CLIENT &ldquo;{query.trim()}&rdquo;
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }

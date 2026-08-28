@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 
@@ -8,6 +8,7 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenShell } from '@/components/ScreenShell';
 import { useAuth } from '@/context/auth';
 import { createClient } from '@/lib/clientWrites';
+import { startConversation } from '@/lib/conversations';
 import { screenErrorMessage } from '@/lib/screenError';
 import { useForm } from '@/lib/useForm';
 import { space } from '@/theme';
@@ -35,16 +36,46 @@ import { space } from '@/theme';
  * The screen is gated behind `clients.edit` at its entry point rather
  * than here: the `+` is simply absent without the permission, which is
  * how web hides its own Add Client button (`canAddClient`).
+ *
+ * ─── PREFILL AND THE START-CHAT INTENT (§8 rev H) ──────────────
+ *
+ * Chat's empty search can send someone here with the query already
+ * parsed into a field, and with `startChat=1` meaning "the point of this
+ * record is the conversation". Both are OPTIONAL and additive: the
+ * Clients tab's `+` passes neither and is unchanged, so this screen's
+ * contract for its existing caller is untouched.
+ *
+ * With the intent set, a successful save find-or-creates the thread and
+ * replaces into it. Without it, the save still lands on the new client's
+ * own screen, exactly as before.
+ *
+ * If the thread cannot be opened the client is NOT rolled back — it was
+ * created, that is real, and destroying it to tidy up a navigation
+ * failure would be the worse bug. The screen falls back to the client
+ * record, which is where the save used to land anyway.
  */
 export default function ClientNewScreen() {
   const router = useRouter();
   const { session } = useAuth();
   const token = session?.token ?? null;
+  const params = useLocalSearchParams<{
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+    startChat?: string;
+  }>();
 
   const [saving, setSaving] = useState(false);
+  const startChat = params.startChat === '1';
 
   const form = useForm(
-    { firstName: '', lastName: '', email: '', phone: '' },
+    {
+      firstName: params.firstName ?? '',
+      lastName: params.lastName ?? '',
+      email: params.email ?? '',
+      phone: params.phone ?? '',
+    },
     (values) => {
       const errors: Record<string, string> = {};
       if (!values.firstName.trim()) errors.firstName = 'A first name is required.';
@@ -77,6 +108,21 @@ export default function ClientNewScreen() {
       // Commit before navigating, or the unsaved-changes guard fires on
       // the way out of a screen whose work is already saved.
       form.commit(form.values);
+
+      if (startChat) {
+        try {
+          const convo = await startConversation(token, { clientId: created.id });
+          // Replace for the same reason as below, and to the thread
+          // because that is what the person asked for when they tapped
+          // CREATE CLIENT from a search.
+          router.replace({ pathname: '/conversation/[id]', params: { id: convo.id } });
+          return;
+        } catch {
+          // The client exists; only the thread did not open. Land on the
+          // record rather than stranding them on a saved form.
+        }
+      }
+
       // Replace, not push: the new client's own screen is where this ends,
       // and a back gesture from there should reach the list, not a form
       // for a client that now exists.

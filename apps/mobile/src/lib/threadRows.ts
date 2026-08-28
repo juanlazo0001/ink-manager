@@ -20,6 +20,17 @@ export interface DisplayMessage extends Message {
    * falls back to `id` for those.
    */
   rowKey?: string;
+  /**
+   * The API's machine-readable reason a LOCAL send was refused, when it
+   * gave one — `ApiError.code`, e.g. `no_sms_consent`.
+   *
+   * Only ever set on a row that failed before persisting, so it is the
+   * local-FAILED class by construction. Absent when the API sent no code,
+   * which is every failure today: the backend companion order that emits
+   * `no_sms_consent` had not deployed when this shipped, so the generic
+   * treatment is what actually renders until it does.
+   */
+  failureCode?: string;
 }
 
 export type Row =

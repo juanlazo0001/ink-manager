@@ -138,6 +138,91 @@ export function fetchClients(
   return apiFetch<ClientListItem[]>(`/clients${query}`, { token, signal });
 }
 
+/** What `/clients/merge-search` selects — not the full list row. */
+export interface ClientSearchHit {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone: string | null;
+  lastArtistId: string | null;
+}
+
+/**
+ * SERVER-SIDE client search — name, email and phone.
+ *
+ * `GET /clients` has no search parameter (`routes/clients.ts:113` takes
+ * `includeArchived` and `activity` only, `take: 100`), which is why
+ * `filterClients` above exists and why it can only see the hundred
+ * most-recently-created clients. That is fine for a list the user is
+ * already looking at, and NOT fine for deciding whether a person exists:
+ * "no match in the newest 100" is not "no such client", and acting on it
+ * would create a duplicate.
+ *
+ * `/clients/merge-search` (`routes/clients.ts:468`) is the real search:
+ * per-word AND across `firstName`/`lastName`/`email`/`phone`, studio-
+ * scoped, merged/transferred excluded, `take: 20`, `clients.view`. It
+ * backs the manual-merge picker and the staff inquiry form's lookup.
+ *
+ * ON PHONE MATCHING, EXACTLY: `Client.phone` is STORED normalized — bare
+ * ten digits, no punctuation (`apps/api/src/lib/phone.ts:9`, applied on
+ * create and on PATCH). So a raw-digit query matches by `contains`
+ * today. A FORMATTED query ("(305) 555-0142") does not, because the
+ * stored value has no punctuation to contain. Closing that half is the
+ * `fix/merge-search-phone` backend order; until it deploys, callers must
+ * treat a formatted-phone miss as "unknown", never as "no such person".
+ *
+ * Under two characters the route returns `[]` by its own guard, so this
+ * does not call it — an empty result there means "too short", not "no
+ * match", and the two must not be confused by anything downstream.
+ */
+export async function searchClients(
+  token: string,
+  q: string,
+  signal?: AbortSignal,
+): Promise<ClientSearchHit[]> {
+  const raw = q.trim();
+  if (raw.length < 2) return [];
+
+  const hits = await apiFetch<ClientSearchHit[]>(
+    `/clients/merge-search?q=${encodeURIComponent(raw)}`,
+    { token, signal },
+  );
+
+  /*
+   * ─── ASKING THE SAME ENDPOINT A BETTER QUESTION ───────────────────
+   *
+   * The stored column is bare digits, so a formatted query cannot
+   * `contains`-match it. Rather than matching client-side — which would
+   * be the workaround this feature is forbidden, since it can only see
+   * the rows already returned — the normalized form is sent as a SECOND
+   * query to the same endpoint. The server still does all the matching;
+   * it is simply given the term that can match.
+   *
+   * Only for something phone-shaped: seven digits is the shortest real
+   * subscriber number, and the guard keeps a name containing a stray
+   * digit from costing a second round trip.
+   *
+   * WHAT THIS DOES NOT FIX: `merge-search` reads the `phone` SCALAR
+   * only, so a client's SECONDARY numbers (`ClientPhone` rows) remain
+   * invisible however the query is spelled. That half needs the backend
+   * (`fix/merge-search-phone`) and no client-side phrasing substitutes
+   * for it — a match on a secondary number is a duplicate this cannot
+   * currently prevent.
+   */
+  const digits = raw.replace(/\D/g, '');
+  const normalized = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+  if (normalized.length < 7 || normalized === raw) return hits;
+
+  const byDigits = await apiFetch<ClientSearchHit[]>(
+    `/clients/merge-search?q=${encodeURIComponent(normalized)}`,
+    { token, signal },
+  );
+
+  const seen = new Set(hits.map((h) => h.id));
+  return [...hits, ...byDigits.filter((h) => !seen.has(h.id))];
+}
+
 export function fetchClient(token: string, id: string, signal?: AbortSignal): Promise<ClientDetail> {
   return apiFetch<ClientDetail>(`/clients/${encodeURIComponent(id)}`, { token, signal });
 }
