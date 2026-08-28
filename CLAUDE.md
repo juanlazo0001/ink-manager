@@ -170,6 +170,14 @@ Concise operating rules, not a project history — see REPORT.md for history.
 - The harness freeze is animation-specific, not universal — when feasible run the same probe on the
   before state; a flat after-line is evidence only if the probe moved when it should have (Session 12
   precedent).
+- **iOS modal presentation sequencing does not exist in react-native-web — dismiss→present races are
+  device-only by construction.** Evidence for modal choreography is a static sequence map plus the
+  logged on-device sequence, never a passing preview (incident: attach-flow freeze surviving three
+  preview-verified fixes). Two RN `<Modal>`s alive at once is the shape to look for: `Sheet` keeps
+  its modal mounted ~300ms after `visible` goes false, so `setThisOpen(false)` and
+  `setThatOpen(true)` in one tick overlap by construction. The stable pattern is the long-press
+  overlay's — ONE modal whose *contents* swap; a native picker is the only thing that needs a real
+  dismissal first, and it launches from the completed-dismiss callback, never from the tap.
 
 ## Merge verification
 
