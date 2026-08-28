@@ -33134,3 +33134,177 @@ device-gate, unchanged since earlier in this session.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 20 — reactions get real space; consent resolves where it bites
+
+Branch `chat-ux/20-reaction-layout` from `main` (`504fe9a`), worktree per
+`CLAUDE.md`. Mobile-only, no dependencies. Serial check passed at cut
+time.
+
+## Task A — a deliberate reversal, and the code said so
+
+The clipping had a root cause written into the file it lived in.
+`MessageBubble.tsx:496-500`:
+
+> *"Absolute, so it costs the row no height and cannot push the next
+> bubble down."*
+
+with `reactionCluster: { position: 'absolute', top: -BALLOON / 2 - 2,
+zIndex: 2 }`. The balloon was **built** not to reserve space. That is not
+a bug to fix quietly — it is a design decision being reversed, and it
+could never have held in an inverted list: a row that hangs a balloon
+above its own bounds is painted EARLIER than the row visually above it,
+so the neighbour paints over it. `zIndex` cannot arbitrate between
+siblings laid out in the opposite order to how they appear.
+
+### What shipped
+
+    overlap  = round(BALLOON × 0.45) = 14
+    headroom = BALLOON − overlap     = 16
+
+Both derived from `BALLOON` rather than written down, so they cannot
+drift from it. The reservation rides on the **bubble line**, not the row,
+so an attributed message keeps its name tight to the run and opens the
+space between the name and the bubble — where the balloon actually is. A
+grouped run opens from 2 to 2 + 16 **for the reacted message only**;
+tails, grouping class and attribution are untouched. One headroom
+whatever the count, so a cluster grows sideways and never buys a second
+reservation.
+
+### The corner: I could not reproduce the defect, and did not restyle
+
+The mapping is `mine → right, theirs → left`, which is §7 rev G for both
+cases the brief names. `mine` is `r.userId === viewerUserId`; the payload
+really carries `userId` (`MESSAGE_INCLUDE:559`) and both call sites pass
+`viewerUserId`. Rendered, the four cases are correct — see the screenshot:
+my ❤️ on an incoming bubble sits **right**, their 👍 on my bubble sits
+**left**, two of mine cluster **right**.
+
+One scenario would produce the screenshot legitimately: on a client
+thread **a colleague's** reaction on the studio's own bubble is *theirs*
+→ left, which is correct by the reactor rule but reads as "my side, wrong
+corner". The rule keys on **reactor identity**, not studio side. Without
+the original screenshot's specifics I will not restyle a case that may be
+behaving correctly. **Root cause: not established — deliberately.**
+
+### The animation: instant reflow shipped, and why
+
+`CLAUDE.md` records that animation travel is device-gate-only inside this
+screen's subtree, so a Reanimated layout transition here would be an
+unverifiable animation added to a list with a documented history of
+animation problems. Geometry is the requirement; the slide is polish.
+**Instant reflow shipped, transition not attempted** — a recorded
+outcome, as the brief sanctions, not a failure.
+
+### Evidence, and an honest limit
+
+The screenshot shows the operator's exact scenario — a tight incoming
+group with the **middle** message reacted — with every balloon fully
+visible on the correct side and the neighbours opened.
+
+**The numeric probe was inconclusive and I am not dressing it up.**
+`balloonRect ⊆ rowRect` returned true for every reacted row, but
+`rowHeight − bubbleTop` read 16 on one row and 0 on two others. The cause
+is the harness, not the code: this list renders flipped (which is why the
+text in every screenshot this session is mirrored), so DOM "top" is the
+visual bottom and my probe was measuring in the flipped frame. Reading
+the rendered image, the geometry is right. **A trustworthy numeric
+assertion wants an in-component `__DEV__` probe printing its own rects —
+the attach-logger lesson applied to layout — rather than DOM archaeology
+through a transform.** That is the follow-up; the device gate is the
+check in the meantime.
+
+## Task B — web had it, mobile mostly had it, one row was the gap
+
+**What web's Attach link actually offers**, since the brief describes
+something else: Intake form · estimate · deposit · waiver · flash gallery,
+all from `GET /clients/:id/shareable-links` — which **reads tokens
+already on the record and mints nothing** — plus one row that does mint.
+There is **no custom-URL field on either client**, so there is no
+"PREFILLED section above the custom-URL field" to build. Mobile has listed
+the read-only set since session 16 and it matches web line for line.
+
+The real gap was the minting row, shown disabled as "portal only" because
+the client's contact details were thought unreachable. They are not:
+`/conversations/:id/context` returns `id/firstName/lastName/email/phone`
+and always has — the mobile type simply never declared them — and it
+carries `requireRole(OWNER, FRONT_DESK)`, **the same gate
+`POST /prefill-drafts` carries**. So the row is live for exactly the roles
+that can mint and absent for everyone else.
+
+Web's branch is mirrored rather than simplified: more than one intake
+form opens a picker, one goes straight to minting. On the single-host
+sheet that picker is another content swap — no modal presented or
+dismissed — which is session 17's structure paying for itself.
+
+## Task C — consent parity, with the semantics written down
+
+| action | endpoint | the part a caller cannot infer |
+| --- | --- | --- |
+| Record consent | `POST /clients/:id/sms-consent` | already-given is a **200 no-op** preserving the original timestamp — success ≠ "this call granted it"; it also **clears any outstanding token** so a link already sent cannot be replayed |
+| Get opt-in link | `POST /clients/:id/sms-consent/link` | **replaces any previous token** — issuing a second link silently kills the first, so it is called once per intent to send |
+
+Both are called exactly as web calls them, with the three methods'
+values verbatim. The status line gains the source through web's own label
+map, with an unknown value falling back to itself so a source added
+server-side degrades to legible.
+
+**The compliance guardrail.** The opt-in link is **never sent over SMS**:
+it is offered as clipboard + native share for the operator to send
+through a channel the client already opened, with a line saying so. Web
+behaves identically (`copyLink` writes to the clipboard and nothing
+else); native simply has a share sheet as well. There is deliberately no
+"text this to them" affordance.
+
+**The failed-send sheet is the point of the arc.** Session 15 kept Retry
+on a consent block because the row never persisted and the blocking state
+is one the client can change; this puts the means of changing it in the
+same sheet. Record → Retry is two taps where it bites, not a trip to the
+client page and back. Rendered only for the `no_sms_consent` code, so an
+ordinary local failure is untouched.
+
+**The one-line note (closes Session 15's escalation):** web's
+client-create form captures **no** consent — zero mentions in the
+add-client path. Both clients start un-consented; it is a product gap on
+both, not a mobile omission.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 16.50s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+## What was NOT done, stated plainly
+
+This session ran long and three tasks landed as code; the evidence set the
+brief asks for is **partially delivered**:
+
+- **Delivered:** the reacted-group screenshot, the corner reading from it,
+  the four typechecks, web's file:line for B and C.
+- **Not delivered:** the numeric invariant table (probe unreliable, above);
+  before/after add-and-remove; the web-vs-mobile paired screenshots for B
+  and C; the harness consent loop (blocked → record → retry → sent); the
+  regression battery (long-press on a reacted bubble, reveal drag on
+  reacted rows, grouping/tails table, attach panes reaching
+  `interaction-ready` after the link pane gained its row).
+
+None of those are claimed. The regressions in particular are **untested**,
+and the long-press-on-a-reacted-bubble case matters most: session 14's
+placement reads the clone's window rect, which should be unaffected by a
+taller row, but "should be" is not "was measured".
+
+## Escalations
+
+1. **The geometry needs an in-component probe**, not DOM measurement
+   through the inverted list's transform. Until then the invariant is
+   asserted by construction and confirmed only visually.
+2. **The wrong-corner instance is unreproduced.** The likely explanation
+   is a colleague's reaction reading as "my side" — behaviour, not a bug.
+   The original screenshot would settle it.
+3. **Regressions unrun** (listed above) — the honest blocker on
+   recommending this for merge without the gate.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
