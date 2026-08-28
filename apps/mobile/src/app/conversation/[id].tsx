@@ -96,6 +96,33 @@ export default function ConversationScreen() {
   const [header, setHeader] = useState<ConversationThreadHeader | null>(null);
   /** §9 rev H: the ⓘ details sheet. */
   const [detailsOpen, setDetailsOpen] = useState(false);
+  /*
+   * ─── NAVIGATE AFTER THE SHEET IS GONE, NOT BESIDE IT ──────────────
+   *
+   * Session 17's pattern, applied to navigation. The row stages where it
+   * wants to go, the sheet closes, and the push happens from the host's
+   * completed-dismiss callback.
+   *
+   * The inquiry row below used to do `setDetailsOpen(false)` and
+   * `router.push(...)` in the same tick — the exact shape 17 removed from
+   * the attach flow. A push is not a modal presentation, so it was not
+   * causing the freeze; but it means the destination screen mounts while
+   * a full-screen transparent Modal is still dismissing over it, and it
+   * is the shape this codebase has now decided not to write. Both rows
+   * go through here.
+   */
+  const pendingNav = useRef<(() => void) | null>(null);
+
+  function closeDetailsThen(navigate: () => void) {
+    pendingNav.current = navigate;
+    setDetailsOpen(false);
+  }
+
+  function onDetailsDismissed() {
+    const go = pendingNav.current;
+    pendingNav.current = null;
+    go?.();
+  }
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -925,16 +952,29 @@ export default function ConversationScreen() {
         onClose={() => setDetailsOpen(false)}
         header={header}
         channel={threadChannel}
-        onPressInquiry={(inquiryId) => {
+        onDismissed={onDetailsDismissed}
+        onPressInquiry={(inquiryId) =>
           /*
-           * Recovered verbatim from 4a8117a, the commit that deleted it —
-           * not reinvented. `/staff-inquiry/[id]` still resolves
-           * (app/staff-inquiry/[id].tsx), and `(tabs)/inquiries.tsx` and
-           * `inquiry-new.tsx` both push it in this identical shape.
+           * The route is still 4a8117a's, recovered rather than
+           * reinvented — `(tabs)/inquiries.tsx` and `inquiry-new.tsx`
+           * push it in this identical shape. What changed is only WHEN:
+           * after the sheet has actually gone. See `closeDetailsThen`.
            */
-          setDetailsOpen(false);
-          router.push({ pathname: '/staff-inquiry/[id]', params: { id: inquiryId } });
-        }}
+          closeDetailsThen(() =>
+            router.push({ pathname: '/staff-inquiry/[id]', params: { id: inquiryId } }),
+          )
+        }
+        /*
+         * Only a CLIENT thread's counterpart has a client page to open;
+         * the sheet decides whether to render the affordance at all, and
+         * a staff row is given none. Passing the handler unconditionally
+         * is safe because the sheet gates on `header.clientId` too.
+         */
+        onPressClient={(clientId) =>
+          closeDetailsThen(() =>
+            router.push({ pathname: '/client/[id]', params: { id: clientId } }),
+          )
+        }
       />
 
       {/*

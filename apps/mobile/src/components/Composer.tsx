@@ -37,6 +37,13 @@ import { motion, S3, useReducedMotion } from '@/theme/chatMotion';
 /** §3: the field's resting height and its five-line ceiling. */
 const COMPOSER_MIN_HEIGHT = 36;
 const COMPOSER_MAX_HEIGHT = 120;
+/**
+ * Vertical padding, derived rather than chosen: `(36 − 23) / 2`, the
+ * space left over once one line of `type.message` sits inside the resting
+ * height. Fractional on purpose — rounding to 6 or 7 would put the line
+ * half a point off centre, and a text field is the one place that shows.
+ */
+const COMPOSER_LINE_PAD = (COMPOSER_MIN_HEIGHT - type.message.lineHeight) / 2;
 
 /*
  * `TextInput` is not animatable on its own; this is the standard
@@ -780,11 +787,32 @@ const styles = StyleSheet.create({
        field is about to become. */
     borderRadius: radius.bubble,
     color: colors.fg,
-    ...type.body,
-    fontSize: 16,
+    /*
+     * ─── THE DESCENDER CLIP, AND WHY IT WAS INVISIBLE ───────────
+     *
+     * This read `...type.body, fontSize: 16`. `type.body` is Outfit
+     * **15/21** — so the spread brought a line box measured for 15px type,
+     * the next line raised the glyphs to 16px, and nothing raised the box
+     * with them. 21pt of line for 16pt Outfit clips the descenders: the
+     * placeholder rendered as "Messag̶e̶", and every g/j/p/q/y the user
+     * typed lost its tail too.
+     *
+     * `type.message` is the design system's own Outfit-16 pairing —
+     * **16/23**, the size the bubbles use. Spreading it instead of
+     * patching `type.body` fixes the box by construction rather than by
+     * a second override that could drift again, and it is the apt token:
+     * this field is about to become a message (see the radius note).
+     */
+    ...type.message,
     paddingHorizontal: space.md,
-    paddingTop: space.sm + 2,
-    paddingBottom: space.sm + 2,
+    /*
+     * (36 − 23) / 2 = 6.5, which centres one 23pt line inside the spec's
+     * 36pt resting height with nothing clipped at either end. It was
+     * 10 + 10, which only fitted because the line box was two points
+     * too short.
+     */
+    paddingTop: COMPOSER_LINE_PAD,
+    paddingBottom: COMPOSER_LINE_PAD,
   },
   banner: {
     flexDirection: 'row',
