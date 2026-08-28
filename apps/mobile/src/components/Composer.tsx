@@ -133,10 +133,44 @@ export function Composer({
    * `body` is read by three different expressions on every render.
    */
   const body = bodyState ?? '';
+  /*
+   * ─── THE ONE PLACE THE DRAFT IS WRITTEN, AND WHY THAT MATTERS ───
+   *
+   * `bodyRef` mirrors the draft for `onContentSize`, which cannot read
+   * `body` (see its own note: the size event fires before React commits).
+   * The ref used to be written only on the paths a KEYSTROKE takes —
+   * `onChangeBody`, the edit seed, and the post-send clear — while
+   * `insertTemplate` and `insertLink` wrote the draft through here and
+   * left the ref stale.
+   *
+   * That was not a cosmetic lag. `onContentSize` pins the height to the
+   * minimum when the ref looks empty, and `onContentSizeChange` fires
+   * only when the content size CHANGES — so inserting a template into an
+   * empty field fired the one event carrying the new height, had it
+   * thrown away, and then never fired again. The field stayed at 36
+   * around three lines of text until something else altered the wrap.
+   * Typing did not reliably fix it: a keystroke that does not add a line
+   * changes no size and sends no event.
+   *
+   * So the write lives here, where every source already passes —
+   * keystroke, template, link, paste, edit-seed, send-clear. No caller
+   * needs to remember, and there are no per-source special cases to keep
+   * in step.
+   */
   const setBody = (next: string | ((current: string) => string)) => {
     setBodyState((current) => {
-      const value = typeof next === 'function' ? next(current ?? '') : next;
-      return value ?? '';
+      const value = (typeof next === 'function' ? next(current ?? '') : next) ?? '';
+      /*
+       * A ref write inside a state updater, which React may invoke twice
+       * in StrictMode. Safe because it is IDEMPOTENT: the same `current`
+       * yields the same `value`, so a second invocation writes the same
+       * string. It sits here rather than outside because the functional
+       * form's result is only knowable with `current` in hand, and
+       * computing it twice — once for the ref, once for the state — is
+       * the version that could actually disagree.
+       */
+      bodyRef.current = value;
+      return value;
     });
   };
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -232,9 +266,8 @@ export function Composer({
   // rather than retyped. Keyed on the id, so switching directly from one
   // message to another reloads rather than keeping the first one's text.
   useEffect(() => {
-    const seeded = editingMessageId ? (editingInitialBody ?? '') : '';
-    bodyRef.current = seeded;
-    setBody(seeded);
+    // `setBody` keeps `bodyRef` in step — see its note.
+    setBody(editingMessageId ? (editingInitialBody ?? '') : '');
   }, [editingMessageId, editingInitialBody]);
 
   // Either a caption or a finished image is enough to send, mirroring the
@@ -254,7 +287,6 @@ export function Composer({
     !unavailableChannels.has(sendState.channel);
 
   function onChangeBody(next: string) {
-    bodyRef.current = next;
     setBody(next);
   }
 
@@ -264,7 +296,6 @@ export function Composer({
     // lands with the tap, not after the round trip.
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onSend(body.trim(), editing ? [] : attachments.uploadedUrls);
-    bodyRef.current = '';
     setBody('');
     attachments.clear();
     // §3: the field collapses on the same spring it grew with.
