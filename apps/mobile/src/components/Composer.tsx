@@ -34,16 +34,46 @@ import {
 import { chat, channelColor, colors, hairline, radius, space, type } from '@/theme';
 import { motion, S3, useReducedMotion } from '@/theme/chatMotion';
 
-/** §3: the field's resting height and its five-line ceiling. */
+/** §3: the field's resting height — padding, one line, padding. */
 const COMPOSER_MIN_HEIGHT = 36;
-const COMPOSER_MAX_HEIGHT = 120;
 /**
- * Vertical padding, derived rather than chosen: `(36 − 23) / 2`, the
- * space left over once one line of `type.message` sits inside the resting
- * height. Fractional on purpose — rounding to 6 or 7 would put the line
- * half a point off centre, and a text field is the one place that shows.
+ * Vertical padding, derived rather than chosen: the space left over once
+ * one line of `type.message` and the field's own border sit inside the
+ * resting height.
+ *
+ *     (36 − 2×1 − 23) / 2 = 5.5
+ *
+ * THE BORDER IS PART OF THE HEIGHT, and leaving it out is what made the
+ * first version of this off by two. React Native sizes like `box-sizing:
+ * border-box`, so `height: 36` is the OUTER box: subtract the hairline
+ * top and bottom before there is any room for text at all. Session 18
+ * derived this as `(36 − 23) / 2` and left the line two points short of
+ * its own box — measured here as a content box of 126 inside a field of
+ * 128, which is why five lines still scrolled by exactly 2px.
+ *
+ * Fractional on purpose — rounding would put the line half a point off
+ * centre, and a text field is the one place that shows.
  */
-const COMPOSER_LINE_PAD = (COMPOSER_MIN_HEIGHT - type.message.lineHeight) / 2;
+const COMPOSER_LINE_PAD = (COMPOSER_MIN_HEIGHT - 2 * hairline - type.message.lineHeight) / 2;
+/**
+ * §3's five-line ceiling, DERIVED so it cannot drift from the type again.
+ *
+ * The resting height already contains the first line, so the ceiling is
+ * rest plus four more line-steps:
+ *
+ *     36 + 4 × 23 = 128        (≡ 2×1 + 5.5 + 5 × 23 + 5.5 — the same box)
+ *
+ * It was the literal `120`, written when the field's line box was 21 —
+ * and even then it admitted only `(120 − 20) / 21 ≈ 4.8` lines, so "five
+ * lines" was never literally true. Session 18 corrected the line height
+ * to 23 and made the shortfall worse (≈4.65) without touching the
+ * constant, which is exactly the drift a hardcoded number invites: the
+ * two facts lived in different places and only one of them got updated.
+ *
+ * Written this way the cap MEANS five full lines, whatever the type
+ * becomes next.
+ */
+const COMPOSER_MAX_HEIGHT = COMPOSER_MIN_HEIGHT + 4 * type.message.lineHeight;
 
 /*
  * `TextInput` is not animatable on its own; this is the standard
@@ -253,9 +283,25 @@ export function Composer({
    * `onChangeBody` below, so it is always the text the user just typed.
    */
   function onContentSize(height: number) {
+    /*
+     * ─── THE REPORT IS A CONTENT BOX; THE STYLE IS AN OUTER BOX ────
+     *
+     * `onContentSizeChange` reports padding + text. The `height` style is
+     * border-box, so writing the reported number straight into it hands
+     * the border its two points out of the TEXT's allowance, and every
+     * multi-line size came out two short: a five-line template settled at
+     * 126 with a 124 content area, so the fifth line was clipped and the
+     * field scrolled by exactly 2px while claiming to fit.
+     *
+     * Adding the border back is what makes `COMPOSER_MAX_HEIGHT`'s
+     * derivation land: five lines report 126, become 128, and 128 is the
+     * ceiling — so the cap is reached at exactly five lines rather than
+     * just before them.
+     */
+    const outer = height + 2 * hairline;
     const next = bodyRef.current.length === 0
       ? COMPOSER_MIN_HEIGHT
-      : Math.min(Math.max(height, COMPOSER_MIN_HEIGHT), COMPOSER_MAX_HEIGHT);
+      : Math.min(Math.max(outer, COMPOSER_MIN_HEIGHT), COMPOSER_MAX_HEIGHT);
     if (Math.abs(next - inputHeight.value) < 0.5) return;
     inputHeight.value = motion(next, S3, reduced);
   }

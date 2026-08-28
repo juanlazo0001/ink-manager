@@ -33026,3 +33026,111 @@ destroyed work I do not own.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 19d — the ceiling, derived (and the two points it uncovered)
+
+Fourth commit on `chat-ux/19-programmatic-growth`. Mobile-only.
+
+## What was asked, and what it turned out to require
+
+`COMPOSER_MAX_HEIGHT` was the literal `120`. It is now:
+
+    const COMPOSER_MAX_HEIGHT = COMPOSER_MIN_HEIGHT + 4 * type.message.lineHeight;
+    //                          36                 + 4 × 23  =  128
+
+The resting height already contains the first line, so the ceiling is
+rest plus four more line-steps. Same box either way: `2×1 + 5.5 + 5×23 +
+5.5 = 128`.
+
+Setting that constant alone did **not** produce five visible lines, and
+the reason is worth the two extra changes it forced.
+
+### The border was never in the arithmetic
+
+Measured after deriving the constant: a five-line template settled at
+**128 with a content area of 126**, and the field still scrolled by
+exactly **2px**. React Native sizes like `box-sizing: border-box`, so
+`height` is the OUTER box — the field's hairline border takes its two
+points out of the text's allowance before any text is placed.
+
+Session 18 derived the padding as `(36 − 23) / 2 = 6.5` and left the same
+two points out, so the resting line was also 2 short of its own box. Now:
+
+    COMPOSER_LINE_PAD = (36 − 2×hairline − 23) / 2 = 5.5
+
+Total chrome is unchanged (`2 + 5.5 + 5.5 = 13`, formerly `6.5 + 6.5 =
+13`), so the resting height is still exactly 36 — but the line now gets
+its full 23 inside the content area instead of 21.
+
+### The reported size is a content box; the style is an outer box
+
+Even with the padding right, five lines settled at **126**, not 128.
+`onContentSizeChange` reports padding + text and nothing else, and that
+number was being written straight into a border-box `height` — so every
+multi-line size came out two points short and the cap was reached just
+*before* five lines rather than at them.
+
+    const outer = height + 2 * hairline;   // Composer.tsx:301
+
+That is what makes the derived ceiling land: five lines report 126,
+become 128, and 128 is the ceiling.
+
+## Evidence
+
+| case | height | content | can it scroll? |
+| --- | --- | --- | --- |
+| **5-line template** | **128** | 126 | **no — `scrollTop` reaches 0** |
+| **9-line template** | **128** (capped) | 425 | yes — `scrollTop` reaches 299 |
+| after send | **36** | — | — |
+
+"Can it scroll" is asked by actually scrolling it — `scrollTop = 9999`
+and reading back — rather than by comparing `scrollHeight` to
+`clientHeight`, which is what reported a false 2px scroll in the first
+place and hid the border all the way through session 18.
+
+### The typing table, cap row updated
+
+    rest 36 · 1 line 36 · 2 lines 59 · 3 lines 82 · 4 lines 105
+    5 lines 128 · 6 lines 128 · 7 lines 128 · cleared 36
+
+Every row below the cap is unchanged from sessions 18 and 19; only the
+ceiling moved, from 120 to 128, which is the point of the change.
+
+## Spec
+
+§3 now reads: *"grows to 5 lines (five full lines — the ceiling derives
+from line metrics, ≈128 with current type) then scrolls"*.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         clean
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+Console: one error, the pre-existing React 19 `element.ref` shim message.
+Screenshot: `design-refs/session-19/cux19d-five-lines-no-scroll-393.png`.
+
+### Retested vs untouched
+
+**Retested:** the five- and nine-line cases with a real scroll attempt,
+the full typing table, collapse-to-rest after send.
+
+**Untouched and NOT retested:** the S3 animation's feel, the keyboard
+ride's travel, the native picker, the long-press overlay — all
+device-gate, unchanged since earlier in this session.
+
+## Escalations
+
+1. **The two-point shortfall existed at every height, not just the cap**
+   — every multi-line size has been 2px short since session 18 shipped
+   the padding derivation. It is fixed here, but the gate is where the
+   text is actually looked at.
+2. **`hairline` is `1` on this platform** (`theme/layout.ts:26`). Both
+   derivations read the token rather than the number, so a future
+   `StyleSheet.hairlineWidth` (0.5 on iOS @2x) flows through — but the
+   resulting fractional padding has not been seen on a device.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
