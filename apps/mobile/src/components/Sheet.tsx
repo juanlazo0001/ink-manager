@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Modal, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
@@ -61,6 +61,7 @@ import { duration, easing } from '@/theme/motion';
 export function Sheet({
   visible,
   onClose,
+  onDismissed,
   children,
   contentStyle,
   /** Announced to screen readers as the sheet's purpose. */
@@ -68,6 +69,20 @@ export function Sheet({
 }: {
   visible: boolean;
   onClose: () => void;
+  /**
+   * Fired when this sheet is REALLY gone — the Modal unmounted, by
+   * either route below.
+   *
+   * `onClose` means "the user asked to close"; this means "it closed".
+   * The difference is the whole of session 17: on iOS, presenting a new
+   * modal while a previous one is still dismissing can wedge the
+   * presentation queue, so anything that presents next — above all a
+   * NATIVE picker — must be triggered from here, never from the tap that
+   * started the dismissal.
+   *
+   * Optional and additive: existing callers are unaffected.
+   */
+  onDismissed?: () => void;
   children: ReactNode;
   contentStyle?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
@@ -75,12 +90,34 @@ export function Sheet({
   const [mounted, setMounted] = useState(visible);
   const [height, setHeight] = useState(0);
 
+  /*
+   * Both unmount routes — the animation's completion callback and the
+   * backstop below — funnel through here, so `onDismissed` fires exactly
+   * once whichever way the sheet actually went away. A dismissal cut
+   * short by a native modal still reports, which is precisely the case
+   * that used to strand the flow.
+   */
+  /* A ref so a caller passing an inline arrow cannot re-run the effect. */
+  const onDismissedRef = useRef(onDismissed);
+  onDismissedRef.current = onDismissed;
+
+  const dismissed = useRef(false);
+  const unmount = useCallback(() => {
+    setMounted(false);
+    if (dismissed.current) return;
+    dismissed.current = true;
+    onDismissedRef.current?.();
+  }, []);
+
   const scrim = useSharedValue(0);
   /** 1 = fully below the screen, 0 = open. Unitless so it survives a re-measure. */
   const slide = useSharedValue(1);
 
   useEffect(() => {
-    if (visible) setMounted(true);
+    if (visible) {
+      setMounted(true);
+      dismissed.current = false;
+    }
 
     scrim.value = withTiming(visible ? 1 : 0, {
       duration: duration.base,
@@ -96,7 +133,7 @@ export function Sheet({
         easing: visible ? easing.out : easing.standard,
       },
       (finished) => {
-        if (finished && !visible) runOnJS(setMounted)(false);
+        if (finished && !visible) runOnJS(unmount)();
       },
     );
 
@@ -131,7 +168,7 @@ export function Sheet({
      * of them could have stuck. The attach flow is simply the one place
      * that reliably races a native modal against the dismissal.
      */
-    const backstop = setTimeout(() => setMounted(false), duration.slow + 80);
+    const backstop = setTimeout(unmount, duration.slow + 80);
     return () => clearTimeout(backstop);
   }, [visible, scrim, slide]);
 

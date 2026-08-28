@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { Sheet } from '@/components/Sheet';
 import { Eyebrow } from '@/components/ui';
 import { artistLabel, fetchArtists, type ArtistOption } from '@/lib/artists';
 import { fetchConversationContext } from '@/lib/conversations';
@@ -42,22 +41,29 @@ import { colors, hairline, radius, space, type } from '@/theme';
  * portfolio". The owner's spec for mobile is that All artists, sectioned
  * by name, is the fallback rather than the message, so the control is
  * never a dead end. Same source, same send; different default.
+ *
+ * ─── CONTENT ONLY, NOT A SHEET (session 17) ─────────────────────────
+ *
+ * This used to wrap itself in its own `<Sheet>`, which meant opening it
+ * dismissed the attach menu's modal and presented a second one in the
+ * same tick — the iOS presentation race. It is now the composer's single
+ * sheet host's *contents*, so reaching it moves nothing: no dismissal, no
+ * presentation, no race. It renders its own CANCEL because the host has
+ * no chrome of its own.
  */
-export function PortfolioPicker({
-  visible,
-  onClose,
+export function PortfolioContent({
   token,
   conversationId,
   canReadContext,
   onPick,
+  onCancel,
 }: {
-  visible: boolean;
-  onClose: () => void;
   token: string | null;
   conversationId: string;
   /** OWNER/FRONT_DESK only — see the note on `/context` above. */
   canReadContext: boolean;
   onPick: (url: string) => void;
+  onCancel: () => void;
 }) {
   const [artists, setArtists] = useState<ArtistOption[] | null>(null);
   const [assignedId, setAssignedId] = useState<string | null>(null);
@@ -65,7 +71,7 @@ export function PortfolioPicker({
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (!visible || !token) return;
+    if (!token) return;
     let cancelled = false;
     setFailed(false);
 
@@ -95,7 +101,7 @@ export function PortfolioPicker({
     return () => {
       cancelled = true;
     };
-  }, [visible, token, conversationId, canReadContext]);
+  }, [token, conversationId, canReadContext]);
 
   const withPieces = (artists ?? []).filter((a) => (a.portfolioImages?.length ?? 0) > 0);
   const assigned = assignedId ? withPieces.find((a) => a.id === assignedId) ?? null : null;
@@ -110,7 +116,7 @@ export function PortfolioPicker({
   const emptyAssigned = !showAll && assignedId !== null && assigned === null;
 
   return (
-    <Sheet visible={visible} onClose={onClose} accessibilityLabel="Close portfolio picker">
+    <>
       <View style={styles.head}>
         <Eyebrow>Add from Portfolio</Eyebrow>
         {assigned || emptyAssigned ? (
@@ -148,10 +154,7 @@ export function PortfolioPicker({
                 {(artist.portfolioImages ?? []).map((url) => (
                   <Pressable
                     key={url}
-                    onPress={() => {
-                      onPick(url);
-                      onClose();
-                    }}
+                    onPress={() => onPick(url)}
                     accessibilityRole="button"
                     accessibilityLabel={`Attach portfolio piece by ${artistLabel(artist)}`}
                     style={({ pressed }) => [styles.cell, pressed && styles.pressed]}
@@ -165,10 +168,10 @@ export function PortfolioPicker({
         </ScrollView>
       )}
 
-      <Pressable onPress={onClose} style={styles.done}>
+      <Pressable onPress={onCancel} style={styles.done}>
         <Text style={styles.doneLabel}>CANCEL</Text>
       </Pressable>
-    </Sheet>
+    </>
   );
 }
 
