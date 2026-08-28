@@ -48,6 +48,7 @@ import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
 import { channelLabel } from '@/components/ConversationRow';
 import { MessageBubble, REVEAL_WIDTH, messageImages } from '@/components/MessageBubble';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { SmsConsentActions } from '@/components/SmsConsentActions';
 import { ThreadDetailsSheet } from '@/components/ThreadDetailsSheet';
 import { ThreadHeader } from '@/components/ThreadHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
@@ -1256,6 +1257,35 @@ export default function ConversationScreen() {
       <MessageActions
         visible={!!actionFor}
         onClose={closeOverlay}
+        /*
+         * §2.4 / §7 rev H — the consent block resolves where it bites.
+         *
+         * A `no_sms_consent` refusal is not a broken message, it is a
+         * message waiting on paperwork, and Retry was deliberately KEPT
+         * for exactly this: record what the client already said, tap
+         * Retry, and the same row goes. Putting the grant here saves a
+         * trip to the client page and back, and it is the same two
+         * endpoints that page calls — no second implementation.
+         *
+         * Rendered only for that code, so an ordinary local failure is
+         * unchanged.
+         */
+        resolve={
+          actionFor?.failureCode === 'no_sms_consent' && header?.clientId ? (
+            <SmsConsentActions
+              compact
+              clientId={header.clientId}
+              token={token}
+              consentGivenAt={null}
+              onRecorded={() => {
+                /* The sheet's own copy is now stale — close it so the
+                   next long-press reflects the granted state, and leave
+                   the failed row in place so Retry is one tap away. */
+                closeOverlay();
+              }}
+            />
+          ) : null
+        }
         failure={
           actionFor && deliveryState(actionFor) === 'FAILED'
             ? isProviderFailure(actionFor)

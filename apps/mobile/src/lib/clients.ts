@@ -114,6 +114,15 @@ export interface ClientDetail extends ClientListItem {
   otherContact: string | null;
   address: string | null;
   smsConsentGivenAt: string | null;
+  /**
+   * WHERE consent came from — `intake_form`, `inbound_keyword`,
+   * `inbound_sms`, `consent_link`, `staff_verbal_in_person`,
+   * `staff_verbal_phone`, `staff_written_form`. Web renders these as
+   * human phrases; the raw value is shown if an unfamiliar one appears,
+   * so a new source added server-side degrades to legible rather than
+   * blank.
+   */
+  smsConsentSource: string | null;
   smsOptedOutAt: string | null;
   mergedIntoId: string | null;
   mergedInto: { id: string; firstName: string; lastName: string } | null;

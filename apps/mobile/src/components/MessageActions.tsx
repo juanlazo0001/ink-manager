@@ -1,4 +1,5 @@
 import Feather from '@expo/vector-icons/Feather';
+import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { stamp } from '@/lib/format';
@@ -39,6 +40,7 @@ export function MessageActions({
   onCopy,
   onEdit,
   onSaveImage,
+  resolve,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -67,6 +69,13 @@ export function MessageActions({
   detail?: { channel: string; sentAt: string; edited: boolean } | null;
   /** Image attachments on this message, if any — enables Save. */
   images?: string[];
+  /**
+   * Rendered above the failure explanation when the refusal was a consent
+   * block, so the thing that unblocks the send sits with the send it
+   * blocked. The screen supplies it; this component stays ignorant of
+   * consent entirely.
+   */
+  resolve?: ReactNode;
   onReply: () => void;
   onCopy: () => void;
   onEdit: () => void;
@@ -91,6 +100,9 @@ export function MessageActions({
       {failure ? (
         <View style={styles.failure}>
           <Text style={styles.failureText}>{failure.explanation}</Text>
+          {/* The way out, where the block bites: record the consent the
+              client just gave and Retry below becomes correct. */}
+          {resolve}
         </View>
       ) : null}
 

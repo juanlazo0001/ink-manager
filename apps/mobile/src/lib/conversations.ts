@@ -234,6 +234,20 @@ export interface ConversationContextInquiry {
 
 export interface ConversationContextResponse {
   inquiries: ConversationContextInquiry[];
+  /**
+   * The route has always returned these (`routes/conversations.ts`
+   * selects id/firstName/lastName/email/phone); the type simply never
+   * declared them, because the portfolio picker only wanted the inquiry.
+   * They are what seeds a prefilled intake link — the same four fields
+   * web sends.
+   */
+  client?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string | null;
+    phone: string | null;
+  } | null;
 }
 
 export function fetchConversationContext(

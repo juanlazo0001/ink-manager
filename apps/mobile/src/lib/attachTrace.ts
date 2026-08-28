@@ -50,7 +50,14 @@ export type AttachStep =
   | 'interaction-ready';
 
 /** The surfaces the attach path can show. Stable identity — see above. */
-export type AttachSurface = 'menu' | 'links' | 'templates' | 'portfolio' | 'library' | 'camera';
+export type AttachSurface =
+  | 'menu'
+  | 'links'
+  | 'templates'
+  | 'portfolio'
+  | 'prefill-forms'
+  | 'library'
+  | 'camera';
 
 /**
  * Relative to the first traced event, because a wall clock says nothing
