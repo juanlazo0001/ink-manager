@@ -17,7 +17,12 @@ import { Eyebrow } from '@/components/ui';
 import { useAttachments } from '@/hooks/useAttachments';
 import { PortfolioContent } from '@/components/PortfolioPicker';
 import { resetAttachTrace, traceAttach, type AttachSurface } from '@/lib/attachTrace';
-import { fetchMessageTemplates, type MessageTemplate } from '@/lib/conversations';
+import {
+  fetchConversationContext,
+  fetchMessageTemplates,
+  type MessageTemplate,
+} from '@/lib/conversations';
+import { createPrefillDraft, fetchIntakeForms, type IntakeFormOption } from '@/lib/prefill';
 import {
   appendLink,
   fetchShareableLinks,
@@ -241,6 +246,9 @@ export function Composer({
    */
   const pendingLaunch = useRef<'library' | 'camera' | null>(null);
   const [templates, setTemplates] = useState<MessageTemplate[] | null>(null);
+  /** Forms to choose between, only when the studio has more than one. */
+  const [intakeForms, setIntakeForms] = useState<IntakeFormOption[] | null>(null);
+  const [prefillBusy, setPrefillBusy] = useState(false);
   const attachments = useAttachments(token);
 
   /*
@@ -430,6 +438,61 @@ export function Composer({
   function insertTemplate(template: MessageTemplate) {
     setBody((current) => (current ? `${current}\n${template.body}` : template.body));
     closeAttach();
+  }
+
+  /*
+   * The prefilled intake link — the one row in this menu that MINTS.
+   *
+   * Web's flow exactly: if the studio has more than one intake form it
+   * asks which, otherwise it goes straight to minting
+   * (`ConversationsPanel.tsx`'s `handleInsertPrefillLink`). The contact
+   * details come from `/conversations/:id/context`, which is the same
+   * OWNER/FRONT_DESK gate `POST /prefill-drafts` carries — so a viewer
+   * who cannot mint cannot reach the row either, and the no-inert rule
+   * holds without a special case.
+   */
+  async function startPrefill() {
+    if (!token || !conversationId) return;
+    setPrefillBusy(true);
+    try {
+      const forms = intakeForms ?? (await fetchIntakeForms(token));
+      setIntakeForms(forms);
+      if (forms.length > 1) {
+        setPrefillBusy(false);
+        showAttachView('prefill-forms');
+        return;
+      }
+      await mintPrefill(forms[0]?.slug);
+    } catch {
+      // The pane stays put and offers the other links, matching how a
+      // failed shareable-links lookup is treated two functions up.
+      setPrefillBusy(false);
+    }
+  }
+
+  async function mintPrefill(formSlug?: string) {
+    if (!token || !conversationId) return;
+    setPrefillBusy(true);
+    try {
+      const context = await fetchConversationContext(token, conversationId);
+      const c = context.client;
+      const draft = await createPrefillDraft(token, {
+        conversationId,
+        formSlug,
+        payload: {
+          firstName: c?.firstName || undefined,
+          lastName: c?.lastName || undefined,
+          email: c?.email || undefined,
+          phone: c?.phone || undefined,
+        },
+      });
+      setBody((current) => appendLink(current, draft.prefillUrl));
+      closeAttach();
+    } catch {
+      setPrefillBusy(false);
+    } finally {
+      setPrefillBusy(false);
+    }
   }
 
   function insertLink(url: string | null | undefined) {
@@ -641,13 +704,30 @@ export function Composer({
           <>
             <Eyebrow style={styles.sheetEyebrow}>Insert a link</Eyebrow>
 
-            {/* Web's first entry mints a PrefillDraft token, which is a
-                write, so it is shown and disabled rather than omitted. */}
-            <View style={[styles.option, styles.optionDisabledRow]}>
-              <Feather name="user-plus" size={16} color={colors.fgMuted} />
-              <Text style={styles.optionOff}>Prefilled intake link</Text>
-              <Text style={styles.optionNote}>portal only</Text>
-            </View>
+            {/*
+              Web's first entry, now live. It MINTS a PrefillDraft rather
+              than reading an existing token like every row beneath it,
+              which is why it is gated on `canReadContext`: the contact
+              details that seed it come from a route only OWNER and
+              FRONT_DESK can call, and `POST /prefill-drafts` carries the
+              same gate. Absent rather than disabled for anyone else —
+              the no-inert rule.
+            */}
+            {canReadContext && conversationId ? (
+              <Pressable
+                onPress={prefillBusy ? undefined : () => void startPrefill()}
+                accessibilityRole="button"
+                accessibilityLabel="Prefilled intake link"
+                accessibilityState={{ busy: prefillBusy }}
+                style={({ pressed }) => [styles.option, pressed && styles.pressed]}
+              >
+                <Feather name="user-plus" size={16} color={colors.fgSecondary} />
+                <Text style={styles.optionLabel}>Prefilled intake link</Text>
+                <Text style={styles.optionNote}>
+                  {prefillBusy ? 'Generating…' : 'From this client’s info on file'}
+                </Text>
+              </Pressable>
+            ) : null}
 
             {insertableLinks(links).map((link) => (
               <Pressable
@@ -703,6 +783,27 @@ export function Composer({
               ))
             )}
 
+            <Pressable onPress={closeAttach} style={styles.done}>
+              <Text style={styles.doneLabel}>CANCEL</Text>
+            </Pressable>
+          </>
+        ) : attachView === 'prefill-forms' ? (
+          <>
+            <Eyebrow style={styles.sheetEyebrow}>Which form?</Eyebrow>
+            {(intakeForms ?? []).map((form) => (
+              <Pressable
+                key={form.id}
+                onPress={prefillBusy ? undefined : () => void mintPrefill(form.slug)}
+                accessibilityRole="button"
+                accessibilityLabel={`Prefilled ${form.name} link`}
+                style={({ pressed }) => [styles.option, pressed && styles.pressed]}
+              >
+                <Feather name="file-text" size={16} color={colors.fgSecondary} />
+                <Text style={styles.optionLabel} numberOfLines={1}>
+                  {form.name}
+                </Text>
+              </Pressable>
+            ))}
             <Pressable onPress={closeAttach} style={styles.done}>
               <Text style={styles.doneLabel}>CANCEL</Text>
             </Pressable>
