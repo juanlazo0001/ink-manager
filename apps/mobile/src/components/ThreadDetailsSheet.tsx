@@ -47,16 +47,25 @@ import { colors, space, type } from '@/theme';
 export function ThreadDetailsSheet({
   visible,
   onClose,
+  onDismissed,
   header,
   channel,
   onPressInquiry,
+  onPressClient,
 }: {
   visible: boolean;
   onClose: () => void;
+  /** Passed through to `Sheet` — see the navigation note below. */
+  onDismissed?: () => void;
   header: ConversationThreadHeader;
   /** The thread's channel, resolved by the screen exactly as the header uses it. */
   channel: string;
   onPressInquiry: (inquiryId: string) => void;
+  /**
+   * Present only when there is somewhere to go: a CLIENT thread's
+   * counterpart has a client record, a staff participant does not.
+   */
+  onPressClient?: (clientId: string) => void;
 }) {
   const members = header.counterpart?.participants;
   /*
@@ -70,6 +79,30 @@ export function ThreadDetailsSheet({
       : header.counterpart
         ? [{ id: header.counterpart.id, name: header.counterpart.name, avatarUrl: header.counterpart.avatarUrl }]
         : [];
+
+  /*
+   * ─── WHICH ROWS NAVIGATE, AND WHY THE REST MUST NOT ───────────────
+   *
+   * A CLIENT thread's counterpart IS a client record, so its row goes to
+   * `client/[id]`. The id is not inferred: `ConversationThreadHeader`
+   * carries `clientId` directly, and the API builds the counterpart from
+   * that same client (`routes/conversations.ts:163` returns
+   * `conversation.client.id`), so the row and the destination cannot
+   * disagree.
+   *
+   * STAFF PARTICIPANTS DO NOT NAVIGATE, and that is the no-inert rule
+   * rather than an omission. There is no staff-profile route in this app:
+   * `profile.tsx` takes no params (it is the viewer's own), there is no
+   * `staff/[id]`, and the Team tab's own rows contain zero `router.push`
+   * calls — nobody can open another staff member anywhere today. A
+   * chevron promising a destination that does not exist is the violation;
+   * a plain row is the truth.
+   *
+   * Group threads therefore render every member plainly, since group
+   * members are staff by construction.
+   */
+  const clientId = header.type === 'CLIENT' ? header.clientId : null;
+  const canOpenClient = !!clientId && !!onPressClient && !members?.length;
 
   const inquiry = header.primaryInquiry;
   /*
@@ -85,28 +118,59 @@ export function ThreadDetailsSheet({
     : '';
 
   return (
-    <Sheet visible={visible} onClose={onClose} accessibilityLabel="Close conversation details">
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      onDismissed={onDismissed}
+      accessibilityLabel="Close conversation details"
+    >
       <Eyebrow style={styles.eyebrow}>Participants</Eyebrow>
 
       {people.length > 0 ? (
-        people.map((person) => (
-          <View key={person.id} style={styles.person}>
-            <ThreadAvatar
-              name={person.name}
-              avatarUrl={person.avatarUrl}
-              channel={channel}
-              scale={THREAD_AVATAR_HEADER}
-            />
-            <View style={styles.personText}>
-              <Text style={styles.personName} numberOfLines={1}>
-                {person.name}
-              </Text>
-              <Text style={styles.personMeta} numberOfLines={1}>
-                {channelLabel(channel).toUpperCase()}
-              </Text>
-            </View>
-          </View>
-        ))
+        people.map((person) => {
+          const body = (
+            <>
+              <ThreadAvatar
+                name={person.name}
+                avatarUrl={person.avatarUrl}
+                channel={channel}
+                scale={THREAD_AVATAR_HEADER}
+              />
+              <View style={styles.personText}>
+                <Text style={styles.personName} numberOfLines={1}>
+                  {person.name}
+                </Text>
+                <Text style={styles.personMeta} numberOfLines={1}>
+                  {channelLabel(channel).toUpperCase()}
+                </Text>
+              </View>
+            </>
+          );
+
+          /* A plain View, not a disabled Pressable: a staff row should
+             not report itself to assistive tech as a button that does
+             nothing, and it must not flash on press either. */
+          if (!canOpenClient || !clientId) {
+            return (
+              <View key={person.id} style={styles.person}>
+                {body}
+              </View>
+            );
+          }
+
+          return (
+            <Pressable
+              key={person.id}
+              onPress={() => onPressClient?.(clientId)}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${person.name}'s client page`}
+              style={({ pressed }) => [styles.person, pressed && styles.pressed]}
+            >
+              {body}
+              <Feather name="chevron-right" size={18} color={colors.fgMuted} />
+            </Pressable>
+          );
+        })
       ) : (
         <Text style={styles.personMeta}>No participants on this thread.</Text>
       )}
