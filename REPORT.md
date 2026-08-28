@@ -32272,3 +32272,245 @@ Session 15's duplicate-falsifier includes a formatted-phone search: that
 half of its gate is valid **only after this deploys**. The raw-digit half
 works against production today. Mobile's `no_sms_consent`-keyed treatment
 ships in Session 15 against the code added here.
+
+# Chat UX 16 — composer attach v2, and a phone field that behaves
+
+Branch `chat-ux/16-composer-attach` from `main` (`efb718a`), worktree per
+`CLAUDE.md`. Mobile-only; **zero `apps/api` writes**. Serial discipline
+held — `chat-ux/15-create-from-search` was merged and deleted first.
+
+**Web was read before anything was built.** Three of the four tasks
+describe web's behaviour differently from how web actually behaves, and
+each correction is cited below.
+
+## Task A — phone mask
+
+`formatPhone` **already existed** (`lib/format.ts:37`), already handling
+the leading-1 strip, non-NANP passthrough and already-formatted input. So
+A is a mask hook plus a `PhoneField` wrapper, not a new display util.
+
+**The sweep found four phone inputs, one more than the brief named:**
+
+| screen | line | applied |
+| --- | --- | --- |
+| `client-new.tsx` | 176 | **yes** |
+| `client-edit.tsx` | 202 | **yes** |
+| `inquiry-new.tsx` | 246 | **yes** — a client phone, not in the brief |
+| `profile-edit.tsx` | 594 | **no** — a STAFF phone; see escalations |
+
+### Typing, from the live input
+
+    key 3 -> "(3"            key 9 -> "(305) 299"
+    key 0 -> "(30"           key 7 -> "(305) 299-7"
+    key 5 -> "(305"          key 9 -> "(305) 299-79"
+    key 2 -> "(305) 2"       key 5 -> "(305) 299-795"
+    key 9 -> "(305) 29"      key 7 -> "(305) 299-7957"
+    an 11th key                    -> "(305) 299-7957"   (capped)
+
+### Backspace, full to empty, deleting one CHARACTER each press
+
+    "(305) 299-7957" -> "(305) 299-795" -> … -> "(305) 2" -> "(305"
+    -> "(30" -> "(3" -> ""
+
+    10 presses, stuck: false, ended empty: true
+
+The two punctuation-crossing steps are the whole point: `"(305) 2"` →
+`"(305"` and `"(3"` → `""`. Without the rule both would return the same
+string forever and backspace would appear dead on `)`.
+
+### Paste
+
+    "1 (305) 299-7957" -> (305) 299-7957      "3052997957"   -> (305) 299-7957
+    "+1 305 299 7957"  -> (305) 299-7957      "305.299.7957" -> (305) 299-7957
+
+Session 15's prefill renders **masked on mount**: `?phone=8085551234`
+shows `(808) 555-1234` with the stored value still `8085551234`.
+
+**Mid-string editing is unchanged v1 behaviour**, recorded as the brief
+asks: the caret is end-anchored, so an edit in the middle re-masks from
+the resulting digits rather than holding position.
+
+**Web parity note:** web's `PhoneInput.tsx` already masks for display and
+stores digits — the same contract, arrived at separately. No web change
+wanted.
+
+## Task B — the premise is wrong: mobile's item was never inert
+
+    mobile   Composer.tsx:229  openLinks()   fetches the client's shareable links
+             Composer.tsx:241  insertLink()  appends the chosen one
+             Composer.tsx:433  the sheet     intake / estimate / deposit / waiver / flash
+    web      ConversationsPanel.tsx:3658     the identical list
+             ConversationsPanel.tsx:3686     `body ? `${body}\n${url}` : url`
+
+Mobile's `appendLink` is that same expression. The two clients were
+already doing the same thing; the only divergence was the **label**, and
+web's is adopted: **Attach link**.
+
+**The brief's "single URL field, prepend `https://`" is not what web
+does** — web has no free URL entry at all. Building it would have
+replaced a working client-links picker with a different feature.
+
+Verified live: the menu lists `Prefilled intake link` (disabled, "portal
+only"), `Intake form`, `Estimate #1` ("sent"); tapping Estimate appended
+`https://inkmanager.app/e/est-1` on a new line under existing text.
+
+**The one real gap:** web's prefilled intake row works, minting a draft
+through `POST /prefill-drafts` (`ConversationsPanel.tsx:1967`) from
+client contact fields. Mobile's thread payload carries no email/phone for
+the client, so the row stays disabled. Endpoint and blocker recorded, not
+faked.
+
+## Task C — the portfolio is not flash-backed
+
+**Web reads `Artist.portfolioImages`** — a plain `String[]` of Cloudinary
+URLs on the artist record (`ConversationsPanel.tsx:2170-2174`, fetching
+`/artists/:id`). `FlashPiece` is a different model with prices and
+availability and web's picker never touches it. The brief's "flash-backed"
+framing would have built the wrong grid.
+
+| | web | mobile (this session) |
+| --- | --- | --- |
+| source | `GET /artists/:id` → `portfolioImages` | `GET /artists` — already selects `portfolioImages` for every artist |
+| requests | one per artist shown | **one, total** — All is the same payload filtered |
+| assigned artist | `/conversations/:id/context` → `inquiries[].assignedArtist` | same endpoint, same pick |
+| no artist assigned | **dead end** — "assign one to pull from their portfolio" | **All artists, sectioned by name** (owner spec) |
+| selection | `setAttachments((c) => [...c, url])` `:3822` | `attachments.addRemote(url)` — same adoption |
+
+### C3 cleared, and proven rather than argued
+
+The send route validates `attachments` as a plain string array
+(`conversations.ts:859`, `isStringArray`). A portfolio piece therefore
+sends as-is:
+
+    POST /conversations/t1/messages
+      -> SENT body="" attachments=["https://picsum.photos/seed/marcus1/400/400"]
+
+    upload-signature requests during the whole run: 0
+
+Zero signature requests is the no-re-upload evidence: a re-upload cannot
+happen without one.
+
+### The three states, measured
+
+| thread | assigned | picker opens on | sections | pieces |
+| --- | --- | --- | --- | --- |
+| `t1`, OWNER | Rosa Klein | **assigned artist**, with an `ALL ARTISTS` toggle | ROSA KLEIN | 4 |
+| `t1`, toggled | — | All | ROSA KLEIN · MARCUS DELACROIX | 6 |
+| `t2`, OWNER | none | **All**, no toggle (nothing to toggle to) | ROSA KLEIN · MARCUS DELACROIX | 6 |
+| `t1`, **ARTIST** | unavailable | **All**, silently | ROSA KLEIN · MARCUS DELACROIX | 6 |
+
+The artist with an empty portfolio (Jo Ng) is omitted from All rather
+than rendered as an empty section.
+
+**Role finding:** `/conversations/:id/context` is
+`requireRole(OWNER, FRONT_DESK)` (`conversations.ts:1522`), so an ARTIST
+cannot ask who is assigned. The call is **skipped**, not fired and
+swallowed — the ARTIST run made `GET /artists` and no context request at
+all — so the picker opens on All with no error surfaced.
+
+## Task D — the store exists and was built for this
+
+`StudioSettings.messageTemplates`, `{ id, name, body }[]`, validated at
+`studioSettings.ts:321`. Its own API comment (`:272`) calls it *"an
+open-ended array the composer's 'insert template' menu lists"*.
+`GET /studio-settings` is `requireRole(OWNER, FRONT_DESK, ARTIST)`
+(`:144`) and mobile already calls it for `timezone`, so nothing is gated
+out and the hide-the-item branch never fires.
+
+**No variable semantics to mirror:** web inserts `template.body`
+verbatim (`ConversationsPanel.tsx:3644`). None were invented.
+
+Verified: three templates listed by name; selecting *Aftercare* put its
+body in the composer exactly.
+
+**Field-name correction:** the brief says templates have a `title`; the
+store's field is `name`.
+
+## Sheet composition, as rendered
+
+    ATTACH
+      Photo library
+      Take photo
+      Attach link
+      Insert template
+      Add from Portfolio
+      CANCEL
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 13.17s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+Console: **one** error, the pre-existing React 19 `element.ref` shim
+message. Nothing new.
+
+Screenshots in `design-refs/session-16/`: the masked prefilled field, the
+attach sheet, the assigned-artist default, All-artists sectioned, no
+assigned artist, a piece in the tray, the sent image bubble, the template
+picker, and a sent message carrying a template body plus a link.
+
+### The parity pairs could not be captured, and here is the measurement
+
+The brief asks for web's own menus screenshotted beside mobile's. I got
+as far as minting a session against the dev database and stopped, because
+the dev data cannot exercise these features:
+
+    studios                              124
+    studioSettings rows                   41
+      with messageTemplates set            0     <- every web template menu would be empty
+    CLIENT conversations                  90
+    artists                               75
+      with >= 1 portfolio image            2
+
+So web's template picker would screenshot its own "No templates
+configured" state in every studio, and the portfolio picker would need
+one of two artists to be the assigned artist on a client conversation in
+their own studio. **That is a finding about dev data, not a property of
+either client.** What stands in its place is stronger on semantics and
+weaker on pixels: every mirrored behaviour is cited to web's file:line
+above, and the mobile side is screenshotted against a fixture that
+reproduces the real routes' shapes.
+
+To produce the pairs: seed `messageTemplates` on a dev studio and give an
+assigned artist some `portfolioImages`, or run the web capture against
+production.
+
+### Retested vs untouched
+
+**Retested:** the mask (typing, cap, backspace to empty, four paste
+spellings, prefill on mount), the sheet's composition and order, Attach
+link's list and insertion, the template list and insertion, the portfolio
+picker in four states, selection into the tray, the send and its exact
+payload, and all four typechecks.
+
+**Untouched and NOT retested:** the photo pick-and-send regression the
+brief names — `expo-image-picker` has no web implementation, so the
+picker itself is device-gate. What *was* exercised is the rest of that
+path: a portfolio piece travels the same tray, the same preview, the same
+`uploadedUrls`, and the same send as a picked photo, and it sent
+correctly. The picker call is the one link not covered. Also untouched:
+the channel selector, reply/edit, reactions, and every other `Sheet`
+consumer.
+
+## Escalations
+
+1. **`profile-edit`'s staff phone is unmasked**, deliberately. It is not
+   a client phone and it writes through the artist-profile route, which I
+   did not confirm normalizes the way `lib/phone.ts` does for clients. A
+   mask there would make the field *look* canonical without proving the
+   stored value is. One line to add once that write path is checked.
+2. **The prefilled intake link stays disabled on mobile** — needs client
+   contact fields the thread payload does not carry.
+3. **Dev data cannot demonstrate templates or portfolios** (numbers
+   above) — worth seeding regardless of this session.
+4. **Web-only composer features, for the parity ledger** (observed, not
+   built): @ mentions, `/` shortcuts, and the per-message channel
+   selector. Mobile has its own channel control, so only the first two
+   are genuine gaps.
+
+## Database
+
+No schema change, no migration, no backfill. Read-only queries against
+dev for the parity assessment; nothing written.
