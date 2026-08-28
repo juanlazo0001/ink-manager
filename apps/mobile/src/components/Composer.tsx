@@ -15,6 +15,8 @@ import { AttachmentTray } from '@/components/AttachmentTray';
 import { channelLabel } from '@/components/ConversationRow';
 import { Eyebrow } from '@/components/ui';
 import { useAttachments } from '@/hooks/useAttachments';
+import { PortfolioPicker } from '@/components/PortfolioPicker';
+import { fetchMessageTemplates, type MessageTemplate } from '@/lib/conversations';
 import {
   appendLink,
   fetchShareableLinks,
@@ -87,6 +89,8 @@ export function Composer({
   editingInitialBody,
   onCancelEdit,
   clientId,
+  conversationId,
+  canReadContext,
 }: {
   isClientThread: boolean;
   sendState: ComposerSendState;
@@ -107,6 +111,10 @@ export function Composer({
   onCancelEdit?: () => void;
   /** CLIENT threads only — whose links the insert menu offers. */
   clientId?: string | null;
+  /** The thread, for the portfolio picker's assigned-artist default. */
+  conversationId?: string;
+  /** OWNER/FRONT_DESK: `/conversations/:id/context` refuses anyone else. */
+  canReadContext?: boolean;
 }) {
   const [bodyState, setBodyState] = useState('');
   /*
@@ -127,6 +135,9 @@ export function Composer({
   const [sourceOpen, setSourceOpen] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
   const [links, setLinks] = useState<ShareableLinks | null>(null);
+  const [portfolioOpen, setPortfolioOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [templates, setTemplates] = useState<MessageTemplate[] | null>(null);
   const attachments = useAttachments(token);
 
   /*
@@ -236,6 +247,35 @@ export function Composer({
       // The sheet stays open and shows its empty state; a failed link
       // lookup is not worth an alert over an optional convenience.
     }
+  }
+
+  /*
+   * Same on-demand shape as `openLinks` above, and for the same reason:
+   * the studio settings row is not worth fetching on every thread open
+   * when the menu is what needs it. Cached for the composer's life.
+   */
+  async function openTemplates() {
+    setSourceOpen(false);
+    setTemplatesOpen(true);
+    if (templates || !token) return;
+    try {
+      setTemplates(await fetchMessageTemplates(token));
+    } catch {
+      // The sheet shows its empty line rather than an alert, matching
+      // how the links sheet treats a failed lookup.
+      setTemplates([]);
+    }
+  }
+
+  /*
+   * Web appends the body with a newline and performs NO variable
+   * substitution (`ConversationsPanel.tsx:3644`). There are no
+   * placeholder semantics in the store to mirror, so inventing any here
+   * would be inventing product.
+   */
+  function insertTemplate(template: MessageTemplate) {
+    setBody((current) => (current ? `${current}\n${template.body}` : template.body));
+    setTemplatesOpen(false);
   }
 
   function insertLink(url: string | null | undefined) {
@@ -417,11 +457,33 @@ export function Composer({
             </Pressable>
 
             {/* Web's composer can drop a shareable link into the draft.
-                CLIENT threads only, because the links belong to a client. */}
+                CLIENT threads only, because the links belong to a client.
+                Web's own label is "Attach link" — adopted here so the two
+                clients name the same control the same way. */}
             {clientId ? (
               <Pressable onPress={openLinks} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
                 <Feather name="link" size={16} color={colors.fgSecondary} />
-                <Text style={styles.optionLabel}>Insert a link</Text>
+                <Text style={styles.optionLabel}>Attach link</Text>
+              </Pressable>
+            ) : null}
+
+            {clientId ? (
+              <Pressable onPress={openTemplates} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
+                <Feather name="file-text" size={16} color={colors.fgSecondary} />
+                <Text style={styles.optionLabel}>Insert template</Text>
+              </Pressable>
+            ) : null}
+
+            {clientId && conversationId ? (
+              <Pressable
+                onPress={() => {
+                  setSourceOpen(false);
+                  setPortfolioOpen(true);
+                }}
+                style={({ pressed }) => [styles.option, pressed && styles.pressed]}
+              >
+                <Feather name="grid" size={16} color={colors.fgSecondary} />
+                <Text style={styles.optionLabel}>Add from Portfolio</Text>
               </Pressable>
             ) : null}
 
@@ -468,6 +530,50 @@ export function Composer({
               <Text style={styles.doneLabel}>CANCEL</Text>
             </Pressable>
       </Sheet>
+
+      <Sheet visible={templatesOpen} onClose={() => setTemplatesOpen(false)}>
+            <Eyebrow style={styles.sheetEyebrow}>Insert template</Eyebrow>
+
+            {templates === null ? (
+              <Text style={styles.sheetNote}>Loading…</Text>
+            ) : templates.length === 0 ? (
+              /* Web's own copy, which names where they are configured
+                 rather than leaving a blank menu. */
+              <Text style={styles.sheetNote}>No templates configured (Settings → Policies &amp; Defaults).</Text>
+            ) : (
+              templates.map((template) => (
+                <Pressable
+                  key={template.id}
+                  onPress={() => insertTemplate(template)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Insert template ${template.name}`}
+                  style={({ pressed }) => [styles.option, pressed && styles.pressed]}
+                >
+                  <Feather name="file-text" size={16} color={colors.fgSecondary} />
+                  <Text style={styles.optionLabel} numberOfLines={1}>
+                    {template.name}
+                  </Text>
+                </Pressable>
+              ))
+            )}
+
+            <Pressable onPress={() => setTemplatesOpen(false)} style={styles.done}>
+              <Text style={styles.doneLabel}>CANCEL</Text>
+            </Pressable>
+      </Sheet>
+
+      {conversationId ? (
+        <PortfolioPicker
+          visible={portfolioOpen}
+          onClose={() => setPortfolioOpen(false)}
+          token={token}
+          conversationId={conversationId}
+          canReadContext={!!canReadContext}
+          /* The same adoption web does: the chosen URL becomes an
+             attachment directly, with no upload and no new message type. */
+          onPick={(url) => attachments.addRemote(url)}
+        />
+      ) : null}
 
       <Sheet visible={pickerOpen} onClose={() => setPickerOpen(false)}>
             <Eyebrow style={styles.sheetEyebrow}>Channel</Eyebrow>

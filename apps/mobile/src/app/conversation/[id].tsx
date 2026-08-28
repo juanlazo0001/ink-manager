@@ -1135,6 +1135,9 @@ export default function ConversationScreen() {
           token={token}
           // The links belong to the client, so only a CLIENT thread has any.
           clientId={header?.clientId ?? null}
+          conversationId={id}
+          /* /conversations/:id/context is requireRole(OWNER, FRONT_DESK). */
+          canReadContext={session?.profile?.role !== 'ARTIST'}
           replyPreview={
             replyTo
               ? {
