@@ -132,6 +132,13 @@ Concise operating rules, not a project history — see REPORT.md for history.
 - Each concurrent session works in its own isolated git worktree (`git worktree add`). Never share
   a working tree between sessions — uncommitted edits from one session must not be visible to, or
   clobbered by, another.
+- **A worktree is removed when its branch merges; a worktree holding `main` blocks the primary
+  checkout and must never outlive its session** (incident: three off-site merges from a detached
+  primary). A finished worktree left parked on `main` is not harmless housekeeping — git allows a
+  branch in only one worktree at a time, so the primary cannot take `main` back, and every
+  subsequent merge has to be run from someone else's directory. The exception is a worktree whose
+  branch is unmerged **and** whose tree is dirty: that holds real work, and it is removed by the
+  session that owns it, never by a passer-by.
 - **Concurrent sessions MUST be launched via `scripts/new-session.ps1`.** It creates the worktree
   (fresh branch off latest `main`), runs `npm ci` in it, and prints a free dev-port pair — the
   single entry point that ends shared-tree collisions at session-launch time, not after the fact.
