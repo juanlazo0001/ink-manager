@@ -32514,3 +32514,170 @@ consumer.
 
 No schema change, no migration, no backfill. Read-only queries against
 dev for the parity assessment; nothing written.
+
+# Chat UX 17 — the attach-flow deadlock, found in the source
+
+**Branch case: `chat-ux/16-composer-attach` was UNMERGED**, so this is
+`chat-ux-16-g1`/`g2` on that branch — gate fixes before its merge, as the
+brief specifies. Mobile-only, no dependencies.
+
+## Task A — the race map
+
+Every surface in the attach path, and what presents it:
+
+| surface | implementation | how it was reached |
+| --- | --- | --- |
+| the `+` menu | `Sheet` → RN `<Modal>` (`Sheet.tsx:147`) | `setSourceOpen(true)` from the composer bar |
+| Attach link | `Sheet` → a **second** RN `<Modal>` | `Composer.tsx:241-242` — `setSourceOpen(false)` **then** `setLinksOpen(true)`, same tick |
+| Insert template | `Sheet` → a **third** RN `<Modal>` | `Composer.tsx:258-259` — same shape |
+| Add from Portfolio | `Sheet` inside `PortfolioPicker` → a **fourth** | `Composer.tsx:480-481` — same shape |
+| attachment preview | `AttachmentTray`, inline in the composer | not presented — never implicated |
+| native picker | `expo-image-picker`, a real iOS modal | `Composer.tsx:307` `setSourceOpen(false)` then `:313` `await pickImage()` |
+| channel picker | `Sheet` → RN `<Modal>` | from the composer BAR, never chained from another sheet |
+
+### The race, by construction
+
+`Sheet` deliberately keeps its Modal mounted after `visible` goes false —
+it drives its own exit and unmounts only when the animation lands, with a
+backstop at `duration.slow + 80` (`Sheet.tsx:171`). `duration.slow` is
+**300ms** (`theme/motion.ts:26`).
+
+So for ~300ms after every menu tap there were **two RN `<Modal>`s alive
+at once**: the menu dismissing, and the next surface presenting. That is
+the iOS presentation deadlock exactly — present while a dismissal is in
+flight and the queue silently wedges; the app renders normally and stops
+accepting touches, with nothing thrown.
+
+It is the same shape at all four sites, which is why the operator saw it
+on **every** item including the two that never touch the camera. The
+image-centric theories were exonerated because images were never
+involved: `Attach link` and `Add from Portfolio` present a modal over a
+dismissing modal just as the photo rows do.
+
+**Why three preview-verified fixes missed it:** react-native-web has no
+iOS presentation queue. Two `<Modal>`s there are two `<div>`s and nothing
+races. The bug cannot exist in the harness, so a passing harness proved
+nothing about it.
+
+### The reference, corrected
+
+The brief says the long-press overlay is stable because it is not an RN
+`Modal`. **It is one** — `MessageOverlay.tsx:163`,
+`<Modal visible transparent animationType="none" …>`.
+
+Its stability has a different cause, and it is the one that generalises:
+it presents **one** modal and swaps its *contents* inside it — the
+tapback row, the lifted clone and the action sheet are all children of
+that single Modal. It never dismisses a modal to present another. So the
+discriminator is **one host with swapping content vs N sequential
+hosts**, not Modal vs not-Modal — and the overlay is this app's own
+on-device proof that the first pattern holds.
+
+## Task B — pattern 1, the single host
+
+Chosen because the app already runs it successfully on the device, and
+because it does not merely order the operations — it **removes** them:
+moving between menu, links, templates and portfolio now presents and
+dismisses nothing at all, so there is no second modal to race.
+
+- One `<Sheet>`; `attachView` (`'menu' | 'links' | 'templates' |
+  'portfolio' | 'library' | 'camera'`) names its contents.
+- `PortfolioPicker` → `PortfolioContent`: it used to wrap itself in its
+  own `Sheet`, which is precisely what made opening it a
+  dismiss-and-present. It is now the host's contents.
+- **The native picker is the one surface that still needs a true
+  dismissal**, so `Sheet` gained an optional `onDismissed` that fires
+  when the Modal has really unmounted — through the animation callback
+  **or** the backstop, exactly once either way. The picker is staged in a
+  ref and launched from there, never from the tap.
+- **No `setTimeout` choreography** anywhere in the path.
+
+`onDismissed` is additive and optional; no existing `Sheet` consumer
+changes, and `MessageOverlay` is untouched — the stop condition about
+altering the overlay's contract never applied.
+
+## Task C — the sequence logger
+
+`lib/attachTrace.ts`, `__DEV__`-only, permanent. Steps:
+`item-selected → dismiss-start → dismissed → present-called → presented →
+interaction-ready`, keyed on the **surface name** (stable identity, per
+the instrumentation rule — not a counter and not anything the flow
+mutates). Timestamps are relative to the start of each flow, because the
+gap between two lines is the whole signal.
+
+What a stall means, by step: after `dismiss-start` with no `dismissed` is
+a dismissal that never completed; after `present-called` with no
+`presented` is the presentation queue refusing — the deadlock itself.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         clean
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+Console: one error, the pre-existing React 19 `element.ref` shim message.
+
+All four surfaces render through the single host, and the logger's own
+output is the structural evidence:
+
+    [attach     0ms] item-selected     menu (plus tapped)
+    [attach     1ms] present-called    menu
+    [attach     7ms] presented         menu
+    [attach     7ms] interaction-ready menu
+    [attach   715ms] item-selected     links
+    [attach   716ms] present-called    links (content swap, host stays mounted)
+    [attach   725ms] presented         links
+    [attach   726ms] interaction-ready links
+    [attach  1919ms] dismiss-start     links
+    [attach  2245ms] dismissed         menu
+
+**Read what is missing between `item-selected links` and `presented
+links`: there is no `dismiss-start`.** Under the old code every one of
+those transitions began with one. That absence is the fix, visible in the
+trace.
+
+The downstream still works: a portfolio piece selected from inside the
+host reached the tray, the host dismissed, and the send carried
+`attachments:["https://picsum.photos/seed/rosa1/400/400"]`.
+
+### The deadlock itself is device-only, and this is not proof of it
+
+Stated plainly, because it is the whole lesson of the incident: the
+harness **cannot** reproduce this bug, so nothing above is evidence that
+the freeze is gone. What the harness shows is that the restructure did
+not break the surfaces, and what the source shows is that the racing
+construct no longer exists — there is one modal where there were two.
+
+**The gate's logged sequence is the proof.** Each item should reach
+`interaction-ready`; a freeze would leave the last line naming its own
+stall point.
+
+### Retested vs untouched
+
+**Retested:** all four in-app surfaces rendering through the host, the
+trace for menu/links/templates/portfolio, selection into the tray, the
+send and its payload, all four typechecks.
+
+**Untouched and NOT retested:** the native picker launch (`expo-image-picker`
+has no web implementation — device-gate by definition, and the reason its
+new completion-callback launch can only be proven at the gate), the
+channel picker (unchanged and never chained), the long-press overlay, and
+every other `Sheet` consumer.
+
+## Escalations
+
+1. **The photo path's new launch order is unverifiable here.** Staging in
+   a ref and launching from `onDismissed` is the fix most likely to
+   matter on device and the one the harness can say least about.
+2. **The channel picker is still a separate `Sheet`.** It is reached from
+   the composer bar, which is behind any open sheet, so it cannot chain
+   today. Left alone deliberately — folding it in would widen this diff
+   past the freeze it exists to fix.
+3. **`Sheet` remains easy to misuse.** Nothing prevents the next
+   `setThisOpen(false); setThatOpen(true);` pair. The CLAUDE.md rule
+   names the shape; a lint rule or a host-level guard would be stronger.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
