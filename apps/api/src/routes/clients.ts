@@ -479,6 +479,47 @@ router.get("/merge-search", requirePermission("clients.view"), async (req, res) 
   // string (the pitfall in the single-string `OR` the global omnibox search
   // uses, fine there since it's usually a single token).
   const words = q.split(/\s+/).filter(Boolean);
+
+  // Phone matching, in two layers, because Client.phone is stored
+  // NORMALIZED -- bare digits, no punctuation (lib/phone.ts, enforced on
+  // every write path). A `contains` on the raw query text therefore
+  // matched a typed "3055550142" and could never match the "(305)
+  // 555-0142" the UI itself renders and a person naturally retypes. It
+  // also read only the phone SCALAR, so a client's secondary ClientPhone
+  // numbers were invisible to this search entirely.
+  //
+  // Below this many digits a "phone" match is noise -- a 3-digit run
+  // appears inside most 10-digit numbers in a studio.
+  const MIN_PHONE_DIGITS = 4;
+  const phoneArms = (digits: string) => [
+    { phone: { contains: digits } },
+    // The relation, so a secondary number is findable too. Confirmed
+    // against the schema: `phones ClientPhone[]` on Client.
+    { phones: { some: { phone: { contains: digits } } } },
+  ];
+
+  // Layer 2, and NOT optional -- without it the headline case fails.
+  // "(305) 555-0142" splits on whitespace into ["(305)", "555-0142"]; the
+  // first normalizes to just "305", three digits, below the threshold, so
+  // it gets no phone arm and has to match a name/email/raw-phone contains,
+  // which "(305)" never does. The per-word AND then rejects the whole
+  // query.
+  //
+  // So a query that is ENTIRELY phone-shaped REPLACES the per-word split
+  // with one match on the whole digit run. Replaces, not supplements:
+  // Prisma ANDs the top-level keys together, so adding an `OR` beside the
+  // existing `AND` would still leave "(305)" needing to match something,
+  // and the query would still return nothing. Splitting a phone number on
+  // whitespace is meaningless anyway -- the digits are one value.
+  //
+  // Gated on "contains no letters" specifically, not on "normalizes to
+  // digits": every string normalizes to digits. Without that gate
+  // "maria 0142" would match any client whose number contains 0142 while
+  // ignoring "maria" outright, silently destroying the per-word AND this
+  // route exists to provide.
+  const wholeQueryDigits = normalizePhone(q);
+  const isPhoneShaped = !/[a-z]/i.test(q) && wholeQueryDigits.length >= MIN_PHONE_DIGITS;
+
   const studioIds = await activeStudioIdsForCaller(req.user!);
   const results = await prisma.client.findMany({
     where: {
@@ -486,10 +527,30 @@ router.get("/merge-search", requirePermission("clients.view"), async (req, res) 
       ...NOT_MERGED,
       ...NOT_TRANSFERRED,
       ...(excludeId ? { id: { not: excludeId } } : {}),
-      AND: words.map((word) => {
-        const contains = { contains: word, mode: "insensitive" as const };
-        return { OR: [{ firstName: contains }, { lastName: contains }, { email: contains }, { phone: contains }] };
-      }),
+      ...(isPhoneShaped
+        ? { OR: phoneArms(wholeQueryDigits) }
+        : {
+            AND: words.map((word) => {
+              const contains = { contains: word, mode: "insensitive" as const };
+              const digits = normalizePhone(word);
+              return {
+                OR: [
+                  { firstName: contains },
+                  { lastName: contains },
+                  { email: contains },
+                  // The original raw-text arm, kept exactly as it was so
+                  // no query that matched before stops matching now.
+                  // Everything else here is additive.
+                  { phone: contains },
+                  // A digits word inside an otherwise-textual query --
+                  // "maria 0142". The per-word AND is preserved: this
+                  // widens what THIS word can match, never what the query
+                  // as a whole requires.
+                  ...(digits.length >= MIN_PHONE_DIGITS ? phoneArms(digits) : []),
+                ],
+              };
+            }),
+          }),
     },
     select: { id: true, firstName: true, lastName: true, email: true, phone: true },
     orderBy: { createdAt: "desc" },
