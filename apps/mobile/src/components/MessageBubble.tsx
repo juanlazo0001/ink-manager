@@ -11,6 +11,34 @@ import { deliveryLabel, deliveryState, failedLineFor } from '@/lib/deliveryStatu
 import { linkify, truncateMiddle } from '@/lib/linkify';
 import type { DisplayMessage } from '@/lib/threadRows';
 import { BALLOON, ReactionBalloon, ReactionTail } from '@/components/ReactionBalloon';
+
+/*
+ * ─── §7 rev H: A REACTED ROW RESERVES ITS OWN HEADROOM ──────────
+ *
+ * The balloon used to be absolutely positioned at `-BALLOON / 2 - 2` with
+ * nothing reserving space for it, and the code said so in as many words:
+ * "Absolute, so it costs the row no height and cannot push the next
+ * bubble down." That was a deliberate choice, and this reverses it.
+ *
+ * It could not survive contact with an inverted list. A balloon hanging
+ * above its row's bounds is drawn by a row that paints EARLIER than the
+ * one above it, so the neighbour paints over it and the balloon is
+ * chopped — `zIndex` cannot help across siblings that are laid out in
+ * the opposite order to how they appear. The reference behaviour is that
+ * neighbours SLIDE APART: the balloon gets real space rather than a
+ * z-order gamble.
+ *
+ * So the row grows by exactly the part of the balloon that would have
+ * overflowed, and the balloon keeps its overlap into the bubble's corner:
+ *
+ *     overlap  = 45% of the balloon, rounded    = 14
+ *     headroom = BALLOON − overlap              = 16
+ *
+ * Rounded to whole points on purpose: a half point here lands the balloon
+ * on a seam between two rows, which is the artefact this is fixing.
+ */
+const BALLOON_OVERLAP = Math.round(BALLOON * 0.45);
+const REACTION_HEADROOM = BALLOON - BALLOON_OVERLAP;
 import { ImageBubble } from '@/components/ImageBubble';
 import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
 import { timeOfDay } from '@/lib/time';
@@ -299,6 +327,13 @@ export function MessageBubble({
   // above is unchanged -- this only decides where each entry is drawn.
   const myReactions = reactionSummary.filter((r) => r.mine);
   const theirReactions = reactionSummary.filter((r) => !r.mine);
+  /*
+   * ONE headroom, however many balloons. A cluster grows sideways from
+   * its corner, so a second reaction must not buy a second reservation —
+   * the row's height is a function of "is there a balloon at all", never
+   * of the count.
+   */
+  const hasReactions = reactionSummary.length > 0;
 
   const attachments = message.attachments ?? [];
   const images = attachments.filter(isImageUrl);
@@ -351,7 +386,21 @@ export function MessageBubble({
       */}
       {attribution ? <Text style={styles.attribution}>{attribution}</Text> : null}
 
-      <View style={[styles.bubbleLine, own ? styles.bubbleLineOwn : styles.bubbleLineTheirs]}>
+      {/*
+        The headroom rides on the BUBBLE LINE rather than the row, so an
+        attributed message keeps its name tight to the run and opens the
+        space between the name and the bubble — the balloon's actual
+        neighbourhood. Grouped runs therefore open from 2 to 2 + 16 for
+        the reacted message only; the tail, the grouping class and the
+        attribution are untouched.
+      */}
+      <View
+        style={[
+          styles.bubbleLine,
+          own ? styles.bubbleLineOwn : styles.bubbleLineTheirs,
+          hasReactions ? styles.bubbleLineReacted : null,
+        ]}
+      >
       {/*
         The badge is a SIBLING of the bubble, on the surface, and sits in
         the same row so it hugs the bubble's OUTER-LEFT edge rather than
@@ -614,6 +663,7 @@ const styles = StyleSheet.create({
    */
   /* §2.1 gaps: intra-group 2, inter-group 10. AE shipped 2 / 12. */
   wrapGrouped: { marginTop: 2 },
+  bubbleLineReacted: { marginTop: REACTION_HEADROOM },
   wrapNewRun: { marginTop: 10 },
 
   /* §2.1 attribution: Jura 10 caps, muted, above the group's first bubble. */
@@ -693,9 +743,14 @@ const styles = StyleSheet.create({
    * The old chips sat UNDER the bubble's bottom edge, which read as part
    * of the bubble rather than as a response to it.
    */
+  /* Exactly the reserved band: the balloon's top edge lands on the space
+     the row just opened, so `balloonRect` is inside `rowRect` by
+     construction rather than by luck. zIndex still orders the balloon
+     over its OWN bubble, which is a paint decision inside one row -- it
+     is no longer asked to defeat another row, which it could not do. */
   reactionCluster: {
     position: 'absolute',
-    top: -BALLOON / 2 - 2,
+    top: -REACTION_HEADROOM,
     flexDirection: 'row',
     gap: 3,
     zIndex: 2,
