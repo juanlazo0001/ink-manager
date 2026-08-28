@@ -31894,3 +31894,184 @@ which the harness cannot exercise and which this diff does not touch.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 15 — create client from search, and the duplicate gate that makes it safe
+
+Branch `chat-ux/15-create-from-search` from `main` (`5827270`), worktree
+per `CLAUDE.md`. Mobile-only; **zero `apps/api` writes**. Serial
+discipline held: `chat-ux/14-tapback-placement` was merged and deleted
+before this branch was cut.
+
+## Task A — every pre-supplied finding re-verified at its line
+
+| # | finding | verified |
+| --- | --- | --- |
+| A1 | `/clients/merge-search` is the matching source | `clients.ts:468` — `router.get("/merge-search", requirePermission("clients.view")…)` ✅ |
+| A1 | phones stored normalized | `lib/phone.ts:9` — `normalizePhone`, bare ten digits ✅ |
+| A2 | client find-or-create arm | `conversations.ts:425` — `if (clientId) {` ✅ |
+| A2 | already called from the empty state | `EmptySearchStart.tsx:122` — `{ clientId: person.id }` ✅ |
+| A3 | `client-new` save redirect is the branch point | `client-new.tsx:71` create, `:83` `router.replace('/client/[id]')` ✅ |
+| A4 | client rows already built | `EmptySearchStart.tsx:93` — `clients.map(...)` ✅ |
+
+**The defect was the SOURCE, exactly as recorded.** `GET /clients`
+(`clients.ts:113`) takes `includeArchived` and `activity` and nothing
+else — no `q`, `take: 100` — and the component filtered those hundred
+rows with `name.toLowerCase().includes(q)`. Three failure modes, all
+silent and all indistinguishable from a true miss: no phone matching, no
+email matching, and no visibility past the hundred most-recently-created
+clients.
+
+**The backend companion had NOT deployed** when this ran — no
+`normalizePhone` inside the merge-search handler, no secondary-phone arm,
+no `no_sms_consent` anywhere in `conversations.ts`, and no
+`fix/merge-search-phone` on origin. Both fallbacks were handled; see
+below.
+
+## The falsifier, which leads because it is the acceptance
+
+The fixture's `/clients/merge-search` reproduces the **real** matcher
+rather than a convenient one — per-word AND, `contains`,
+case-insensitive, compared against a **stored bare-digit** phone,
+`[]` under two characters, `take 20`. Proof it is not lenient, straight
+off the endpoint:
+
+    q="3055550142"      -> 1 hit
+    q="(305) 555-0142"  -> 0 hits     <- production's real asymmetry
+    q="305-555-0142"    -> 0 hits
+    q="Mandii"          -> 1 hit
+    q="8085551234"      -> 0 hits
+
+Mandii Vaughn exists with stored phone `3055550142` and has no thread.
+
+| search | START CHAT row | CREATE row |
+| --- | --- | --- |
+| `3055550142` (raw) | **START CHAT WITH MANDII VAUGHN** | **absent** ✅ |
+| `(305) 555-0142` (formatted) | **START CHAT WITH MANDII VAUGHN** | **absent** ✅ |
+| `8085551234` (nobody) | none | **CREATE CLIENT "8085551234"**, gold `rgb(201, 154, 91)` ✅ |
+
+**The formatted half passes today, without a backend change and without
+a client-side workaround.** `searchClients` sends the normalized digits
+as a SECOND query to the same endpoint when the query is phone-shaped
+(≥7 digits). The server still does all the matching; it is simply handed
+the term that can match a normalized column. The fixture log is the
+proof that this is a server match, not a local one:
+
+    GET /clients/merge-search?q=(305)%20555-0142   -> 0 hit(s)
+    GET /clients/merge-search?q=3055550142         -> 1 hit(s)
+
+**What that does NOT fix, and the backend still must:** `merge-search`
+reads the `phone` SCALAR only, so a client's **secondary** `ClientPhone`
+numbers stay invisible however the query is spelled. A client reachable
+only on a second number can still be duplicated. No client-side phrasing
+substitutes for that — it needs `fix/merge-search-phone`.
+
+**The gate fails closed.** The CREATE row requires all three of:
+`searchOk` (the query actually ran — a thrown search is *unknown*, never
+*nobody*), zero matches, and a non-ARTIST viewer (the route 404s them, so
+the flow would dead-end). The two-character floor comes free, because
+`searchClients` does not call the route below that and `searchOk`
+therefore never turns true on a single keystroke.
+
+## The create flow, end to end
+
+    tap CREATE "8085551234"
+      -> /client-new?firstName=&lastName=&email=&phone=8085551234&startChat=1
+      -> form mounts with Phone = "8085551234", names empty      (parse: all-digits -> phone)
+      -> CREATE
+      -> POST /clients            -> c4, phone stored 8085551234
+      -> POST /conversations      -> CREATED t2 for clientId=c4  (find-or-create)
+      -> router.replace -> conversation/[id] with id=t2
+
+The replace's payload is quoted verbatim in the harness log — see the
+limits below for why it is the *attempt* that is logged.
+
+## The consent refusal, and where it surfaces
+
+`conversations.ts:929` returns **400** `"This client has no SMS consent
+on file and cannot be texted"`. The A2P gate is untouched; only what the
+refusal *says* changed. Both states were exercised on the same build by
+flipping only the fixture:
+
+| fixture emits | failed row reads |
+| --- | --- |
+| `{error}` only — **today's real backend** | `NOT DELIVERED · TAP TO RETRY` |
+| `{error, code: "no_sms_consent"}` — after the companion | **`NO SMS CONSENT ON FILE`** |
+
+That pair is the falsifiable part: same code, same tap, opposite lines,
+so the keyed path is doing something rather than merely not crashing.
+The line is surface-anchored below the bubble, per `CLAUDE.md` — the
+bubble fill is never recoloured.
+
+**Retry stays**, diverging from provider-FAILED on purpose: that
+suppression exists because retrying a *persisted* row duplicates it,
+while this row never persisted and the blocking state is one the client
+can change. The sheet's explanation ("sends unlock as soon as they
+complete their consent form — then retry this message") is **device-gate**:
+it opens on long-press, and gesture-handler is inert to synthetic input.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 13.79s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+Screenshots in `design-refs/session-15/`: people-row on a client match,
+create-row on a true miss, `client-new` prefilled from a digits query,
+the landed thread post-save, and the reason-keyed consent line.
+
+### Two harness boundaries, stated rather than implied
+
+**Injected auth does not survive a real navigation.** Tapping CREATE
+genuinely navigates to `/client-new`, which lands under the ROOT
+`AuthProvider` — signed out on web, since `expo-secure-store` has no web
+implementation — so `save()` returns at its `if (!token)` guard. The hop
+is therefore verified in halves: the push's params by URL (shown above),
+and save-through-to-thread by mounting the same screen inside the
+injected context, where every request in the chain really fired.
+
+**`conversation/[id]` is inside `<Stack.Protected guard={status ===
+'signedIn'}>`** (`_layout.tsx:59`), so with the root signed out the route
+is not registered and even a correct `router.replace` cannot be handled.
+The console error is itself the evidence — it quotes the payload:
+
+    The action 'REPLACE' with payload
+    {"name":"conversation/[id]","params":{"id":"t2"}} was not handled by any navigator.
+
+So the app asked for the right route with the right id from the
+find-or-create. That the navigation *completes* is device-gate.
+
+**Console:** no errors attributable to this branch. The two seen are the
+REPLACE warning above (harness-induced) and the pre-existing React 19
+`element.ref` shim message.
+
+### Retested vs untouched
+
+**Retested:** the falsifier in all three forms, the create row's gating,
+the parse, `client-new` prefill and its unchanged no-params path, the
+create → find-or-create → replace chain, both consent states, all four
+typechecks.
+
+**Untouched and NOT retested:** the chat list's own search field (the
+component is mounted directly here), staff START CHAT against a real
+roster gap, the long-press sheet's consent explanation, archived-thread
+resume, and every other `Sheet`/thread behaviour — none of their code
+paths were modified.
+
+## Escalations
+
+1. **Secondary phone numbers can still produce a duplicate.**
+   `merge-search` reads the `phone` scalar only. This is the remaining
+   half of `fix/merge-search-phone` and cannot be closed from the client.
+2. **Manual creation captures no consent** — a client created this way
+   starts un-textable with no in-app path to fix it. Recorded in the spec
+   as a product decision, not a bug.
+3. **The `no_sms_consent` path is dead until the backend emits it.** It
+   is verified against a fixture, not against the API.
+4. **`GET /clients` still has no search parameter.** The Clients screen
+   continues to filter a hundred rows locally, with the same ceiling this
+   session removed from the chat empty state.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
