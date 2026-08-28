@@ -32681,3 +32681,195 @@ every other `Sheet` consumer.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 18 — a line box measured for the wrong font, and rows that know where they go
+
+Branch `chat-ux/18-composer-and-sheet` from `main` (`0b0c6e3`), worktree
+per `CLAUDE.md`. Mobile-only, no dependencies. Precondition verified:
+17's `attachView` single host, `Sheet.onDismissed`, and `attachTrace` are
+all on main.
+
+## Task A.1 — the clipping, root-caused
+
+Not "an explicit height without a matching `lineHeight`". The line box
+was **measured for a different font size than the field's font**:
+
+    styles.input:  ...type.body,  fontSize: 16
+    type.body   =  { fontFamily: Outfit, fontSize: 15, lineHeight: 21 }
+
+The spread brought a 21pt line box sized for 15pt type; the next line
+raised the glyphs to 16pt and nothing raised the box with them. 21 of
+line for 16 of Outfit cuts the tails off `g j p q y` — including the
+placeholder's own, which is what rendered "Message" as "Messag̶e̶".
+
+**The fix is not a second override.** `type.message` is the design
+system's own Outfit-16 pairing — **16/23**, what the bubbles use — so
+spreading it replaces both lines and the two cannot drift apart again. It
+is also the apt token: this field is about to become a message, which the
+radius comment two lines above already says.
+
+    computed, after:   fontSize 16px   lineHeight 23px   padding 6.5 / 6.5
+
+### The rest-height numbers, as asked
+
+The brief proposes `8 + 20 + 8 = 36`. That needs `lineHeight: 20`, which
+is **shorter than the 21 that is already clipping** — it would make the
+problem worse. With the correct 23:
+
+    padding = (36 − 23) / 2 = 6.5      →  6.5 + 23 + 6.5 = 36 exactly
+
+So the spec's 36 survives untouched; only the split changes, from
+`10 + 21 + 10` (which "fit" only because the box was two points short) to
+`6.5 + 23 + 6.5`. Fractional on purpose — 6 or 7 would sit the line half
+a point off centre, and a text field is where that shows.
+
+**A bonus the old numbers hid:** one line of content used to measure
+`21 + 20 = 41` against a resting height of 36, so the field jumped 5pt
+the moment you typed one character. Now one line is `23 + 13 = 36` —
+identical to rest, so there is no jump at all.
+
+## Task A.2 — STOP CONDITION: there is no growth regression
+
+The brief asks which commit broke growth. **No commit did.** Every Part 2
+symbol is present and unmodified on main — `COMPOSER_MIN_HEIGHT`,
+`COMPOSER_MAX_HEIGHT`, `inputHeight`, `onContentSize`, `inputStyle`,
+`scrollEnabled`, and the `bodyRef` write that the Part 2 comments
+describe as the fix for the `onContentSizeChange` race. `git log --follow`
+over `Composer.tsx` shows no commit since `93032d6` touching any of it.
+
+Measured on main **before** any change this session:
+
+| state | height | scrollHeight |
+| --- | --- | --- |
+| rest (empty) | **36** | — |
+| growing | 62 → 104 | — |
+| ceiling | **120** | 146 |
+| beyond | 120 (pinned) | 188 → 314 |
+| cleared | **exactly 36** | — |
+
+I checked whether the harness was fooling me, since a `TextInput` renders
+as a `<textarea>` that can auto-size on its own. It was not: the inline
+heights were **`104.002px`** and **`35.9939px`** — fractional values that
+only come from the reanimated spring. The app's own `inputHeight` is
+driving it.
+
+So the Part 2 contract holds where it can be measured, and building a
+"restore" would have meant rewriting working code against a commit that
+does not exist. **My hypothesis is that A.1 *is* A.2:** a line box two
+points short makes a correct 36pt field look wrong, and "it isn't
+growing" is a reasonable reading of that. The device gate is what settles
+it — if growth still looks dead after this fix, the cause is elsewhere and
+the report above is where to start.
+
+### After the fix, measured line by line
+
+| content | height | scrollHeight |
+| --- | --- | --- |
+| rest (empty) | **36** | — |
+| 1 line | **36** | 36 |
+| 2 lines | 59 | 59 |
+| 3 lines | 82 | 82 |
+| 4 lines | 105 | 105 |
+| 5 lines | **120** (capped) | **128** → internal scroll begins |
+| 6 lines | 120 | 151 |
+| 7 lines | 120 | 174 |
+| cleared | **36** | — |
+
+## Task B — participant rows
+
+**Payload: no gap.** `ConversationThreadHeader` carries `clientId`
+directly, and the API builds the counterpart from that same client —
+`routes/conversations.ts:163` returns `conversation.client.id`. The row
+and its destination cannot disagree.
+
+**Staff verdict: no destination exists**, verified three ways rather than
+assumed. There is no `staff/[id]` route; `profile.tsx` takes no params
+(it is the viewer's own); and the Team tab's rows contain **zero**
+`router.push` calls — nobody can open another staff member anywhere in
+this app today. So staff rows get no chevron and no press feedback, and
+they render as a plain `View` rather than a disabled `Pressable`, so they
+neither flash on press nor announce themselves to assistive tech as
+buttons that do nothing.
+
+| thread | rows | affordance |
+| --- | --- | --- |
+| CLIENT (`t1`) | Mandii Vaughn | **button** — `Open Mandii Vaughn's client page`, chevron |
+| GROUP (`t3`) | Rosa Klein, Marcus Delacroix | **none** — both rendered, neither pressable, 0 client rows |
+
+Tapping the client row navigated to **`/client/c1`** — the id straight
+off the header — after the sheet had gone.
+
+### The reference needed upgrading, not copying
+
+The brief names the LINKED INQUIRY row as the in-file reference for
+dismiss-then-navigate. That row did:
+
+    setDetailsOpen(false);
+    router.push({ pathname: '/staff-inquiry/[id]', … });
+
+— both in the same tick, which is the exact shape session 17 removed from
+the attach flow. Copying it would have propagated it. A push is not a
+modal presentation and was not causing a freeze, but it does mean the
+destination mounts while a full-screen transparent Modal is still
+dismissing over it, and it is the shape this codebase has now decided not
+to write.
+
+So **both** rows were moved onto the completed-dismiss pattern, using the
+`onDismissed` callback 17 added to `Sheet`: the row stages where it wants
+to go, the sheet closes, the push happens when the sheet is really gone.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 11.87s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+Console: one error, the pre-existing React 19 `element.ref` shim message.
+
+**Standing regressions, retested explicitly rather than claimed** — the
+brief is right that the keyboard container is adjacent to Task A's work:
+
+| regression | result |
+| --- | --- |
+| send pipeline | sent, field cleared, composer back to **36** |
+| keyboard-ride container | present, transform intact (`matrix(1,0,0,1,0,0)` at rest) |
+| attach menu post-17 | opens; all five items present |
+| portfolio from the menu | opens through the single host |
+| thread bubbles render | yes |
+
+Screenshots in `design-refs/session-18/`: the placeholder at rest, the
+descender string `Messagey gjpq` with every tail intact, the client row
+with its chevron, and a group thread's staff rows with none.
+
+### Retested vs untouched
+
+**Retested:** the computed type metrics, the full height table line by
+line, the descender render, both participant-row cases, the route push
+after dismissal, and the five regressions above.
+
+**Untouched and NOT retested:** the S3 growth *animation* (a spring — the
+height values prove in harness, the feel does not), the keyboard ride's
+actual travel (device-only per the standing harness note; only the
+container's presence was checked), the long-press overlay's gesture
+(gesture-handler is inert to synthetic input), and the native picker.
+
+## Escalations
+
+1. **The ceiling admits ~4.6 lines, not 5.** `(120 − 13) / 23 = 4.65`.
+   This is not new — at the old metrics it was `(120 − 20) / 21 = 4.76`,
+   so §3's "5 lines (~120)" has never been literally true. Making it
+   literal means `COMPOSER_MAX_HEIGHT = 128`. I did **not** change it:
+   the ceiling is a gated visual number and moving it is a product call,
+   not a side effect of a typography fix.
+2. **A.2 is unresolved rather than fixed.** If the operator still sees no
+   growth after this, the harness has already ruled out the obvious
+   causes and the device is the only remaining instrument.
+3. **`client/[id]` navigation worked from a signed-out web root**, unlike
+   `conversation/[id]` in session 15 — so that route is apparently not
+   inside `Stack.Protected`. Harmless here and possibly deliberate, but
+   worth a glance from someone who knows the intent.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
