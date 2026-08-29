@@ -70,6 +70,21 @@ export function ScreenShell({
  *
  * Separate and named rather than a flag, so choosing it is a decision
  * someone made on purpose and can be found by grepping.
+ *
+ * ─── NOT LOGIN ──────────────────────────────────────────────────────
+ *
+ * fe9080e put login here too, and that hid the login backdrop for four
+ * days: this shell is a SIBLING ABOVE `<LoginBackdrop />`, so its
+ * `colors.bg` covered the photograph, the three gold rings and every
+ * gradient. The screen looked deliberate -- flat near-black -- which is
+ * the same failure mode the transparent shell above exists to prevent,
+ * arriving through the opaque one.
+ *
+ * The test is not "does this screen want the app-wide photo?" but "does
+ * anything under this shell need to be seen?". Login wants its own art
+ * and blocks the root ground with an opaque `styles.root` BENEATH the
+ * backdrop. The camera has nothing underneath, which is why it is the
+ * one caller here.
  */
 export function OpaqueScreenShell({
   children,

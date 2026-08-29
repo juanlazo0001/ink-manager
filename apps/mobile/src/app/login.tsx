@@ -13,7 +13,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
-import { OpaqueScreenShell } from '@/components/ScreenShell';
+import { ScreenShell } from '@/components/ScreenShell';
 import { GoldGradientButton } from '@/components/GoldGradientButton';
 import { LoginBackdrop } from '@/components/LoginBackdrop';
 import { useAuth } from '@/context/auth';
@@ -84,7 +84,29 @@ export default function LoginScreen() {
     <View style={styles.root}>
       <LoginBackdrop />
 
-      <OpaqueScreenShell>
+      {/*
+       * TRANSPARENT, and that is the whole point of this screen.
+       *
+       * This was `OpaqueScreenShell` from fe9080e until it was measured:
+       * that shell is `backgroundColor: colors.bg`, painted as a SIBLING
+       * ABOVE `<LoginBackdrop />`, so it covered the photograph, all
+       * three gold rings and every gradient with flat #0e0b08. The login
+       * screen rendered as an empty near-black field with a card on it.
+       *
+       * The sweep's intent was right and its layer was wrong. It asked
+       * "should the app-wide root photo ground show through here?" —
+       * correctly, no — and answered by painting opaque at the shell.
+       * But `styles.root` below is ALREADY opaque
+       * (`loginTokens.photoPlaceholder`), one level UNDER the backdrop.
+       * The root ground was blocked before this shell was ever reached;
+       * the only thing the opaque variant added was covering login's own
+       * art.
+       *
+       * So the ordering is what matters, not the colour: an opaque floor
+       * belongs BENEATH a backdrop, never above it. Login keeps its floor
+       * at `styles.root` and its shell stays transparent.
+       */}
+      <ScreenShell>
         <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <ScrollView
             contentContainerStyle={[styles.content, compact && styles.contentCompact]}
@@ -172,14 +194,15 @@ export default function LoginScreen() {
             <Text style={styles.apiHint}>{API_URL.replace(/^https?:\/\//, '')}</Text>
           </ScrollView>
         </KeyboardAvoidingView>
-      </OpaqueScreenShell>
+      </ScreenShell>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  /* The opaque floor, UNDER <LoginBackdrop />. This is what keeps the
+     app-wide root photo ground from showing through on login. */
   root: { flex: 1, backgroundColor: loginTokens.photoPlaceholder },
-  safe: { flex: 1 },
   flex: { flex: 1 },
   content: {
     flexGrow: 1,
