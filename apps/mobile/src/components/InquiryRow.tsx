@@ -83,7 +83,22 @@ export interface InquiryRowData {
  * this reference cannot pin the ratio tighter than about ±0.35, and AO's
  * 3.64 was already inside that band.
  */
-const CARD_RATIO = 3.77;
+/*
+ * ─── AQ, ITEM 2: A STEP TALLER ──────────────────────────────────────
+ *
+ * 3.77 -> 3.60, an owner calibration. AP measured 3.77 off the target's
+ * middle card and that measurement stands unchanged above; this is a
+ * deliberate step away from it, not a correction to it.
+ *
+ *     361pt card    95.8pt tall  ->  100.3pt      +4.7%
+ *
+ * The internal proportions are untouched — the layout is still
+ * `space-between` with the same padding relationships — so the card
+ * gains height without redistributing what is inside it. The brief's
+ * "keep the same proportional relationship" is satisfied by changing
+ * only this constant.
+ */
+const CARD_RATIO = 3.6;
 
 /*
  * ─── THE PHOTO IS A TEXTURE OVER THE CARD'S OWN GROUND ──────────────
@@ -126,7 +141,30 @@ const CARD_RATIO = 3.77;
  * The photo survives as texture and depth, which is the ruling: the
  * row's information is the name, description, status, date and avatar.
  */
-const PHOTO_OPACITY = 0.18;
+/*
+ * ─── AQ, ITEM 1: ONE STEP LIGHTER ───────────────────────────────────
+ *
+ * 0.18 -> 0.21, an OWNER CALIBRATION and a deliberate divergence from
+ * the 0.185 that session AP measured off the target. AP's number is not
+ * withdrawn — it is still the best reading of `intended-target.jpg`, and
+ * it is recorded above. This is a review note on top of it.
+ *
+ * A NOTE ON THE LEVER, because the brief's wording assumes a mechanism
+ * that no longer exists. It asks to "reduce the base scrim by a few
+ * percent". There is no base scrim: AP removed it after measuring that a
+ * black scrim MULTIPLIES and therefore cannot converge a bright photo
+ * and a dark one at any value. The equivalent control is this opacity,
+ * where the scrim-equivalent is (1 - PHOTO_OPACITY):
+ *
+ *     scrim-equivalent   0.82  ->  0.79      a 3.7% relative reduction
+ *     photo opacity      0.18  ->  0.21
+ *
+ * Lighter is therefore MORE photo, not less scrim, and the uniformity
+ * behaviour is unchanged in kind: the compression factor simply moves
+ * from 0.18 to 0.21, so bright and dark still converge, 17% less
+ * tightly. Measured figures are in the session report.
+ */
+const PHOTO_OPACITY = 0.21;
 
 /*
  * ─── THE WASH ───────────────────────────────────────────────────────
@@ -384,9 +422,32 @@ const styles = StyleSheet.create({
      * "name block sits lower with more breathing room" note, and it is
      * padding rather than the ratio.
      */
-    paddingTop: space.xs,
-    paddingBottom: space.sm,
-    paddingHorizontal: space.md,
+    /*
+     * ─── AQ, ITEM 4: A UNIFORM STEP UP ──────────────────────────────
+     *
+     *     top         4  -> 8      bottom  8 -> 12
+     *     horizontal  12 -> 16
+     *
+     * The brief offers two paths: match the target's breathing room "if
+     * AP's measurement suggests it was under-applied; otherwise a
+     * uniform step up". AP's measurements say it was NOT under-applied —
+     * against the target the insets already met or exceeded it:
+     *
+     *                        target    AP shipped
+     *   chip row from top     0.108      0.135     already further in
+     *   description to bottom 0.138      0.135     matched
+     *   left inset            0.035      0.039     already further in
+     *
+     * So this takes the second path, as an owner calibration: a uniform
+     * step on all sides, knowingly moving further from the target's
+     * proportions rather than toward them. It is affordable because item
+     * 2 made the card taller in the same pass — the extra 4.5pt of
+     * height covers the extra 8pt of vertical inset most of the way, and
+     * the resulting fractions are in the session report.
+     */
+    paddingTop: space.sm,
+    paddingBottom: space.md,
+    paddingHorizontal: space.lg,
   },
   /* Closed and cold inquiries are history, not pipeline. */
   closed: { opacity: 0.5 },
@@ -432,7 +493,21 @@ const styles = StyleSheet.create({
   nameBlock: { flex: 1, minWidth: 0 },
   unassigned: { ...type.label, fontSize: 9, color: colors.accent },
   client: { ...type.heading, color: colors.fg },
-  description: { ...type.small, color: colors.fgSecondary },
+  /*
+   * ─── AQ, ITEM 3: ONE STEP GREYER ────────────────────────────────
+   *
+   * `fgSecondary` (#c7bea9) -> `fgMuted` (#9b927f), the next step down
+   * the muted scale, so the line reads as clearly subordinate to the
+   * name.
+   *
+   * This is the adjustment that fights item 1: a greyer text on a
+   * lighter wash cuts contrast from both ends at once. AP measured this
+   * line at 8.91:1 worst case, which left roughly 2x of headroom, and
+   * the measured result after both changes is in the session report. If
+   * it had not cleared 4.5:1 the instruction was to hold legibility —
+   * it did clear, so no trade was needed.
+   */
+  description: { ...type.small, color: colors.fgMuted },
   artistAvatar: { flexShrink: 0 },
 
   guest: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 1 },
