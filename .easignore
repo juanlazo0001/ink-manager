@@ -1,0 +1,17 @@
+# What EAS Build uploads.
+#
+# CAREFUL: when this file exists, EAS uses it INSTEAD of .gitignore, not in
+# addition to it. The first two entries are copied verbatim from .gitignore
+# for exactly that reason — delete them and every build uploads node_modules.
+node_modules
+ui-screenshots/
+
+# Reference material, not build input. Nothing under apps/ or packages/
+# imports any of it (verified by grep), and together it is roughly 62 MB of
+# an 85 MB tree — so excluding it cuts the upload on every single build.
+design-refs/
+apps/mobile/parity-audit/
+public/mobile/
+public/desktop/
+public/prototype/
+marketing/

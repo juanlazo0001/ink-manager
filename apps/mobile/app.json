@@ -2,6 +2,7 @@
   "expo": {
     "name": "Ink Manager",
     "slug": "ink-manager",
+    "owner": "ink-manager",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -10,16 +11,27 @@
     "backgroundColor": "#0e0b08",
     "newArchEnabled": true,
     "ios": {
+      "bundleIdentifier": "app.inkmanager.mobile",
       "supportsTablet": true
     },
     "android": {
+      "package": "app.inkmanager.mobile",
       "adaptiveIcon": {
         "backgroundColor": "#0e0b08",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO"
+      ]
     },
     "web": {
       "output": "static",
@@ -32,7 +44,7 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
+          "imageWidth": 260,
           "resizeMode": "contain",
           "backgroundColor": "#0e0b08",
           "dark": {
@@ -43,7 +55,23 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Ink Manager uses your photos so you can set a profile photo and add work to your portfolio and flash."
+          "photosPermission": "Ink Manager uses your photo library so you can attach images to client messages and set your profile, portfolio, and flash photos.",
+          "cameraPermission": "Ink Manager uses the camera to scan gift card QR codes and to take photos you send in client conversations or add to your portfolio.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Ink Manager uses the camera to scan gift card QR codes and to take photos you send in client conversations or add to your portfolio.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Ink Manager uses your photo library so you can attach images to client messages and set your profile, portfolio, and flash photos.",
+          "savePhotosPermission": "Ink Manager saves photos from client conversations to your photo library when you choose to save them."
         }
       ],
       "expo-web-browser"
@@ -51,6 +79,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "004e6772-1626-40e2-863a-0482cdd73460"
+      }
     }
   }
 }
