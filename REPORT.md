@@ -33308,3 +33308,156 @@ taller row, but "should be" is not "was measured".
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 21 — the client page's inquiries card, made to work
+
+Branch `chat-ux/21-client-inquiries-widget` from `main` (`d9900bf`),
+worktree per `CLAUDE.md`. Mobile-only, no `apps/api` writes. Serial check
+passed.
+
+## A precondition marker that does not exist
+
+The brief asks me to verify "the **universal top-right corner mapping**"
+on main. Main does not have that, and never did: the mapping is
+**reactor-side** — `mine → right, theirs → left`
+(`MessageBubble.tsx:553`, `:559`, `:568`) — which is what §7 rev G
+specifies and what session 20 shipped and re-asserted in the spec. The
+consent markers the precondition also names are present
+(`SmsConsentActions`, `REACTION_HEADROOM`), so 20 is genuinely merged;
+only that one phrase is wrong. Flagged so a later session does not
+"restore" a mapping that was never there.
+
+## Task A — findings
+
+### A1 · Web's card, and what Send really does
+
+Data source is **`client.inquiries` off the existing `GET /clients/:id`
+payload** (`ClientDetail.tsx:1881`) — no separate query — already ordered
+`createdAt desc`.
+
+**Send is not a metaphor.** `ClientDetail.tsx:1858-1866` renders a
+`SendChannelButton` labelled "Send Inquiry" whose action is
+`handleCopyPrefillLink` → `generateAndCopyPrefillLink` (`:477`, `:488`),
+which POSTs `/prefill-drafts` with **`clientId` and `channel`**. That
+combination is the whole story:
+
+    routes/prefillDrafts.ts:108   shortenUrl(...)          -> the /s/ short link
+    routes/prefillDrafts.ts:110   "Auto-send ... only when clientId was passed"
+    routes/prefillDrafts.ts:119   if (client) { getOrCreateClientConversation(...) }
+    routes/prefillDrafts.ts:122   sendClientEmail(...) / sendClientSms(...)
+    routes/prefillDrafts.ts:153   returns { prefillUrl, prefillSendResult }
+
+So it mints a token link **and really sends it** to the client on the
+chosen channel, writing into their conversation. `prefillSendResult` is
+that send's own outcome and can report a refusal while the draft was
+created fine — a 200 does not mean delivered.
+
+**The consent interplay, explicitly.** The gate is the **server's**:
+`lib/clientSms.ts:260-272` refuses `no_consent` and `opted_out`, and its
+own comment states the reason — *"every app funnels through here, so no
+caller can text a non-consenting client"*. Mobile cannot bypass it even
+by mistake. The UI gate added here mirrors `SendChannelButton`'s three
+facts (has a number · not opted out · consent on file) purely so the
+control is honest about whether a tap can work.
+
+**This is not session 20-C's rule.** That one forbids texting the
+**opt-in link** — the consent request itself — to a number that has not
+consented. This is an ordinary business message to a client who **has**
+consented, refused server-side otherwise. Different act, same machinery,
+worth separating because they look alike.
+
+### A2 · Web's + New
+
+`setShowNewInquiry(true)` → `StaffInquiryForm` in a **modal**, with
+`lockedClient: { firstName, lastName, email, phone }`
+(`ClientDetail.tsx:2698-2711`); on create it navigates to the inquiry.
+
+### A3 · Mobile's actual state — the widget already existed
+
+`client/[id]` has carried an Inquiries card for several sessions:
+Description/Status headers (`:729`), rows with the description, a
+**channel glyph** and the date, and the shared **`InquiryStatusChip`**
+(`InquiryRowLine`, `:1028`). So there was no visual port to do and no
+component to fork.
+
+**Every behaviour was missing**, and said so out loud:
+
+    CardIconButton  Send  unavailableNote="Sending an intake link lives in the portal for now."
+    CardIconButton  +     unavailableNote="Logging an inquiry lives in the portal for now."
+    InquiryRowLine        a plain <View> — no onPress
+
+`inquiry-new` had **zero** `useLocalSearchParams` and **one** caller
+(`(tabs)/inquiries.tsx:205`) — precisely `client-new`'s position before
+session 15, so the additive-prefill precedent applies unchanged.
+
+**The route question has an answer in the app already, and it is a
+branch, not a route.** `(tabs)/inquiries.tsx:264-267`:
+
+    isArtist ? '/inquiry/[id]' : '/staff-inquiry/[id]'
+
+with the reason recorded there: an ARTIST reads
+`GET /inquiries/assigned-to-me/:id` while OWNER/FRONT_DESK read
+`GET /inquiries/:id`, and **the two are different shapes rather than one
+being a subset of the other**. The app has two detail screens on purpose.
+The brief's "confirmed: row → inquiry detail" implies one destination; a
+row that picked one for everybody would be broken for half the roles. I
+mirrored the existing branch rather than choosing.
+
+## Task B — the three gaps, closed
+
+| gap | now |
+| --- | --- |
+| rows inert | full-row `Pressable` → the role-branched detail route |
+| **+ New** inert | `inquiry-new` with the client's contact fields; on save returns to the **client page** (mobile replaced it, where web kept it behind a modal), list refreshing on focus |
+| **Send** inert | web's exact call — `POST /prefill-drafts` with `clientId` + `channel` — reading `prefillSendResult` rather than assuming, gated on `SendChannelButton`'s three facts |
+
+`clientId` rides to `inquiry-new` for the **return trip only**, not the
+form: the create route resolves the client from the contact fields
+exactly as it does for a walk-in, and putting an id in the body would be
+inventing an API shape.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 15.61s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+## What was NOT verified — no harness run this session
+
+Stated plainly rather than implied, and it is the whole evidence section:
+
+- **No harness run at all.** No screenshots, no logged row-press push, no
+  prefilled-arrival or return-refresh, no Send call observed, no console
+  check, no glance at the adjacent 20-C consent block.
+- **No web-vs-mobile pairs.** Session 19's measurement stands: the dev
+  database has **0 studios with message templates** and **2 artists with
+  any portfolio image**, and web's card needs a client with inquiries in a
+  studio I can log into. That gap is unchanged and was never closed.
+
+So this session delivers **read code and written code**, not evidence.
+Everything above about web is cited to file:line and re-readable;
+everything about mobile's behaviour is a claim the gate has to settle.
+The three behaviours are exactly what the operator gate walks through, so
+the gate is a complete test of them — but I have not run it, and nothing
+here should be read as though I had.
+
+**Carried from session 20, still unrun:** the regression battery that
+report listed — long-press on a reacted bubble, reveal drag on reacted
+rows, grouping/tails, the attach panes' `interaction-ready`. Session 20
+merged without them.
+
+## Escalations
+
+1. **No evidence this session.** If the gate is not imminent, the right
+   next step is a focused harness pass over the three behaviours before
+   merge rather than after.
+2. **Send writes to the client's conversation.** It is not a quiet
+   utility: a tap creates a real message in the thread. Worth the
+   operator knowing before the gate, since a stray tap is a real text.
+3. **The precondition's corner phrasing** (above) — main is correct; the
+   brief's description of it is not.
+
+## Database
+
+No schema change, no migration, no backfill. Read-only investigation only.
