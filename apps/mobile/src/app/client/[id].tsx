@@ -10,6 +10,7 @@ import { SmsConsentActions } from '@/components/SmsConsentActions';
 import { sendPrefillInquiryLink } from '@/lib/prefill';
 import { CONSENT_SOURCE_LABELS } from '@/lib/consentLabels';
 import { Avatar, initialsOf } from '@/components/Avatar';
+import { ActivityHistory } from '@/components/ActivityHistory';
 import { Banner } from '@/components/Banner';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { QuickAction, QuickActionRow } from '@/components/QuickAction';
@@ -28,6 +29,7 @@ import {
 } from '@/components/icons';
 import { ContactAddSheet } from '@/components/ContactAddSheet';
 import { ClientMoreSheet } from '@/components/ClientMoreSheet';
+import { IssueGiftCardSheet } from '@/components/IssueGiftCardSheet';
 import { MergeClientSheet } from '@/components/MergeClientSheet';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenLoading, StateMessage } from '@/components/ui';
@@ -168,6 +170,7 @@ export default function ClientScreen() {
    */
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [moreOpen, setMoreOpen] = useState(false);
+  const [issueGiftOpen, setIssueGiftOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   /** A write that failed, said once, above the card it failed in. */
   const [writeError, setWriteError] = useState<string | null>(null);
@@ -891,10 +894,21 @@ export default function ClientScreen() {
             onToggle={() => toggle('gift')}
             headerActions={
               <CardActionRow>
+                {/*
+                  The toast moved to the END of the flow.
+
+                  This button used to raise "Issuing a gift card moves
+                  money — portal only." on tap, so nothing existed behind
+                  it. The form is real now — method, amount, validation,
+                  the OWNER-only expiry, and the exact request body — and
+                  only the SUBMIT is gated. The payments session replaces
+                  one function in `IssueGiftCardSheet`, rather than
+                  building a screen from nothing.
+                */}
                 <CardIconButton
                   Icon={GiftCardIcon}
                   label="Issue gift card"
-                  unavailableNote="Issuing a gift card moves money — portal only."
+                  onPress={() => setIssueGiftOpen(true)}
                 />
               </CardActionRow>
             }
@@ -1055,10 +1069,25 @@ export default function ClientScreen() {
     ),
     'activity-history': (
           <CollapsibleSection title="Activity history" open={!!open.activity} onToggle={() => toggle('activity')}>
-            {/* Web groups this by date with a description per change. The
-                client payload carries no audit trail, so the card keeps
-                web's place and says so rather than showing nothing. */}
-            <CardEmpty text="No activity recorded yet." />
+            {/*
+              THE CARD WAS NEVER EMPTY FOR WANT OF DATA.
+
+              This rendered a hardcoded "No activity recorded yet." behind
+              a comment reading "the client payload carries no audit
+              trail". That sentence is true and it is the wrong
+              conclusion: the audit trail was never part of the client
+              payload on EITHER client. Web reads it from a separate
+              endpoint -- `ClientDetail.tsx` renders
+              `<AuditTrail bare entityType="Client" entityId={client.id} />`
+              against `GET /audit?entityType=&entityId=` -- and mobile has
+              had a complete port of that component since the gift-card
+              screen, which calls the very same endpoint with
+              `entityType="GiftCard"`.
+
+              So the section was not dropped in consolidation and nothing
+              was missing from a payload. One line was never wired up.
+            */}
+            <ActivityHistory token={token!} entityType="Client" entityId={id!} />
           </CollapsibleSection>
     ),
   };
@@ -1068,6 +1097,26 @@ export default function ClientScreen() {
           })()}
         </ScrollView>
       )}
+
+      <IssueGiftCardSheet
+        visible={issueGiftOpen}
+        onClose={() => setIssueGiftOpen(false)}
+        clientId={id!}
+        /*
+         * The expiry override and the Exemption method are BOTH
+         * OWNER-only server-side (`giftCards.ts` 403s a non-owner who
+         * sends `expiresAt` at all, and `POST /gift-cards/exempt` is
+         * wrapped in `requireRole(Role.OWNER)`).
+         *
+         * Read off the caller's own role claim, which is the honest
+         * source for "what will the server let ME do" -- unlike a
+         * studio-scoping question, where CLAUDE.md's rule is that the
+         * token's studioId can be stale. Role here decides only whether
+         * to OFFER a control; the server decides the outcome either way,
+         * so a stale claim costs a 403, never an unauthorized write.
+         */
+        isOwner={session?.profile.role === 'OWNER'}
+      />
 
       <ClientMoreSheet
         visible={moreOpen}
