@@ -33591,3 +33591,119 @@ running them either.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 23 — the login backdrop was never removed; something painted over it
+
+Branch `chat-ux/23-login-backdrop` from `main` (`d7dc0ff`), one commit.
+Mobile-only. Diagnosis first, as the brief required — and the diagnosis
+is the whole of this session's value, because all three candidates the
+brief offered were wrong about the component.
+
+## The guilty commit
+
+**`fe9080e` — "mobile: ScreenShell, web's eyebrow values, 80% drawer,
+drag handles."**
+
+`LoginBackdrop.tsx` has **one commit in its entire history** (`e50da62`).
+It was never edited after it, never removed, and is still mounted at
+`login.tsx:85`. It rendered correctly the whole time. So "deliberate
+removal" and "refactor casualty" are both dead for the component itself:
+nothing happened to it.
+
+What located the real cause was a contradiction between two instruments.
+The DOM reported the backdrop as healthy — photograph loaded (natural
+1672×941, painted 393×852, opacity 1), all three rings present at
+520/780/1060 carrying their gold alphas, `visibility: visible` — while
+the screen photographed as flat near-black. Once those two disagree the
+question is no longer "what happened to the backdrop" but "what is on top
+of it". A full-viewport opaque `rgb(14,11,8)` sat at DOM index 56, above
+the backdrop's 49. `#0e0b08` is `colors.bg`, and `OpaqueScreenShell` is
+exactly `{ flex: 1, backgroundColor: colors.bg }`.
+
+The substitution is a single token:
+
+    e50da62   <SafeAreaView style={styles.safe}>   safe: { flex: 1 } — no background
+    fe9080e   <OpaqueScreenShell>                  { flex: 1, backgroundColor: colors.bg }
+
+and it orphaned `styles.safe`, which has had zero references since.
+
+## Why a correct sweep produced a wrong screen
+
+`fe9080e` was right about the problem it was solving. It asked whether the
+app-wide root photo ground should show through login — correctly, no —
+and answered by painting opaque at the shell. But the shell is a SIBLING
+ABOVE `<LoginBackdrop />`, while `login.tsx`'s own `styles.root` is
+already opaque (`loginTokens.photoPlaceholder`, `#0c0a08`) and sits UNDER
+the backdrop. The root ground was blocked before the shell was ever
+reached. The only thing the opaque variant added was covering login's own
+art.
+
+**An opaque floor belongs beneath a backdrop, never above it.** The
+colour was never the issue; the ordering was.
+
+There is an irony worth keeping. `ScreenShell` carries a `__DEV__`
+assertion that throws if a `backgroundColor` is passed through it,
+written because "the failure mode of this bug has always been that it
+looks *fine*, just flat." That is precisely what happened here — it
+arrived through `OpaqueScreenShell`, the sibling with no such guard. The
+guard was aimed at the transparent door while the bug walked through the
+opaque one.
+
+So the boundary now lives on `OpaqueScreenShell`'s own doc comment, as a
+test rather than a list: not "does this screen want the app-wide photo?"
+but **"does anything under this shell need to be seen?"** The camera has
+nothing underneath, which is why it is the one legitimate caller. Login
+has its entire design underneath.
+
+## The fix, and its evidence
+
+`ScreenShell` (transparent), dead `styles.safe` removed, reasoning inline
+at both sites.
+
+| | before | after |
+| --- | --- | --- |
+| opaque coverers above the backdrop | `[{56, rgb(14,11,8)}]` | **`[]`** |
+| paint chain at a point clear of the card | opaque at 56 | transparent → **`rgb(12,10,8)` at 44** = `styles.root`, the floor beneath the backdrop |
+| screenshot file size | 28 KB | **239 KB** |
+
+That last row is a blunt instrument and a useful one: a flat fill
+compresses to nothing and a photograph does not. `design-refs/session-23/`
+holds `before-flat-black.png`, `after-backdrop-restored.png` and
+`web-reference.png`; the after shows the photograph (shelves, framed
+flash, wooden floor), the gold ring arcs and the frosted card, matching
+the web reference.
+
+## The rotation — ratified as omitted
+
+Distinct from the defect and deliberately untouched. The rings' spring
+rotation and the two orbiting dots exist on web and were never ported,
+for reasons `LoginBackdrop.tsx`'s own doc comment records: there is no
+auth-mode change on mobile to key the spring to, and this repo's standing
+design rule singles out animation combined with `backdrop-filter` as
+having caused real on-device frame drops. This session reported that as
+an architect call rather than reversing another session's stated intent.
+
+**Ruled on the architect thread: the omission stands, and the reasoning
+stays in the doc comment.** The static geometry is intact, so the
+composition reads without the motion.
+
+The two things wanted separate rulings and got them: the black screen was
+a defect, the missing motion was a decision.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 15.86s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+**Retested:** the layer probe above, in both states.
+
+**Untouched and NOT retested:** the sign-in path itself, forgot-password,
+and keyboard avoidance on a short phone. This change is a background
+colour on a wrapper rather than layout — but that is reasoning, not
+measurement, and it is recorded as such.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
