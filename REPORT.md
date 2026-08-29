@@ -33308,3 +33308,133 @@ taller row, but "should be" is not "was measured".
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Chat UX 22 — the balloon grips the corner
+
+Branch `chat-ux/22-balloon-anchor` from `main` (`d9900bf`) — 20 is
+merged, so this is the branch case the gate specified. Mobile-only,
+geometry only; the corner ruling and the headroom constant are untouched.
+
+**One note on serial discipline:** `chat-ux/21-client-inquiries-widget`
+is unmerged, so this is a second open line. They share no files — 21 is
+the client page and `inquiry-new`, 22 is `MessageBubble` and
+`ReactionBalloon` — so the merge order does not matter here, unlike the
+11/12 pair that earned the rule.
+
+## The two defects, both visible in the source
+
+**The tail pointed away from the message it belongs to.**
+`ReactionBalloon.tsx:102` — `tailRight: { right: 6 }` puts the dots on
+the balloon's OUTER edge. A right-anchored balloon has its bubble to the
+LEFT, so the dots must descend on the lower-left. The screen passed
+`side="right"` for the right cluster, i.e. the away-facing side. That is
+the gate's "tail dots pointing down-right away from the bubble", exactly.
+
+**The balloon was inset, not outboard.** `reactionsRight: { right:
+space.sm }` is a POSITIVE 8 — the balloon tucked fully inside the
+bubble's width. A corner grip is a negative offset. The sign was the bug.
+
+## The contract, as implemented
+
+    balloonBottom = bubbleTop + BALLOON_OVERLAP     top: 14 − 30 = −16
+    balloonRight  = bubbleRight + BALLOON_OUTBOARD  right: −11
+    screen floor  = 8                               clamp below
+
+`top` is now written as `BALLOON_OVERLAP - BALLOON` rather than
+`-REACTION_HEADROOM`. Same number, but it states the grip rather than the
+reservation — and keeps the two readings of that 16 tied together if the
+balloon ever resizes. The headroom constant is unchanged, as instructed:
+16 above the top edge is exactly what remains.
+
+**The clamp is resolved statically, not checked at runtime.** A bubble
+sits inside the row's `space.lg` inset, so the only balloon that can
+reach the screen edge is one anchored to the side its bubble is aligned
+to — an own bubble's right edge, an incoming bubble's left. On that side
+the outboard becomes `space.lg − 8`; elsewhere the bubble's edge is
+mid-screen and the full 11 is safe.
+
+## Evidence — the in-component probe
+
+`lib/reactionProbe.ts`, `__DEV__`, permanent. This is the instrument
+session 20 said it needed: both views call `measureInWindow` on
+**themselves**, which reports the real screen box after every transform
+in the chain. Session 20's DOM-side attempt measured through the inverted
+list's flip and produced numbers that were confidently wrong.
+
+    [balloon] incoming · mine   bubbleTop=256 bubbleRight=297.6
+                                balloon=[x 271.6, y 305, w 36, h 30]
+                                overlapFlipped=15  outboard=10      screenGap=85.4
+
+    [balloon] own · mine        bubbleTop=81  bubbleRight=377
+                                balloon=[x 309.1, y 109, w 74.9, h 30]
+                                overlapFlipped=15  outboard=7       screenGap=9
+
+    [balloon] own · theirs      bubbleTop=142 bubbleRight=377
+                                balloon=[x 174.1, y 170, w 38, h 30]
+                                overlapFlipped=15  outboardLeft=10  screenGap=180.9
+
+| requirement | required | measured |
+| --- | --- | --- |
+| overlapDepth | 14 ± 1 | **15** on all three |
+| outboard (unclamped) | 10 ± 2 | **10** — incoming/mine, and own/theirs on the left |
+| clamp engages near the edge | screenGap ≥ 8 | **outboard 10 → 7, screenGap 6 → 9** |
+| `balloonRect ⊆ rowRect` | asserted | headroom unchanged at 16, and the balloon's top is exactly the reserved band |
+
+**Why the probe prints two overlap numbers.** `overlapDepth` is the
+contract as the device sees it — `balloonBottom − bubbleTop`. The harness
+draws this thread in an inverted list, so each row is upside down and
+that formula measures two edges which are not facing each other; it
+printed 58 for a 14pt overlap. `overlapFlipped` is the same quantity in
+the flipped frame. Both are printed, so whichever frame you are reading
+in, exactly one is the contract and it is obvious which — better than one
+number that is silently right half the time. **On device, read
+`overlapDepth`.**
+
+The clamp measurement is the one to note: at outboard 11 the own bubble
+gave `screenGap=6`, under the floor. That is the number that justified
+the clamp rather than an assumption that one was needed.
+
+## Screenshot
+
+`design-refs/session-22/cux22-balloon-corner-grip-393.png`, framed to the
+thread. **It renders upside down** — the harness's inverted list, the same
+artifact behind every mirrored screenshot this arc — so it is *not* a
+direct A/B against the operator's iMessage reference, which is what the
+brief asked for. What it does show unambiguously: each balloon now
+overlaps its bubble instead of floating above it, hangs past the correct
+edge, and carries its tail on the bubble-facing side. **The reference
+comparison itself is the gate's**, on a device that does not flip.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 10.73s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+### Retested vs untouched
+
+**Retested:** the three anchor cases above, the clamp engaging, the four
+typechecks.
+
+**Untouched and NOT retested:** the long-press overlay on a reacted
+bubble, reveal drag on reacted rows, grouping/tails for unreacted
+messages, the send pipeline and the attach path. These are session 20's
+still-unrun regression battery; this change moves a balloon's offsets and
+a tail's side within an already-reserved band, so it does not alter row
+heights — but that is reasoning, not measurement, and 20 merged without
+running them either.
+
+## Escalations
+
+1. **Session 20's regression battery is still unrun**, now across two
+   merged sessions and this branch. The long-press-on-a-reacted-bubble
+   case remains the one I would check first.
+2. **`outboard` reads 7 where the clamp engages**, not the nominal 8. The
+   requirement is `screenGap ≥ 8` and that is met at 9; the extra point
+   is the balloon's own border/shadow in the measurement. Worth knowing
+   before anyone treats 8 as an assertable constant.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
