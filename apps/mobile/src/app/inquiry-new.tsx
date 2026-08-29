@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 
@@ -84,12 +84,35 @@ export default function InquiryNewScreen() {
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [placementImages, setPlacementImages] = useState<string[]>([]);
 
+  /*
+   * ─── OPTIONAL PREFILL, ADDITIVE ─────────────────────────────
+   *
+   * The client page can arrive here with the person already known, which
+   * is web's `lockedClient` on its StaffInquiryForm. The Inquiries tab's
+   * `+` passes nothing and is unchanged — the same additive shape
+   * `client-new` took in session 15, and for the same reason: a screen
+   * with one caller can grow parameters without a contract change.
+   *
+   * `clientId` rides along for the return trip rather than the form: the
+   * create route resolves the client from the contact fields exactly as
+   * it does for a walk-in, so passing an id into the body would be
+   * inventing an API shape.
+   */
+  const params = useLocalSearchParams<{
+    clientId?: string;
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+  }>();
+  const fromClientId = params.clientId ?? null;
+
   const form = useForm(
     {
-      firstName: '',
-      lastName: '',
-      email: '',
-      phone: '',
+      firstName: params.firstName ?? '',
+      lastName: params.lastName ?? '',
+      email: params.email ?? '',
+      phone: params.phone ?? '',
       channel: 'PHONE',
       referralCode: '',
       description: '',
@@ -186,6 +209,18 @@ export default function InquiryNewScreen() {
       form.commit(form.values);
       setReferenceImages([]);
       setPlacementImages([]);
+      /*
+       * Arriving from a client page returns THERE, with the list picking
+       * the new inquiry up on its focus refetch — web navigates to the
+       * inquiry instead, but web keeps the client page open behind a
+       * modal and mobile replaced it. Landing on a screen the operator
+       * never left is the mobile equivalent of web's "the card now shows
+       * it".
+       */
+      if (fromClientId) {
+        router.replace({ pathname: '/client/[id]', params: { id: fromClientId } });
+        return;
+      }
       router.replace({ pathname: '/staff-inquiry/[id]', params: { id: created.id } });
     } catch (err) {
       // The server's own sentence when it disagrees — it knows this
