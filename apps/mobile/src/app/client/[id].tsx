@@ -7,6 +7,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 
 import { ScreenShell } from '@/components/ScreenShell';
 import { SmsConsentActions } from '@/components/SmsConsentActions';
+import { sendPrefillInquiryLink } from '@/lib/prefill';
 import { CONSENT_SOURCE_LABELS } from '@/lib/consentLabels';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
@@ -124,8 +125,33 @@ export default function ClientScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { session } = useAuth();
   const token = session?.token ?? null;
+  const isArtist = session?.profile?.role === 'ARTIST';
+
+  /*
+   * ─── WHICH INQUIRY SCREEN, AND WHY IT IS A BRANCH ─────────────────
+   *
+   * Not a fresh choice: the Inquiries tab already makes exactly this one
+   * (`(tabs)/inquiries.tsx:264-267`) and states the reason — an ARTIST
+   * reads `GET /inquiries/assigned-to-me/:id` while OWNER and FRONT_DESK
+   * read `GET /inquiries/:id`, and the two are DIFFERENT SHAPES rather
+   * than one being a subset of the other. So the app has two detail
+   * screens on purpose, and a row that picked one for everybody would be
+   * broken for half the roles. This mirrors the established pattern
+   * rather than inventing a third answer.
+   */
+  const openInquiry = useCallback(
+    (inquiryId: string) =>
+      router.push(
+        isArtist
+          ? { pathname: '/inquiry/[id]', params: { id: inquiryId } }
+          : { pathname: '/staff-inquiry/[id]', params: { id: inquiryId } },
+      ),
+    [isArtist, router],
+  );
 
   const [client, setClient] = useState<ClientDetail | null>(null);
+  const [sendingPrefill, setSendingPrefill] = useState(false);
+  const [prefillNotice, setPrefillNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
@@ -292,6 +318,75 @@ export default function ClientScreen() {
    * the contact writes use, so this card has one place that reports
    * trouble rather than two.
    */
+  /*
+   * ─── WHAT "SEND INQUIRY" ACTUALLY DOES ────────────────────────────
+   *
+   * Web's button is a `SendChannelButton` whose action is
+   * `handleCopyPrefillLink` → `POST /prefill-drafts`. Because it passes
+   * `clientId`, the route does not merely mint: it resolves the client's
+   * conversation and AUTO-SENDS the shortened link on the chosen channel
+   * (`routes/prefillDrafts.ts:110-152`), returning `prefillSendResult`
+   * alongside the URL. The label is literal.
+   *
+   * THE CONSENT GATE IS THE SERVER'S, NOT OURS. `sendClientSms` refuses
+   * `no_consent` and `opted_out` itself, and its own comment records why:
+   * "every app funnels through here, so no caller can text a
+   * non-consenting client". Mobile therefore cannot bypass it even by
+   * mistake. What the UI adds is honesty — the button is unavailable
+   * when the send would certainly be refused, so nobody taps a control
+   * that cannot work.
+   *
+   * NOT the same thing as session 20-C's absolute rule. That one forbids
+   * texting the OPT-IN link — the consent request itself — to a number
+   * that has not consented. This is an ordinary business message to a
+   * client who HAS consented, refused server-side otherwise.
+   */
+  /*
+   * Web's `SendChannelButton` decides availability from exactly these
+   * three facts. Mirrored so the two clients refuse in the same cases and
+   * say the same thing.
+   */
+  const sendBlockedReason =
+    client == null
+      ? 'Loading.'
+      : client.phones.length === 0 && !client.phone
+        ? 'This client has no phone number on file.'
+        : client.smsOptedOutAt
+          ? 'This client opted out of SMS.'
+          : client.smsConsentGivenAt
+            ? null
+            : 'No SMS consent on file — record it in Contact info first.';
+
+  async function sendInquiryLink() {
+    if (!token || !client) return;
+    setSendingPrefill(true);
+    setPrefillNotice(null);
+    try {
+      const result = await sendPrefillInquiryLink(token, {
+        clientId: client.id,
+        channel: 'SMS',
+        payload: {
+          firstName: client.firstName,
+          lastName: client.lastName,
+          email: client.email ?? undefined,
+          phone: client.phone ?? undefined,
+        },
+      });
+      /* Web surfaces the send's own outcome rather than assuming the 200
+         meant delivery — `prefillSendResult` can report a refusal while
+         the draft itself was created fine. */
+      setPrefillNotice(
+        result.prefillSendResult && result.prefillSendResult.sent === false
+          ? `The link was created but not sent: ${(result.prefillSendResult.reason ?? 'unknown reason').replace(/_/g, ' ')}.`
+          : 'Inquiry link sent.',
+      );
+    } catch (err) {
+      setPrefillNotice(screenErrorMessage(err, 'That link was not sent.'));
+    } finally {
+      setSendingPrefill(false);
+    }
+  }
+
   async function share(doc: DocumentRef) {
     if (!token) return;
     setSharingId(doc.id);
@@ -706,20 +801,45 @@ export default function ClientScreen() {
             onToggle={() => toggle('inquiries')}
             headerActions={
               <CardActionRow>
+                {/*
+                  Web's Send Inquiry is a SendChannelButton gated on the
+                  client's consent state, because the send it triggers is
+                  a real SMS. The same gate is applied here for the same
+                  reason — not to enforce the rule (the server does that,
+                  unconditionally) but so the control is honest about
+                  whether a tap can work.
+                */}
                 <CardIconButton
                   Icon={SendIcon}
-                  label="Send inquiry via email"
-                  unavailableNote="Sending an intake link lives in the portal for now."
+                  label="Send inquiry link"
+                  busy={sendingPrefill}
+                  onPress={sendBlockedReason ? undefined : () => void sendInquiryLink()}
+                  unavailableNote={sendBlockedReason ?? undefined}
                 />
                 <CardIconButton
                   Icon={PlusIcon}
                   label="New inquiry"
-                  unavailableNote="Logging an inquiry lives in the portal for now."
+                  onPress={() =>
+                    router.push({
+                      pathname: '/inquiry-new',
+                      params: {
+                        clientId: client.id,
+                        firstName: client.firstName,
+                        lastName: client.lastName,
+                        email: client.email ?? '',
+                        phone: client.phone ?? '',
+                      },
+                    })
+                  }
                 />
               </CardActionRow>
             }
           >
+            {prefillNotice ? <Text style={styles.sendNotice}>{prefillNotice}</Text> : null}
+
             {inquiries.length === 0 ? (
+              /* The CTA above is live now, so this empty state points at
+                 a path that actually exists. */
               <Empty text="No open inquiries." />
             ) : (
               <>
@@ -731,7 +851,12 @@ export default function ClientScreen() {
                   <Text style={styles.columnLabel}>Status</Text>
                 </View>
                 {inquiries.map((i, index) => (
-                  <InquiryRowLine key={i.id} inquiry={i} last={index === inquiries.length - 1} />
+                  <InquiryRowLine
+                    key={i.id}
+                    inquiry={i}
+                    last={index === inquiries.length - 1}
+                    onPress={() => openInquiry(i.id)}
+                  />
                 ))}
               </>
             )}
@@ -1025,10 +1150,25 @@ function QuickAction({
  * glyph and the date. Recorded as a deliberate divergence: it shows more
  * than web's phone rendering, not less.
  */
-function InquiryRowLine({ inquiry, last }: { inquiry: ClientInquiry; last?: boolean }) {
+function InquiryRowLine({
+  inquiry,
+  last,
+  onPress,
+}: {
+  inquiry: ClientInquiry;
+  last?: boolean;
+  onPress?: () => void;
+}) {
   return (
-    <View
-      style={[styles.inquiryRow, last && styles.inquiryRowLast]}
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      accessibilityRole={onPress ? 'button' : undefined}
+      style={({ pressed }) => [
+        styles.inquiryRow,
+        last && styles.inquiryRowLast,
+        pressed && onPress ? styles.rowPressed : null,
+      ]}
       accessibilityLabel={`${inquiry.description?.trim() || 'Untitled inquiry'}, ${channelLabelFor(inquiry.channel)}, ${statusLabel(inquiry.status)}`}
     >
       <View style={styles.inquiryText}>
@@ -1042,7 +1182,7 @@ function InquiryRowLine({ inquiry, last }: { inquiry: ClientInquiry; last?: bool
         </View>
       </View>
       <InquiryStatusChip status={inquiry.status} style={styles.inquiryChip} />
-    </View>
+    </Pressable>
   );
 }
 
@@ -1514,6 +1654,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
   },
+  rowPressed: { opacity: 0.6 },
+  sendNotice: { ...type.meta, color: colors.fgSecondary, marginBottom: space.sm },
   inquiryRowLast: { borderBottomWidth: 0, paddingBottom: 0 },
   // The floor that decides when the chip wraps. Below this the row is
   // not worth reading, so the line breaks instead.

@@ -60,3 +60,48 @@ export function createPrefillDraft(
     }),
   });
 }
+
+/**
+ * The client page's **Send inquiry link** — web's `handleCopyPrefillLink`.
+ *
+ * Same endpoint as `createPrefillDraft` above, and the difference is not
+ * cosmetic: passing `clientId` makes the route resolve that client's
+ * conversation and AUTO-SEND the shortened link on `channel`
+ * (`routes/prefillDrafts.ts:110-152`). The composer's version passes
+ * `conversationId` instead and only mints, because the operator is about
+ * to send it themselves.
+ *
+ * `prefillSendResult` is the send's own outcome and can report a refusal
+ * (`no_consent`, `opted_out`, `no_phone`, `not_connected`, `send_failed`)
+ * while the draft was created fine — a 200 here does not mean delivered,
+ * and callers must read it rather than assume.
+ */
+export interface ClientSendResult {
+  sent: boolean;
+  reason?: string;
+  error?: string;
+}
+
+export function sendPrefillInquiryLink(
+  token: string,
+  params: {
+    clientId: string;
+    channel: 'SMS' | 'EMAIL';
+    payload: { firstName?: string; lastName?: string; email?: string; phone?: string };
+    formSlug?: string;
+  },
+): Promise<{ prefillUrl: string; prefillSendResult: ClientSendResult | null }> {
+  return apiFetch<{ prefillUrl: string; prefillSendResult: ClientSendResult | null }>(
+    '/prefill-drafts',
+    {
+      method: 'POST',
+      token,
+      body: JSON.stringify({
+        payload: params.payload,
+        clientId: params.clientId,
+        channel: params.channel,
+        ...(params.formSlug ? { formSlug: params.formSlug } : {}),
+      }),
+    },
+  );
+}
