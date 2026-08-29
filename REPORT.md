@@ -33851,3 +33851,206 @@ session edited it.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Session AN — activity history, and the issue-gift-card flow up to the gate
+
+Branch `session/an-activity-giftcard` in its own worktree, cut from
+`main` (`1662075`). Mobile-only. Money writes stay gated.
+
+Two premises in the brief did not survive contact with the source, and
+both changed what the work was.
+
+## 1. Activity history — nothing was missing
+
+The brief asked whether the section was dropped in consolidation, and if
+present-but-empty, whether the cause was the payload or the fetch.
+Neither.
+
+`ActivityHistory.tsx` is a **complete, working port of web's
+`AuditTrail`** — day groups, actor + action line, timestamp, from→to
+detail lines — and has been since the gift-card screen, which mounts it
+as `<ActivityHistory entityType="GiftCard" …>`. The client page simply
+never mounted it. It rendered a hardcoded `CardEmpty` behind this
+comment:
+
+> *"The client payload carries no audit trail, so the card keeps web's
+> place and says so rather than showing nothing."*
+
+That sentence is **true and it is the wrong conclusion.** The audit trail
+was never part of the client payload on either client. Web reads it from
+a separate endpoint — `ClientDetail.tsx` renders
+`<AuditTrail bare entityType="Client" entityId={client.id} />` against
+`GET /audit?entityType=&entityId=` — which is the very endpoint mobile's
+own component already calls. One line was never wired up.
+
+So the fix is one line, and everything else in this item is what that
+line exposes.
+
+### What the mounting exposed
+
+**The action labels were gift-card-scoped by design.** The map's own note
+said the rest were "left out rather than transcribed blind" because a
+gift card could not raise them. A client raises **21** actions — derived
+from apps/api's `entityType: "Client"` audit calls across
+`routes/clients.ts`, `routes/clientImport.ts`,
+`lib/artistTransferExecution.ts`, `lib/deposits.ts` and
+`lib/jobs/emailPoller.ts`, not guessed — of which the map had 6. The
+client-reachable labels are now taken from web's map verbatim.
+
+One is **not** from web: `sms_consent_link_issued`. The API logs it and
+web has no label, so it reads "sms consent link issued" there. Named here
+because that is the consent gate mobile itself ships and CLAUDE.md treats
+the flow as compliance-critical — the audit row proving a request was
+sent is the last place a raw slug belongs. Flagged as a gap on web's
+side rather than a divergence invented on this one.
+
+**Merge rows would have printed raw JSON.** `ActivityHistory`'s own
+header comment predicted this exactly: web renders merge entries "through
+a separate sentence formatter", left unported because "a gift card
+raises neither — merges are a client-level action". Mounting on the
+client page is precisely that case. A merge row's `changes` is a
+structural summary (counts per repointed relation, the conversation fold,
+alias additions), not `{from,to}` pairs, so `formatMergeSummary` came
+across with it.
+
+**A silent divergence in the shared fallback, found by rendering.**
+Mobile's `humanizeField` fallback omitted web's trailing `.toLowerCase()`
+on the tail, so multi-word camelCase kept interior capitals. Invisible
+while the map only labelled gift-card diffs — every one of those was in
+`FIELD_LABELS` and never reached the fallback. The merge sentence
+exposed it, because it lowercases the first letter and pluralizes:
+
+    before   "Moved over 3 appointments, 1 inquiry, and 2 gift Cards."
+    after    "Moved over 3 appointments, 1 inquiry, and 2 gift cards."
+    before   "Assigned At:"        after   "Assigned at:"
+
+### The premise that did not reproduce: pagination
+
+The brief asked for "paginate/'show more' per web's behavior". **Web has
+neither.** Its own comment calls this list "bounded (never paginated,
+never studio-wide)" and it filters **client-side** instead — two
+multi-select controls (action and actor) shown once an entity has more
+than five entries.
+
+So there is no paging behaviour to mirror. The filters are the real
+control and they are **not built here** — recorded as the next increment
+rather than half-built, which is also what the component's own comment
+already said about them.
+
+## 2. Issue gift card — the flow is real, the submit is not
+
+### The endpoint contract (item 2c, for the payments session)
+
+Three issuance paths, all gated by `giftCards.issue` evaluated at the
+**client's own studio** (not the caller's home — the route resolves
+`studioId` from the client and calls `callerBelongsToStudio`):
+
+    CASH     POST /gift-cards
+             { clientId, amountCents, paymentMethod: 'CASH', expiresAt? }
+             -> 201 GiftCard
+             The route REJECTS any paymentMethod but 'CASH' by name.
+
+    STRIPE   POST /gift-cards/checkout-session
+             { clientId, amountCents, expiresAt? }
+             -> { checkoutUrl }
+             *** THIS IS WHERE STRIPE ENTERS *** — a separate endpoint,
+             not a flag on the cash route. The GiftCard row is created
+             PENDING immediately so the webhook has something to find by
+             stripeCheckoutSessionId; it is not spendable until payment
+             confirms. Web deliberately does NOT close its modal here,
+             because staff still has to copy the link.
+
+    EXEMPT   POST /gift-cards/exempt        requireRole(OWNER)
+             { clientId, exemptionReason|null, expiresAt? }
+             A no-payment override, not a purchase.
+
+`expiresAt` is **OWNER-only on all three** — the route 403s a non-owner
+who sends the key at all, so it must be omitted, not sent as null.
+
+`appointmentId` is accepted by the cash and checkout routes but **web's
+client-page form does not expose it**, so this does not either.
+
+`amountCents` is `Math.round(Number(amountDollars) * 100)`, and
+`expiresAt` is `new Date('YYYY-MM-DD').toISOString()` — single-arg, i.e.
+**UTC midnight**, which is the convention CLAUDE.md names for gift card
+`expiresAt` specifically. It must not go through `parseDateString`
+(local midnight); mixing the two is the bug that rule exists for.
+
+### What was built
+
+The Gift Cards card's header action opened a toast saying "portal only",
+with nothing behind it. It now opens a real form, and the toast moved to
+the **end** of the flow.
+
+Real: the method chooser, the fields, per-field validation, the cents
+conversion, the money-formatted preview line, the OWNER-only expiry and
+Exemption option, and `buildRequest()` — a pure function returning the
+exact path and body. Gated: the submit, which raises
+*"Gift card issuance goes live with the payments update."*
+
+`buildRequest` is exported and pure on purpose. **M2 replaces one
+function body**, not a screen: `apiFetch(req.path, {method:'POST', body:
+JSON.stringify(req.body)})`.
+
+## Verified in the harness
+
+Temporary preview route (deleted) + scratchpad fixture on :4444, chosen
+to hit every rendering branch: two calendar days, a `{from,to}` diff, a
+merge row, a null actor, an ISO-instant value, and an action in neither
+label map.
+
+| check | result |
+| --- | --- |
+| day groups | `AUG 29 / AUG 28 / AUG 27`, newest first |
+| event row | "Juan Lazo **updated** · Aug 29, 2026, 12:35 PM" + `Email: seb.old@… → sebastian@…` |
+| null actor | renders "System" |
+| merge row | full sentence, not JSON — "Merged "Sebastian Whitmore" into this client. Moved over 3 appointments, 1 inquiry, and 2 gift cards. Combined conversation threads (47 messages moved). Added 2 contact aliases from the merged client." |
+| unmapped action | falls back readably ("some unmapped action") |
+| validation | empty → "Enter an amount." (and submit BLOCKED, no toast); `19.999` → "to the cent"; `0` → "more than $0"; `abc` → "isn't a number"; `08-2026` → "YYYY-MM-DD" |
+| amount preview | "Issues a $19.99 card." via the money formatter |
+| non-owner (`ARTIST`) | Exemption option gone, expiry field gone, one input remains |
+| 320pt, both screens | `bodyScrollsHorizontally: false`, no non-scrollable overflow |
+
+Two fixes came out of the preview rather than out of review: the
+`humanizeField` capitalisation above, and the amount preview being keyed
+on the whole form's validity — so an unrelated bad expiry blanked it and
+read as though the amount were the problem. It is keyed on the amount
+now.
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 19.35s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+### Retested vs untouched
+
+**Retested:** every row above, at 393 and 320.
+
+**Untouched and NOT retested:** the real client page in situ. The preview
+mounted `ActivityHistory` inside a real `CollapsibleSection` and the
+sheet standalone, rather than rebuilding the whole client payload
+fixture — so the card's placement in the saved widget order, and the
+sheet presenting over the client page's other sheets, are device-gate
+items. The `Sheet` dismiss→present sequencing rule (session 17) applies
+if anything is ever chained off this sheet's close; nothing is today.
+
+## Findings
+
+1. **`GET /audit` scopes by the CALLER's JWT `studioId`**
+   (`routes/audit.ts`: `where: { studioId: req.user!.studioId, … }`),
+   not the record's. That is the pattern CLAUDE.md's artist-scoping rule
+   names: a guest artist viewing a host studio's client gets an empty
+   activity feed rather than that client's history. Not touched — this
+   is a mobile-only session and it is an API change — but it means the
+   card can render empty for a legitimate viewer, which is
+   indistinguishable from "nothing ever happened".
+2. **Web has no label for `sms_consent_link_issued`**, so the consent
+   request reads as a raw slug in web's own feed.
+3. **The action/actor filters are not built** on mobile. Web shows them
+   past five entries; this is the next increment for the card.
+4. **`appointmentId` is a real API capability neither client exposes**
+   when issuing — worth a decision rather than staying invisible.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.

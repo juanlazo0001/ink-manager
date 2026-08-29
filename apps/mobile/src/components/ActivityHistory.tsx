@@ -5,9 +5,11 @@ import {
   actorLabel,
   fetchAuditTrail,
   formatAuditValue,
+  formatMergeSummary,
   humanizeAction,
   humanizeField,
   isFromTo,
+  isMergeChanges,
   type AuditEntry,
 } from '@/lib/audit';
 import { dayHeading, stamp } from '@/lib/format';
@@ -28,11 +30,20 @@ import { colors, hairline, radius, space, type } from '@/theme';
  * The API already returns newest-first, so walking the list once produces
  * the groups in the right order — web's own comment says the same.
  *
- * WHAT IS NOT PORTED: web shows two multi-select filters once an entity
- * has more than five entries, and it renders merge entries through a
- * separate sentence formatter. A gift card raises neither — merges are a
- * client-level action — so both are left out rather than transcribed
- * blind, and this note is the record of that.
+ * MERGE ENTRIES ARE NOW HANDLED. This comment used to say they were
+ * left out because "a gift card raises neither -- merges are a
+ * client-level action". Mounting this on the client page is exactly the
+ * case it was deferring, so `formatMergeSummary` came with it: a merge
+ * row's `changes` is a structural summary, and the generic from/to
+ * renderer would print raw JSON at it.
+ *
+ * STILL NOT PORTED: web's two multi-select filters (action and actor),
+ * which it shows once an entity has more than five entries. Web has NO
+ * pagination and no "show more" -- its own comment calls this list
+ * "bounded (never paginated, never studio-wide)" and filters it
+ * client-side instead. So there is no paging behaviour to mirror here;
+ * there is a filter control, and it is recorded as the next increment
+ * rather than half-built.
  */
 export function ActivityHistory({
   token,
@@ -87,7 +98,10 @@ export function ActivityHistory({
                 <Text style={styles.entryTime}>{stamp(entry.createdAt)}</Text>
               </View>
 
-              {entry.changes && Object.keys(entry.changes).length > 0 ? (
+              {isMergeChanges(entry.action, entry.changes) ? (
+                /* A sentence, not a diff -- see `formatMergeSummary`. */
+                <Text style={styles.change}>{formatMergeSummary(entry.changes)}</Text>
+              ) : entry.changes && Object.keys(entry.changes).length > 0 ? (
                 <View style={styles.changes}>
                   {Object.entries(entry.changes).map(([field, value]) => (
                     <Text key={field} style={styles.change}>
