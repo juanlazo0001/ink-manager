@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="index, follow" />
+<title>Support — Ink Manager</title>
+<meta name="description" content="Help for tattoo and permanent makeup studios and solo artists using Ink Manager. Contact support, plus answers on getting started, texting clients, client forms, sign-in, and account deletion." />
+<link rel="canonical" href="https://www.inkmanager.app/support" />
+<meta name="theme-color" content="#0C0A08" />
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="/assets/icon-192.png" />
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=Jura:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0C0A08;
+    --panel:#16130E;
+    --line:rgba(201,154,91,0.16);
+    --line-soft:rgba(255,255,255,0.07);
+    --gold:#C99A5B;
+    --gold-hi:#E4BE85;
+    --cream:#F2ECE0;
+    --smoke:#9B927F;
+    --maxw:760px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{
+    background:var(--ink);color:var(--cream);
+    font-family:'Outfit',sans-serif;font-weight:300;line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--gold);text-decoration:none;}
+  a:hover{color:var(--gold-hi);text-decoration:underline;}
+  :focus-visible{outline:2px solid var(--gold);outline-offset:3px;}
+  ::selection{background:var(--gold);color:#171208;}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px;}
+  header{padding:28px 0;border-bottom:1px solid var(--line);}
+  header .wrap{display:flex;align-items:center;justify-content:space-between;}
+  header img{height:28px;width:auto;display:block;}
+  header nav{display:flex;gap:20px;font-family:'Jura',sans-serif;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--smoke);}
+  header nav a{color:var(--smoke);}
+  header nav a:hover{color:var(--cream);text-decoration:none;}
+  header nav a.on{color:var(--cream);}
+  main{padding:56px 0 80px;}
+  .kicker{font-family:'Jura',sans-serif;font-size:11px;letter-spacing:.35em;text-transform:uppercase;color:var(--smoke);}
+  h1{font-family:'Fraunces',serif;font-weight:600;font-size:2.25rem;margin:.5rem 0 .5rem;color:var(--cream);}
+  .lede{color:#c7bea9;font-size:1rem;margin-bottom:2.25rem;}
+  h2{font-family:'Fraunces',serif;font-weight:600;font-size:1.25rem;margin:2.25rem 0 .6rem;color:var(--cream);scroll-margin-top:24px;}
+  h3{font-family:'Outfit',sans-serif;font-weight:500;font-size:.95rem;color:var(--cream);margin:1.25rem 0 .35rem;}
+  p, li{color:#c7bea9;font-size:.95rem;}
+  ul, ol{margin:.5rem 0 .5rem 1.25rem;}
+  li{margin:.3rem 0;}
+  strong{color:var(--cream);font-weight:600;}
+
+  /* contact card — a discrete panel, matching the site's own card treatment */
+  .contact{
+    border:1px solid var(--line);background:var(--panel);
+    padding:26px 26px 24px;margin:0 0 2.5rem;
+  }
+  .contact .kicker{display:block;margin-bottom:.5rem;}
+  .contact .addr{
+    font-family:'Fraunces',serif;font-size:1.5rem;font-weight:600;
+    display:inline-block;margin:.15rem 0 .5rem;word-break:break-word;
+  }
+  .contact p{margin:.35rem 0;}
+  .contact .meta{color:var(--smoke);font-size:.875rem;}
+
+  /* in-page index */
+  .toc{border-top:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);padding:18px 0;margin:0 0 .5rem;}
+  .toc ul{list-style:none;margin:0;display:flex;flex-wrap:wrap;gap:8px 22px;}
+  .toc li{margin:0;}
+  .toc a{font-family:'Jura',sans-serif;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--smoke);}
+  .toc a:hover{color:var(--cream);text-decoration:none;}
+
+  .note{border-left:2px solid var(--gold);padding:2px 0 2px 16px;margin:1rem 0;}
+  .note p{color:var(--smoke);font-size:.875rem;}
+
+  footer{border-top:1px solid var(--line);padding:28px 0;}
+  footer .wrap{display:flex;align-items:center;flex-wrap:wrap;gap:16px;color:var(--smoke);font-size:.8rem;}
+  footer img{height:20px;opacity:.85;}
+  footer .links{display:flex;gap:18px;}
+  footer .links a{color:var(--smoke);}
+  footer .links a:hover{color:var(--cream);text-decoration:none;}
+
+  @media(max-width:600px){
+    h1{font-size:1.75rem;}
+    /* four nav items + the wordmark do not fit on one phone-width line --
+       they collide with the logo and clip "Log In" off the right edge, and
+       the overflow makes the whole page scroll sideways. Stack instead. */
+    header .wrap{flex-direction:column;align-items:flex-start;gap:14px;}
+    header nav{gap:8px 18px;flex-wrap:wrap;}
+    main{padding:40px 0 60px;}
+    .contact{padding:22px 20px;}
+    .contact .addr{font-size:1.2rem;}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="/" aria-label="Ink Manager home"><img src="/assets/logo_nav.png" alt="ink. manager"/></a>
+    <nav>
+      <a href="/support" class="on">Support</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="https://web.inkmanager.app/login">Log In</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <span class="kicker">Ink Manager</span>
+    <h1>Support</h1>
+    <p class="lede">Help for tattoo and permanent makeup studios &mdash; and for solo artists &mdash; using Ink Manager. Everything below works the same whether your account is an eight-artist shop or just you.</p>
+
+    <div class="contact">
+      <span class="kicker">Contact us</span>
+      <a class="addr" href="mailto:support@inkmanager.app">support@inkmanager.app</a>
+      <p>Email us with a question, a problem, or a request about your account. We reply as soon as we can.</p>
+      <p class="meta">It helps to include your studio or artist name and the email address you sign in with.</p>
+    </div>
+
+    <nav class="toc" aria-label="On this page">
+      <ul>
+        <li><a href="#getting-started">Getting started</a></li>
+        <li><a href="#solo-or-shop">Solo or shop</a></li>
+        <li><a href="#texting">Texting clients</a></li>
+        <li><a href="#forms-and-photos">Forms &amp; photos</a></li>
+        <li><a href="#sign-in">Sign-in help</a></li>
+        <li><a href="#delete-account">Deleting your account</a></li>
+      </ul>
+    </nav>
+
+    <h2 id="getting-started">Getting started</h2>
+    <p>Create an account at <a href="https://web.inkmanager.app/signup">web.inkmanager.app/signup</a>. Sign-up asks whether you are a <strong>solo artist</strong> or a <strong>studio</strong>, along with your name, email, and a password of at least 8 characters. A studio account also asks for the studio name; a solo account uses your own name if you don't give one.</p>
+    <p>We then email you a verification link to finish setting up the account. That link is good for <strong>24 hours</strong> &mdash; if it expires or never arrives, you can ask for a new one from the sign-in screen, and it's worth checking your spam folder first.</p>
+    <p>Once you're in, you can invite artists and front-desk staff to the account at any time. Nothing about the sign-up choice is permanent: a solo account that grows into a shop just adds people.</p>
+
+    <h2 id="solo-or-shop">Do I need a shop, or does this work for one artist?</h2>
+    <p>Both. The account works either way, and it is the same product in both cases &mdash; intake, estimates, scheduling, deposits, waivers, and client messaging all behave identically for a single artist and for a shop with a front desk.</p>
+    <p>The practical differences are only about people: a studio account can invite other artists and assign front-desk roles, while a solo account is simply an account with one artist in it. Guest artists and residencies work the same way for both. If you start solo and later bring people on, you invite them into the account you already have &mdash; there is no migration and nothing to move.</p>
+
+    <h2 id="texting">Texting clients and SMS consent</h2>
+    <p>Ink Manager will not send an outbound text to a client until consent for that client is recorded. If a client's record shows no consent and the app refuses to text them, that is why &mdash; it isn't a bug and it isn't a delivery failure.</p>
+    <p>The reason is that a phone number and permission to text that number are two different things. US carriers require business messaging traffic to be registered and to rest on real, recorded consent (the A2P 10DLC framework), and the federal consent rules behind that framework treat texting someone who never agreed to it as the studio's problem, not the carrier's. So the app records <em>how</em> consent was obtained, not just that a box was ticked somewhere.</p>
+    <h3>The ways consent gets recorded</h3>
+    <ul>
+      <li><strong>Your public intake form.</strong> A client who fills it out can tick the text-message opt-in box. The box is genuinely optional and separate from the phone field &mdash; giving you a number does not, on its own, opt anyone in.</li>
+      <li><strong>The client texts you first.</strong> An inbound message to your studio number records consent for that client.</li>
+      <li><strong>Send a consent link.</strong> From the client's record you can send them a private link where they opt in themselves. The link is good for <strong>14 days</strong>, and sending a new one replaces any earlier one.</li>
+      <li><strong>Record it yourself.</strong> If a client agreed in person or on the phone, or signed a paper form, you can record that on their client record &mdash; choosing <em>verbal, in person</em>, <em>verbal, over the phone</em>, or <em>signed paper form</em>. The app keeps the method and who recorded it, which is the answer you want on hand if your messaging traffic is ever reviewed.</li>
+    </ul>
+    <h3>When a client opts out</h3>
+    <p>A client can reply <strong>STOP</strong> to any message at any time, and that stops messages immediately. Staff can also record an opt-out on a client's behalf if they ask you in person.</p>
+    <p>An opt-out is the client's to undo, not yours. When someone replies STOP, the carrier layer blocks messages to that number before the app is involved &mdash; so re-enabling anything on our side would not restore texting, it would only make the client look reachable when they aren't. The client re-subscribes by replying <strong>START</strong> to the same number.</p>
+    <div class="note">
+      <p>This describes how the app behaves, not legal advice. Your studio remains responsible for its own messaging practices and for the consent it records.</p>
+    </div>
+
+    <h2 id="forms-and-photos">Client forms and photos</h2>
+    <p>Two client-facing forms collect information, and both are links you send to a client &mdash; the client never needs an account.</p>
+    <h3>The intake form</h3>
+    <p>Collects contact details, project description, placement, size, budget and timing preferences, plus any <strong>reference images</strong> and <strong>placement photos</strong> you ask for. You choose which fields are required.</p>
+    <h3>The day-of liability waiver</h3>
+    <p>Collects legal name, date of birth, emergency contact, health screening answers, initials on each clause, a typed and drawn signature, an optional photo release, and a <strong>photo of a government-issued ID</strong>. The waiver text the client saw is stored alongside their answers exactly as it read at the moment they signed, so editing your template later never changes a signed record.</p>
+    <h3>Where it goes</h3>
+    <p>Form answers live in the platform database, tied to that client's record in your studio. Uploaded images &mdash; reference photos, placement photos, and waiver ID photos &mdash; are stored with our image hosting provider and referenced from the record. Within your studio the sensitive parts of a waiver are restricted: an artist looking at their own schedule sees that a waiver is signed and verified, not the health answers, ID photo, or signature behind it.</p>
+    <p>Our <a href="/privacy">Privacy Policy</a> describes what is collected and who it is shared with in full. A client who wants their information corrected or deleted can raise it with your studio directly, or write to the address in that policy.</p>
+
+    <h2 id="sign-in">Password and sign-in help</h2>
+    <p><strong>Forgot your password.</strong> Use the forgot-password link on <a href="https://web.inkmanager.app/login">web.inkmanager.app/login</a>. If an account exists for that address, we email a reset link. That link expires in <strong>one hour</strong>, so request it when you're ready to use it. For security the screen gives the same confirmation whether or not the address has an account, so a missing email usually means a typo, a different address than you remember, or the spam folder.</p>
+    <p><strong>Changing your password or email.</strong> Both are on your Profile page once you are signed in. An email change is confirmed from a link sent to the <em>new</em> address and is good for 24 hours &mdash; until you click it, you keep signing in with your current address.</p>
+    <p><strong>Locked out.</strong> If your account was deactivated by a studio owner, sign-in stops working by design, and the owner of that studio can reactivate it. Anything else, email <a href="mailto:support@inkmanager.app">support@inkmanager.app</a> from the address on the account and we will sort it out.</p>
+
+    <h2 id="delete-account">Deleting your account</h2>
+    <p><strong>Artists, and solo artists who run their own account, can delete themselves in the app.</strong> Sign in, go to your Profile page, and use the delete-account option; you will be asked to type DELETE to confirm.</p>
+    <p>What that does:</p>
+    <ul>
+      <li>Your sign-in is permanently disabled &mdash; the password is removed and the email address is released, so it can be used to sign up again later.</li>
+      <li>Your personal profile content is erased: bio, specialties, portfolio images, and social links.</li>
+      <li>Your flash pieces are removed, except any that a real client already inquired about &mdash; those are retired from your gallery instead, so the studio's record of what was booked stays intact.</li>
+      <li>Any active studio memberships end, and those studios are updated.</li>
+      <li>Records that belong to a studio's own history &mdash; appointments, inquiries, payments, signed waivers and deposit forms &mdash; are kept. Studios need them for their own business and legal record-keeping, and they no longer carry your personal details.</li>
+    </ul>
+    <p><strong>If you are the owner of a studio that has other staff in it</strong>, there is no in-app self-delete &mdash; deleting an entire studio is a larger action than deleting your own artist account, and we handle it by hand rather than behind a confirm box. Email <a href="mailto:support@inkmanager.app">support@inkmanager.app</a> from the address on the account, with the studio name, and say that you want the studio account deleted. We will confirm what will be removed, and when, before anything is done.</p>
+    <p>If you are a <em>client</em> of a studio rather than an account holder, your information belongs to that studio's records &mdash; ask the studio directly, or see the <a href="/privacy">Privacy Policy</a> for how to reach us about it.</p>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <img src="/assets/logo_foot.png" alt="ink. manager"/>
+    <span>Built at Black Hive Ink and Arts</span>
+    <span class="links">
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>
