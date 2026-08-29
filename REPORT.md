@@ -34054,3 +34054,188 @@ if anything is ever chained off this sheet's close; nothing is today.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Session AO — inquiry list, photo cards
+
+Branch `session/ao-inquiry-photo-cards` in its own worktree, cut from
+`main` (`5f061fd`, AN merged and verified). Mobile-only. The mockup is
+committed at `design-refs/session-ao/target.jpg` and was viewed before
+anything was built.
+
+The layout came out as the mockup draws it. Everything else in this
+report is what MEASURING it changed, and three of those were the brief's
+own stated assumptions.
+
+## 1. The proportion: measured 3.64:1, not 2.4:1
+
+The brief says "~mockup's proportion, roughly 2.4:1". Those are two
+different instructions. Scanning the mockup for the card's rounded-rect
+bounds:
+
+    card bounds   2247 x 617 px      RATIO 3.64 : 1
+
+At a 361pt card width that is a **99pt** card against 2.4:1's **150pt** —
+a 50% difference in height, so it is a design decision rather than
+rounding. The mockup is the brief's own named spec source, so it wins,
+and `CARD_RATIO` is a single constant so the gate can overrule it in one
+place.
+
+**This choice has a consequence the gate should see** — see §3.
+
+## 2. Contrast: every claim measured, three failures found
+
+The wash is not tuned by eye against the mockup's reference photo, which
+is very dark and would hide every problem. The fixture serves three
+synthetic photos — pure white, near-black, and half-and-half — so the
+worst case is known rather than sampled.
+
+**The measurement method matters, because the first one was wrong.** A
+first pass averaged each text run's own box and reported ~1.0:1 for every
+case including the dark one. It was reading the GLYPHS: it kept returning
+exactly `#f2ece0`, which is `colors.fg`. Since the wash is a vertical
+gradient and the test photos are horizontally uniform by construction,
+the ground at a given y is the same at every x — so the real ground is a
+glyph-free column at the card's inner left edge. That is what the numbers
+below sample.
+
+### Three failures, all found by measuring, none visible on a dark photo
+
+**(a) The name sat in the gradient's own window.** The first stops opened
+to 0.10 alpha at 38% height, on the assumption the middle band was empty
+photo. Measured text bands at 393pt:
+
+    date          0.13 – 0.29 of card height
+    name          0.38 – 0.63
+    description   0.63 – 0.81
+
+The "empty middle" IS the name. It measured **1.25:1**.
+
+**(b) The chip does not carry its own ground.** The brief exempts chips —
+"they carry their own ground". `StatusChip`'s fill is its tone at
+`FILL_ALPHA = 0.1`, so 90% of the photograph shows through. Over white
+its label measured **2.50:1**, and **1.86:1** for the neutral tone. The
+chip is not forked or altered — it is used exactly as the other ~20 call
+sites use it, and this card gives it an opaque backing to sit on. The
+backing's value (0.72) is set by the WEAKEST tone: at 0.55 the purple
+chip cleared at 4.94:1 while neutral sat at 3.68:1, and a backing tuned
+to whichever chip happened to be in the fixture would have shipped that.
+
+**(c) `UNASSIGNED` measured 2.26:1** above the name, which is the wash's
+shallowest band — and see §3 for the second reason it moved.
+
+### Final table, worst case per element
+
+Ground is the composited pixel actually rendered; the floor is 4.5:1.
+
+| element | colour | worst ground | worst ratio | |
+| --- | --- | --- | --- | --- |
+| client name | `fg` #f2ece0 | rgb(76,76,76) | **7.30:1** | PASS |
+| description | `fgSecondary` #c7bea9 | rgb(22,22,22) | **9.79:1** | PASS |
+| date | `fg` | rgb(98,98,98) | **5.18:1** | PASS |
+| status chip (neutral) | #9b927f | rgb(43,42,39) | **4.66:1** | PASS |
+| status chip (purple) | #c1a6de | rgb(48,44,52) | 6.37:1 | PASS |
+| UNASSIGNED | `accent` #c99a5b | rgb(7,5,3) | 8.00:1 | PASS |
+
+Worst element on the card: **4.66:1**.
+
+### The gradient stops
+
+    location   0.00  0.30  0.36  0.50  0.70  1.00
+    black α    0.66  0.62  0.60  0.82  0.92  0.95
+
+## 3. What the 3.64:1 ratio costs, stated plainly
+
+**There is no photo window.** The content occupies 38%–81% of the card,
+so the wash cannot both guarantee contrast and let the photograph
+through. Its shallowest point is 0.60 black — set by what the name needs,
+not by taste. At this proportion the reference photo contributes
+**texture, not a readable image**.
+
+**And at 320pt the card is 79pt tall, which the content does not fit.**
+With `UNASSIGNED` above the name, the DESCRIPTION was pushed out of a
+fixed-height card entirely — silent data loss, on exactly the rows a
+studio most needs to act on.
+
+That is what moved `UNASSIGNED` into the **artist's own slot**,
+bottom-right: an avatar when someone is assigned, the word when nobody
+is. It is the honest place for it, it costs the name block nothing, and
+it survives 320pt. The brief left this to judgment and asked to see it —
+it is in `cards-320.png`.
+
+**Both of these ease at 2.4:1.** A 150pt card buys back a genuine photo
+window and the vertical room the content wants. If the gate prefers the
+taller card, `CARD_RATIO` and the six gradient stops move together, and
+the stops would need re-measuring, not re-guessing.
+
+## 4. The no-photo watermark: built, and it cannot work
+
+The brief offers the channel glyph "large + muted if it reads
+tastefully". Built at 96pt, `fgFaint`, 16% opacity, bottom-right — and it
+is invisible (`nophoto-watermark.png`).
+
+Not a taste call, and not fixable by raising the opacity: the wash is
+painted OVER this ground and runs 0.60–0.95 black, so at the bottom-right
+corner ~5% of anything beneath survives. A glyph faint enough to be
+tasteful is erased; one strong enough to survive competes with the name.
+**The contrast requirement and the watermark are mutually exclusive at
+this proportion.** Plain card surface it is, and the dead prop is removed
+rather than left as a switch nobody should flip.
+
+## 5. The rest
+
+- **Press feedback** is `opacity: 0.72`. The old row dimmed by swapping
+  its background colour, which a photo card cannot do — there is a
+  photograph where that colour would go.
+- **A failed image URL falls back to the same ground as no URL**, the
+  guard inherited from the old thumbnail. It matters more now, not less:
+  a failed background is a whole card of nothing where it used to be a
+  56pt square. (47 of the 62 reference URLs on the dev database point at
+  example.com.)
+- **The list's separator became a gap.** A hairline between two rounded
+  cards draws a line across their corners. The list also gained
+  horizontal padding, which the flush rows did not need.
+- **Untouched, as instructed:** the Inquiries/Projects toggle,
+  `ScreenTitle`, and the filters.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built in 14.98s
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+At 320pt: `bodyScrollsHorizontally: false`, no non-scrollable overflow.
+
+`design-refs/session-ao/` holds the mockup, `cards-393.png`,
+`cards-320.png` and `nophoto-watermark.png`.
+
+### Retested vs untouched
+
+**Retested:** all seven card states at 393 and 320, and the full contrast
+table re-measured after every change to the wash or the layout.
+
+**NOT retested, and it is the one the brief flags:** **scroll
+performance**. The harness renders seven cards in a `ScrollView`, not a
+recycling `FlatList` under a finger, and `expo-image` decode/recycle
+behaviour on a real device is not observable here at all. Photo cards are
+exactly where jank appears. **Device gate item**, and I would scroll a
+list of thirty fast, with mixed real reference photos, before trusting
+it.
+
+Also not exercised: navigation to detail (unchanged code path, but the
+press target moved from a row to a card), and pull-to-refresh.
+
+## Findings
+
+1. **`StatusChip` is only legible over near-black grounds.** Its 10%
+   fill is a tint, not a ground. Fine on every solid surface it is used
+   on today; it will fail on any future translucent or photographic
+   surface, and the neutral tone fails first. Worth knowing before the
+   next photo surface is built.
+2. **The wash and the photograph are in direct tension at 3.64:1.** Not a
+   defect — a consequence of the proportion, and the reason the gate
+   should look at §3 before this is called done.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.

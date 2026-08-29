@@ -268,7 +268,7 @@ export default function InquiriesScreen() {
             />
             </Appear>
           )}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          ItemSeparatorComponent={() => <View style={styles.gap} />}
           contentContainerStyle={visible.length === 0 ? styles.emptyContainer : styles.listContent}
           refreshControl={
             <RefreshControl
@@ -317,7 +317,17 @@ export default function InquiriesScreen() {
 }
 
 const styles = StyleSheet.create({
-  listContent: { paddingTop: space.sm, paddingBottom: space.xxl },
+  /* Cards need side padding the flush rows did not: the old row inset
+     its own content by space.lg and bled to both edges. */
+  listContent: {
+    paddingTop: space.sm,
+    paddingBottom: space.xxl,
+    paddingHorizontal: space.lg,
+  },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
-  separator: { height: hairline, backgroundColor: colors.borderSoft, marginLeft: space.lg },
+  /* A GAP, not a rule. A hairline between two rounded cards draws a line
+     across their corners and reads as a mistake -- the separator existed
+     to divide flush text rows, and the rows are cards now. The card's own
+     border and the ground between them do the dividing. */
+  gap: { height: space.md },
 });
