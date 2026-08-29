@@ -1,14 +1,16 @@
 import type { ArtistInquiryDetail } from '@ink-manager/shared-types';
-import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ScreenShell } from '@/components/ScreenShell';
-import { DetailField, DetailSection, FieldDivider } from '@/components/DetailSection';
+import { Avatar, initialsOf } from '@/components/Avatar';
+import { Banner } from '@/components/Banner';
+import { Card, Fact } from '@/components/editorial';
+import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { InquiryRespondSheet, type RespondMode } from '@/components/InquiryRespondSheet';
 import { PhotoStrip, PhotoViewer } from '@/components/PhotoViewer';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { ScreenShell } from '@/components/ScreenShell';
 import { InquiryStatusChip } from '@/components/StatusChip';
 import { GoldButton, QuietButton, ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
@@ -20,18 +22,17 @@ import {
   inquiryClientName,
   isClosedStatus,
   statusLabel,
-  statusTone,
 } from '@/lib/inquiryDisplay';
 import { formatHourRange, inquiryImages, inquiryVisibility } from '@/lib/inquiryVisibility';
 import { screenErrorMessage } from '@/lib/screenError';
 import { relativeStamp } from '@/lib/time';
-import { colors, hairline, radius, space, tones, type } from '@/theme';
+import { colors, hairline, space, type } from '@/theme';
 
 /**
  * The 403 this route can return is a KNOWN, documented state, not a
  * generic failure: the list is scoped by the caller's home studio while
  * this route checks the inquiry's own (PARITY-AUDIT.md, Finding B). Web
- * currently renders "Loading project…" forever when it happens. This
+ * currently renders "Loading project..." forever when it happens. This
  * screen says what is true and offers the way back.
  */
 function detailErrorMessage(err: unknown): string {
@@ -44,6 +45,31 @@ function detailErrorMessage(err: unknown): string {
   return screenErrorMessage(err, 'this project');
 }
 
+/**
+ * ─── BUILT FROM THE CLIENT PAGE'S COMPONENTS ────────────────────────
+ *
+ * Not from web, and not from a vocabulary of its own. This screen used to
+ * render `DetailSection` + `DetailField`: a bordered box titled with an
+ * EYEBROW (11px letterspaced caps, red ticks) over stacked
+ * label-above-value rows. The client page renders `Card` +
+ * `CollapsibleSection` + `Fact`: a translucent card carrying a top
+ * highlight, titled with a 20px sentence-case `SectionHeader`, over
+ * label/value rows set on one line.
+ *
+ * Those are two different design systems, two screens apart in one app.
+ * The surfaces did not even agree — `DetailSection`'s box has no gradient
+ * highlight and pads 16/4, `Card` pads 24 and has one — so a project
+ * opened from a client read as a different product than the client it was
+ * opened from.
+ *
+ * Every component here is now the client page's own, imported rather than
+ * reimplemented. Where this screen needed something the client page
+ * lacked, the SHARED component grew a prop — `Banner`'s `align` and
+ * `tone`, `Fact`'s `multiline` and its null handling, `PhotoStrip`'s
+ * `inset` — instead of a local copy being written next to it. That is the
+ * rule that keeps the two from drifting again: there is only one of each
+ * of these now, and it lives outside both screens.
+ */
 export default function InquiryDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -59,6 +85,27 @@ export default function InquiryDetailScreen() {
   const [responding, setResponding] = useState(false);
   const [respondError, setRespondError] = useState<string | null>(null);
   const requestRef = useRef(0);
+
+  /*
+   * Every section starts OPEN.
+   *
+   * The client page starts three of its nine open, because it has nine
+   * and a client's history is something you browse. This screen has at
+   * most five and an artist opens it to READ THE BRIEF — collapsing them
+   * by default would put the whole point of the screen behind five taps.
+   *
+   * Adopting a component does not mean adopting the other screen's
+   * defaults. It means the section behaves identically once touched.
+   */
+  const [open, setOpen] = useState<Record<string, boolean>>({
+    photos: true,
+    work: true,
+    estimate: true,
+    planned: true,
+    booked: true,
+    notes: true,
+  });
+  const toggle = (key: string) => setOpen((o) => ({ ...o, [key]: !o[key] }));
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh') => {
@@ -147,21 +194,24 @@ export default function InquiryDetailScreen() {
   }
 
   const dimmed = isClosedStatus(inquiry.status);
+  const name = inquiryClientName(inquiry.client);
   const estimate = visibility.canSeePricing
     ? formatEstimateRange(inquiry.priceEstimateLow ?? null, inquiry.priceEstimateHigh ?? null)
     : null;
   const timeEstimate = visibility.canSeePricing
     ? formatHourRange(inquiry.timeEstimateHoursMin, inquiry.timeEstimateHoursMax)
     : null;
+  const notes = visibility.canSeeNotes ? (inquiry.notes ?? []) : [];
 
   return (
     <ScreenShell edges={['top']}>
-      <ScreenHeader
-        title={inquiryClientName(inquiry.client)}
-        subtitle={`${channelLabel(inquiry.channel)} · ${relativeStamp(inquiry.createdAt)}`}
-        onBack={() => router.back()}
-        right={<View style={styles.headerSpacer} />}
-      />
+      {/*
+        BARE, no title — the client page's own header. The name is the
+        first thing in the hero card at full size, and repeating it in the
+        nav row says the same thing twice in two type sizes. That is the
+        client page's recorded reasoning, and it applies here unchanged.
+      */}
+      <ScreenHeader onBack={() => router.back()} />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -175,133 +225,163 @@ export default function InquiryDetailScreen() {
           />
         }
       >
-        {inquiry.fromGuestStudio ? (
-          <View style={styles.guestBanner}>
-            <Feather name="map-pin" size={13} color={colors.accent} />
-            <Text style={styles.guestLabel}>At {inquiry.fromGuestStudio.name} — you are a guest here</Text>
-          </View>
-        ) : null}
+        {/*
+          The hero: the client page's anatomy, with ONE MEASURED
+          DIVERGENCE.
 
-        <View style={[styles.hero, dimmed && styles.dimmed]}>
-          <InquiryStatusChip status={inquiry.status} />
+          On the client page the top-right slot across from the avatar
+          holds the client CODE — six or so characters, about 60pt. The
+          obvious port puts the status chip there, and it was there until
+          it was measured at 393: the chip is 88pt wide, which left the
+          name column 114pt, and "Sebastian Oyelaran-Whitmore" wrapped to
+          two lines and STILL truncated to "Oyelaran-...".
+
+          The slot is sized for a short identifier and a status chip is
+          not one — `InquiryStatus` has 15 values and the longest set
+          wider than the code ever gets. So the chip takes its own row
+          beneath the identity block, where it is full-width-safe at any
+          status and at 320pt, and the name gets the whole column back.
+        */}
+        <Card style={dimmed ? styles.dimmed : undefined}>
+          <View style={styles.headerTop}>
+            <Avatar url={null} initials={initialsOf(name)} size={44} labelStyle={styles.headerInitials} />
+            <View style={styles.headerText}>
+              <Text style={styles.headerName} numberOfLines={2}>
+                {name}
+              </Text>
+              <Text style={styles.headerContact} numberOfLines={1}>
+                {channelLabel(inquiry.channel)} · {relativeStamp(inquiry.createdAt)}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.statusRow}>
+            <InquiryStatusChip status={inquiry.status} />
+          </View>
+
           <Text style={styles.description}>{inquiry.description}</Text>
-        </View>
+        </Card>
+
+        {inquiry.fromGuestStudio ? (
+          <Banner
+            icon="map-pin"
+            tone="accent"
+            text={`At ${inquiry.fromGuestStudio.name} — you are a guest here`}
+          />
+        ) : null}
 
         {images.length > 0 ? (
-          <View style={styles.photos}>
-            <Text style={styles.photosTitle}>
-              {images.length === 1 ? 'PHOTO' : `PHOTOS (${images.length})`}
-            </Text>
-            <PhotoStrip images={images} onPress={setViewerIndex} />
-          </View>
+          <CollapsibleSection
+            title={images.length === 1 ? 'Photo' : `Photos (${images.length})`}
+            open={!!open.photos}
+            onToggle={() => toggle('photos')}
+          >
+            {/* inset 0 — the card already pads 24 on each side. */}
+            <PhotoStrip images={images} onPress={setViewerIndex} inset={0} />
+          </CollapsibleSection>
         ) : null}
 
-        <DetailSection title="The work" accent>
-          <DetailField label="Placement" value={inquiry.placement} />
-          <FieldDivider />
-          <DetailField label="Size" value={inquiry.estimatedSize} />
-          <FieldDivider />
-          <DetailField label="Colour or black & grey" value={inquiry.colorOrBlackGrey} />
-          <FieldDivider />
-          <DetailField label="Timing wanted" value={inquiry.desiredTiming} />
-          <FieldDivider />
-          <DetailField
+        <CollapsibleSection title="The work" open={!!open.work} onToggle={() => toggle('work')}>
+          <Fact label="Placement" value={inquiry.placement} />
+          <Fact label="Size" value={inquiry.estimatedSize} />
+          <Fact label="Colour or black & grey" value={inquiry.colorOrBlackGrey} />
+          <Fact label="Timing wanted" value={inquiry.desiredTiming} />
+          <Fact
             label="Tattooed before"
             value={inquiry.hasBeenTattooedBefore == null ? null : inquiry.hasBeenTattooedBefore ? 'Yes' : 'No'}
+            last
           />
-        </DetailSection>
+        </CollapsibleSection>
 
         {/* Pricing is a whole section the studio can switch off. Saying so
             beats rendering dashes, which would read as "no estimate". */}
-        <DetailSection title="Estimate">
+        <CollapsibleSection title="Estimate" open={!!open.estimate} onToggle={() => toggle('estimate')}>
           {visibility.canSeePricing ? (
             <>
-              <DetailField label="Client budget" value={inquiry.budget ?? null} />
-              <FieldDivider />
-              <DetailField label="Estimate" value={estimate} />
-              <FieldDivider />
-              <DetailField label="Time" value={timeEstimate} />
+              <Fact label="Client budget" value={inquiry.budget ?? null} />
+              <Fact label="Estimate" value={estimate} />
+              <Fact label="Time" value={timeEstimate} last={!inquiry.service} />
               {inquiry.service ? (
-                <>
-                  <FieldDivider />
-                  <DetailField label="Service" value={`${inquiry.service.name} · ${inquiry.service.pricingModel}`} />
-                </>
+                <Fact label="Service" value={`${inquiry.service.name} · ${inquiry.service.pricingModel}`} last />
               ) : null}
             </>
           ) : (
-            <DetailField label="Hidden" value="Your studio doesn't show pricing detail to artists." multiline />
+            <Fact label="Hidden" value="Your studio doesn't show pricing detail to artists." multiline last />
           )}
-        </DetailSection>
+        </CollapsibleSection>
 
         {inquiry.plannedSessions.length > 0 ? (
-          <DetailSection title="Session plan">
+          <CollapsibleSection title="Session plan" open={!!open.planned} onToggle={() => toggle('planned')}>
             {inquiry.plannedSessions.map((planned, i) => (
-              <View key={planned.id}>
-                {i > 0 ? <FieldDivider /> : null}
-                <DetailField
-                  label={`Session ${planned.sessionNumber}`}
-                  value={
-                    [
-                      formatHourRange(planned.estimatedHoursMin, planned.estimatedHoursMax),
-                      visibility.canSeePricing
-                        ? formatEstimateRange(planned.estimatedPriceLow, planned.estimatedPriceHigh)
+              <Fact
+                key={planned.id}
+                label={`Session ${planned.sessionNumber}`}
+                value={
+                  [
+                    formatHourRange(planned.estimatedHoursMin, planned.estimatedHoursMax),
+                    visibility.canSeePricing
+                      ? formatEstimateRange(planned.estimatedPriceLow, planned.estimatedPriceHigh)
+                      : null,
+                    planned.depositForm?.paidAt
+                      ? 'deposit paid'
+                      : planned.depositForm?.signedAt
+                        ? 'deposit signed'
                         : null,
-                      planned.depositForm?.paidAt ? 'deposit paid' : planned.depositForm?.signedAt ? 'deposit signed' : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ') || null
-                  }
-                />
-              </View>
+                  ]
+                    .filter(Boolean)
+                    .join(' · ') || null
+                }
+                last={i === inquiry.plannedSessions.length - 1}
+              />
             ))}
-          </DetailSection>
+          </CollapsibleSection>
         ) : null}
 
         {inquiry.sessions.length > 0 ? (
-          <DetailSection title={inquiry.sessions.length === 1 ? 'Booked session' : 'Booked sessions'}>
+          <CollapsibleSection
+            title={inquiry.sessions.length === 1 ? 'Booked session' : 'Booked sessions'}
+            open={!!open.booked}
+            onToggle={() => toggle('booked')}
+          >
             {inquiry.sessions.map((s, i) => (
-              <View key={s.id}>
-                {i > 0 ? <FieldDivider /> : null}
-                <DetailField
-                  label={new Date(s.startTime).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
-                  value={[statusLabel(s.status), s.checkedOutAt ? 'checked out' : null].filter(Boolean).join(' · ')}
-                />
-              </View>
+              <Fact
+                key={s.id}
+                label={new Date(s.startTime).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
+                value={[statusLabel(s.status), s.checkedOutAt ? 'checked out' : null].filter(Boolean).join(' · ')}
+                last={i === inquiry.sessions.length - 1}
+              />
             ))}
-          </DetailSection>
+          </CollapsibleSection>
         ) : null}
 
-        {visibility.canSeeNotes && inquiry.notes && inquiry.notes.length > 0 ? (
-          <DetailSection title="Notes from the studio">
-            {inquiry.notes.map((note, i) => (
-              <View key={note.id}>
-                {i > 0 ? <FieldDivider /> : null}
-                <DetailField
-                  label={note.author?.name ?? note.author?.email ?? 'Studio'}
-                  // Deliberately stripped rather than rendered: the API
-                  // sends HTML, and mobile has no sanitiser. Plain text is
-                  // the honest, safe reading of it.
-                  value={note.bodyHtml.replace(/<[^>]*>/g, '').trim() || null}
-                  multiline
-                />
-              </View>
+        {notes.length > 0 ? (
+          <CollapsibleSection title="Notes from the studio" open={!!open.notes} onToggle={() => toggle('notes')}>
+            {notes.map((note, i) => (
+              <Fact
+                key={note.id}
+                label={note.author?.name ?? note.author?.email ?? 'Studio'}
+                // Deliberately stripped rather than rendered: the API
+                // sends HTML, and mobile has no sanitiser. Plain text is
+                // the honest, safe reading of it.
+                value={note.bodyHtml.replace(/<[^>]*>/g, '').trim() || null}
+                multiline
+                last={i === notes.length - 1}
+              />
             ))}
-          </DetailSection>
+          </CollapsibleSection>
         ) : null}
 
         {/* The deep flows. Named, so an artist knows they exist and where
             they live, rather than silently absent. */}
-        <View style={styles.portalNote}>
-          <Feather name="external-link" size={13} color={colors.fgMuted} />
-          <Text style={styles.portalText}>
-            Scheduling, deposits and the full estimate builder live in the portal — this screen shows them, it
-            doesn&apos;t change them.
-          </Text>
-        </View>
+        <Banner
+          icon="external-link"
+          align="top"
+          text="Scheduling, deposits and the full estimate builder live in the portal — this screen shows them, it doesn't change them."
+        />
 
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>Opened {relativeStamp(inquiry.createdAt)} · updated {relativeStamp(inquiry.updatedAt)}</Text>
-        </View>
+        <Text style={styles.footerText}>
+          Opened {relativeStamp(inquiry.createdAt)} · updated {relativeStamp(inquiry.updatedAt)}
+        </Text>
       </ScrollView>
 
       {/* The artist's own decision. Present only while the project is
@@ -323,7 +403,7 @@ export default function InquiryDetailScreen() {
         submitting={responding}
         error={respondError}
         approveSendsToClient={visibility.approveSendsToClient}
-        clientName={inquiryClientName(inquiry.client)}
+        clientName={name}
       />
 
       <PhotoViewer
@@ -339,44 +419,36 @@ export default function InquiryDetailScreen() {
 const styles = StyleSheet.create({
   headerSpacer: { width: 36 },
   centre: { flex: 1, justifyContent: 'center' },
-  content: { paddingBottom: space.xxxl },
 
-  guestBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    marginHorizontal: space.lg,
-    marginTop: space.lg,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    borderWidth: hairline,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.card,
-  },
-  guestLabel: { ...type.small, color: colors.accent, flex: 1 },
+  /*
+   * The client page's page scaffold, value for value. The padding is on
+   * the SCROLL CONTENT and the gap between cards is what separates
+   * sections. The old screen put `paddingHorizontal` on each section
+   * individually and `paddingTop` on each — which is why its sections and
+   * the client page's never lined up, and why the spacing between them
+   * drifted section by section.
+   */
+  content: { padding: space.lg, gap: space.xl, paddingBottom: space.xxl },
 
-  hero: { paddingHorizontal: space.lg, paddingTop: space.xl, gap: space.md },
+  headerTop: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start', marginBottom: space.md },
+  headerText: { flex: 1, gap: 2 },
+  headerInitials: { ...type.label, fontSize: 14, color: colors.fgMuted },
+  headerName: { ...type.heading, color: colors.fg },
+  headerContact: { ...type.meta, color: colors.fgMuted },
+  /* `flex-start` so the chip is its own width, not the card's. */
+  statusRow: { flexDirection: 'row', alignItems: 'center', marginBottom: space.md },
+
+  /*
+   * The brief itself. It stays heavier than body copy — it is the reason
+   * the screen exists — but it came DOWN from 22/28. At 22 inside the
+   * hero card it outweighed the client's own name directly above it,
+   * which `type.heading` sets at 20, so the card led with the tattoo
+   * description rather than with whose it is.
+   */
+  description: { ...type.body, fontSize: 17, lineHeight: 24, color: colors.fg },
+
   dimmed: { opacity: 0.55 },
-  description: { ...type.display, fontSize: 22, lineHeight: 28, color: colors.fg },
 
-  photos: { gap: space.sm, paddingTop: space.xl },
-  photosTitle: { ...type.eyebrow, color: colors.fgMuted, paddingHorizontal: space.lg },
-
-  portalNote: {
-    flexDirection: 'row',
-    gap: space.sm,
-    alignItems: 'flex-start',
-    marginHorizontal: space.lg,
-    marginTop: space.xl,
-    paddingHorizontal: space.md,
-    paddingVertical: space.md,
-    borderWidth: hairline,
-    borderColor: colors.borderSoft,
-    borderRadius: radius.card,
-  },
-  portalText: { ...type.small, color: colors.fgMuted, flex: 1 },
-
-  footer: { paddingHorizontal: space.lg, paddingTop: space.xl },
   footerText: { ...type.meta, color: colors.fgMuted },
 
   actions: {

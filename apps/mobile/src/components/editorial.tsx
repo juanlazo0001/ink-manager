@@ -310,6 +310,68 @@ export function Ornament({ style }: { style?: StyleProp<ViewStyle> }) {
   );
 }
 
+/**
+ * One label/value row inside a card — the client page's `Fact`, lifted
+ * here so every card body in the app sets its facts the same way.
+ *
+ * ─── IT ABSORBED `DetailField` ──────────────────────────────────────
+ *
+ * There were two of these. `Fact` (client detail) set the label left and
+ * the value right on one line; `DetailField` (`DetailSection.tsx`, the
+ * inquiry and appointment screens) stacked the label above the value.
+ * They also disagreed about the missing case: `Fact` demanded a string,
+ * `DetailField` rendered an em dash for null and its comment explains
+ * why —
+ *
+ *   "on a detail screen 'we don't have this' is information, and a
+ *    silently absent row reads as a bug"
+ *
+ * which is right, and is now this component's behaviour everywhere. The
+ * stacked layout was also right, for the values it was carrying: a
+ * studio note or a long description right-aligned against its label is
+ * unreadable. So the layout became `multiline` rather than a second
+ * component, and the call site picks by the shape of its value, not by
+ * which screen it happens to be on.
+ */
+export function Fact({
+  label,
+  value,
+  multiline,
+  last,
+}: {
+  label: string;
+  /** Null renders an em dash. That is deliberate — see above. */
+  value: string | null | undefined;
+  /** Stack the value under the label, left-aligned. For prose. */
+  multiline?: boolean;
+  /** Drops the rule. A trailing hairline under a card's last row is a
+      stray line — the client page's own note, kept. */
+  last?: boolean;
+}) {
+  const shown = value && value.trim() ? value : '—';
+  return (
+    <View style={[styles.fact, multiline && styles.factStacked, last && styles.factLast]}>
+      <Text style={styles.factLabel}>{label.toUpperCase()}</Text>
+      <Text style={[styles.factValue, multiline && styles.factValueStacked]} selectable>
+        {shown}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * A card section with nothing in it yet — "No deposit form sent."
+ *
+ * A sentence, not a `Fact`: there is no label/value pair here, only the
+ * absence, and an em dash against an invented label would be worse than
+ * saying it plainly. Both the client page and the staff inquiry screen
+ * had grown this line privately, disagreeing only on the padding
+ * (`space.sm` against `space.md`); this is the client page's.
+ */
+export function CardEmpty({ text }: { text: string }) {
+  return <Text style={styles.cardEmpty}>{text}</Text>;
+}
+
 /** The short red rule above Lost / Cold Rate — web's `h-0.5 w-8 rounded-full bg-danger-strong`. */
 export function RedRule({ style }: { style?: StyleProp<ViewStyle> }) {
   return <View style={[styles.redRule, style]} />;
@@ -393,6 +455,25 @@ const styles = StyleSheet.create({
     backgroundColor: colors.dangerStrong,
     transform: [{ rotate: '45deg' }],
   },
+
+  fact: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: space.md,
+    paddingVertical: space.sm + 2,
+    borderBottomWidth: hairline,
+    borderBottomColor: colors.borderSoft,
+  },
+  /* Stacked: the row becomes a column, so `justifyContent` stops applying
+     and the value needs its right-alignment taken back off. */
+  factStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: space.xs },
+  factLast: { borderBottomWidth: 0 },
+  factLabel: { ...type.meta, color: colors.fgMuted },
+  factValue: { ...type.body, color: colors.fg, flexShrink: 1, textAlign: 'right' },
+  factValueStacked: { color: colors.fgSecondary, textAlign: 'left' },
+
+  cardEmpty: { ...type.small, color: colors.fgMuted, paddingVertical: space.sm },
 
   redRule: { height: 2, width: 32, borderRadius: radius.pill, backgroundColor: colors.dangerStrong },
 });

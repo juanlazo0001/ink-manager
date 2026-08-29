@@ -205,12 +205,32 @@ export function PhotoViewer({
 export function PhotoStrip({
   images,
   onPress,
+  inset,
 }: {
   images: ViewerImage[];
   onPress: (index: number) => void;
+  /**
+   * The strip's own leading/trailing padding, in points.
+   *
+   * It defaults to `space.lg` because this began life as a FULL-BLEED
+   * strip on a screen with no horizontal padding of its own, and it had
+   * to inset itself. Inside a `Card` that assumption doubles up — the
+   * card pads 24 and the strip adds 16 on top, so the first thumbnail
+   * starts 40 in and looks misaligned against every other row in the
+   * card. Such a caller passes 0.
+   *
+   * A prop rather than a second component: the two renderings differ by
+   * one number, and the strip that scrolls, the thumb size, the press
+   * target and the viewer wiring are all the same.
+   */
+  inset?: number;
 }) {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.strip}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={[styles.strip, inset !== undefined && { paddingHorizontal: inset }]}
+    >
       {images.map((image, i) => (
         <Pressable
           key={image.url}
