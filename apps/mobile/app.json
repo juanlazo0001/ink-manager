@@ -12,7 +12,10 @@
     "newArchEnabled": true,
     "ios": {
       "bundleIdentifier": "app.inkmanager.mobile",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "app.inkmanager.mobile",

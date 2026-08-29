@@ -83,6 +83,15 @@ cd apps/mobile
 npx eas-cli@latest build --platform ios --profile production
 ```
 
+> **The FIRST build must be run from a real terminal window.** Setting up
+> the signing credentials is interactive — EAS has to walk you through an
+> Apple login, a 2FA code and a team choice — and it refuses to do that
+> without a TTY. Run inside a tool that pipes stdin (including Claude
+> Code's `!` prefix) and it fails with *"Distribution Certificate is not
+> validated for non-interactive builds / Credentials are not set up. Run
+> this command again in interactive mode."* Once the credentials exist on
+> the EAS servers, later builds no longer need a TTY.
+
 Runs in Expo's cloud, roughly 15–25 minutes. It prints a build URL you can
 watch. Credentials (signing certificate + provisioning profile) are
 **managed remotely by EAS** — it creates and stores them for you the first
@@ -151,6 +160,11 @@ the top of this file.**
 - **`.easignore` at the repo root replaces `.gitignore`** for build
   uploads — it does not add to it. That is why it repeats `node_modules`.
   If you add an entry, do not remove that one.
+- **Export compliance is pre-answered.** `ios.infoPlist.ITSAppUsesNonExemptEncryption`
+  is `false` — this app's only encryption is the OS-provided HTTPS/TLS and
+  keychain, which is exempt. Without that key App Store Connect stops
+  *every* build on the export-compliance question and waits for a manual
+  answer before the build can even be tested.
 - **This is a monorepo.** EAS uploads from the repo root and installs all
   workspaces. Always run build/submit from `apps/mobile`.
 - **`supportsTablet: true`** is set. It costs nothing for internal
