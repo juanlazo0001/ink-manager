@@ -33707,3 +33707,147 @@ measurement, and it is recorded as such.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Session AM — inquiry detail joins the client page's design system
+
+Branch `mobile/am-inquiry-detail` from `main` (`8d0bf77`, post-
+consolidation — the precondition was verified, no chat-ux branch
+remained). Mobile-only; no `apps/api` or `apps/web` source was touched.
+
+**One caveat on provenance.** The AM brief arrived mid-turn and did not
+survive context compaction — every occurrence of it in the transcript is
+inside summary text, not the message itself. What I worked from is its
+abbreviated form: *"SPEC SOURCE = THE CLIENT PAGE'S MERGED CODE. Extract
+and reuse its actual components … do not re-derive from web or rebuild
+parallel versions. Where inquiry detail needs something client detail
+lacks, extend the shared component, never fork it."* plus the task line
+(restructure into the card system, type + chip sweep, list→detail
+continuity, 320pt full-scroll, previews, standard bar). If a clause was
+lost with the rest, this is the place to correct it.
+
+## What was actually wrong: THREE `Fact` components, not one drift
+
+The brief's framing is that inquiry detail should adopt the client page's
+system. The measurable finding underneath it is that the app was carrying
+the same components three times over, and they had diverged:
+
+| | title | surface | label/value row |
+| --- | --- | --- | --- |
+| `client/[id]` | `SectionHeader` 20px sentence case | `Card` — cardGlass, gradient highlight, pad 24 | `Fact`, centred, pad 10 |
+| `inquiry/[id]` | `Eyebrow` 11px caps + red ticks | bordered box, NO highlight, pad 16/4 | `DetailField`, stacked |
+| `staff-inquiry/[id]` | `Eyebrow` | bordered box | its own `Fact`, top-aligned, pad 12 |
+
+Three surfaces, three titles, three row components. So a project opened
+from a client genuinely read as a different product than the client it
+was opened from — not a spacing nit, a different card.
+
+`staff-inquiry` also carried a local `stamp()` that was **byte-for-byte
+identical** to `lib/format`'s, and a local `Empty`; the client page had
+its own `Empty` disagreeing only on padding.
+
+## Extract, don't copy — and extend, don't fork
+
+The client page's helpers were lifted OUT of it into shared modules, and
+the client page now imports them. It is not a donor that got read and
+imitated; it is a caller of the same components:
+
+    components/Banner.tsx          Banner            (was local to client/[id])
+    components/QuickAction.tsx     QuickAction, QuickActionRow
+    components/editorial.tsx       Fact, CardEmpty
+
+Where a screen needed something the client page lacked, the SHARED
+component grew a prop rather than a sibling:
+
+- **`Fact` absorbed `DetailField`.** `DetailField` was right about the
+  missing case — its comment says "on a detail screen 'we don't have
+  this' is information, and a silently absent row reads as a bug" — so
+  null now renders an em dash everywhere. Its stacked layout was also
+  right, for prose: a studio note right-aligned against its label is
+  unreadable. That became `multiline`, chosen by the shape of the value
+  rather than by which screen it is on. `last` drops the trailing
+  hairline.
+- **`Banner` grew `align` and `tone`.** Three call sites had drifted
+  across three radii and two border weights; the one real difference — a
+  banner whose text wraps wants its icon on the first line, not floated
+  in the vertical middle — survives as `align="top"`.
+- **`PhotoStrip` grew `inset`.** It hard-coded `paddingHorizontal:
+  space.lg` because it began life full-bleed. Inside a `Card` that
+  doubles up, so the first thumbnail started 40pt in.
+
+## The measured divergence: the corner slot is not chip-sized
+
+The obvious port puts the status chip where the client page puts the
+client code — top right, across from the avatar. It was there until it
+was measured at 393:
+
+    name column   114pt        chip 88pt
+    result        "Sebastian Oyelaran-..." — wrapped to two lines AND truncated
+
+The slot is sized for a short identifier. A client code is ~60pt;
+`InquiryStatus` has 15 values and the longest run wider than the code
+ever gets. So the chip takes its own row beneath the identity block:
+
+    name column   114 -> 240pt     truncated: false
+
+Both screens do this, and the reasoning is recorded at both sites so the
+next person does not "fix" it back into the corner.
+
+## Verified
+
+Harness: temporary `app/preview.tsx` injecting `AuthContext`, scratchpad
+fixture API on :4444 serving both payloads, `expo start --web`. The
+preview route is **deleted**; the fixture lives in the scratchpad.
+
+| check | result |
+| --- | --- |
+| artist 393 — name | full "Sebastian Oyelaran-Whitmore", `truncated: false` |
+| artist 393 — bottom | `last` suppresses the trailing hairline; multiline notes stack; banner icon holds line 1 |
+| staff 393 | hero + status chip + both continuity pills + card sections |
+| 320pt, both | `bodyScrollsHorizontally: false`, no non-scrollable overflow, full scroll reaches bottom |
+| channel | staff rendered raw `INSTAGRAM`; now `channelLabel` — "Instagram", as the artist screen already did |
+
+Screenshots in `design-refs/session-am/`.
+
+At 320 the widest fixture name (48 chars) still truncates on line two.
+That is the same `type.heading` + `numberOfLines={2}` treatment the
+client page's own name uses — noted as a shared limit, not fixed here on
+one screen only.
+
+    apps/mobile   tsc --noEmit                 clean
+    apps/api      tsc                          clean
+    apps/web      tsc -b && vite build         ✓ built
+    shared-types  generate-enums --check + tsc enums match schema.prisma
+
+### Retested vs untouched
+
+**Retested:** both screens at 393 and 320, full scroll, the header
+measurement before and after, the four checks.
+
+**Untouched and NOT retested:** the artist Approve/Decline flow and
+`InquiryRespondSheet` (rendered, not exercised), the photo viewer's
+open/swipe, pull-to-refresh, and the client page's own nine sections —
+its `Fact`/`Banner`/`QuickAction`/`Empty` call sites now resolve to the
+shared components and it typechecks, but I did not re-walk that screen.
+It is the highest-value thing to look at on the device gate, because this
+session edited it.
+
+## Findings (not changed)
+
+1. **`appointment/[id].tsx` is still on the old system** — the third
+   detail screen, still `DetailSection`/`DetailField`. Out of this
+   brief's scope. It is now the only caller of that module.
+2. **`DetailSection`'s `accent` prop does nothing.** `styles.titleAccent`
+   is defined and never applied. `inquiry/[id]` passed it; `appointment`
+   still does, and gets nothing.
+3. **`gift-card/[id].tsx` has a fourth `Fact`** taking `children:
+   ReactNode` rather than a string value — a genuinely different
+   contract, so it was left alone rather than folded in silently.
+4. **The artist screen cannot link to its client.**
+   `InquiryClientRef` carries only `firstName`/`lastName` — no id — so
+   the continuity pill exists on the staff screen (which has
+   `client.id`) and cannot exist on the artist one without an API
+   change. Mobile-only session; recorded rather than worked around.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.

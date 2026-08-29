@@ -3,11 +3,19 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ScreenShell } from '@/components/ScreenShell';
+import { Avatar, initialsOf } from '@/components/Avatar';
+import { Banner } from '@/components/Banner';
+import { Card, CardEmpty, Fact } from '@/components/editorial';
+import { CollapsibleSection } from '@/components/CollapsibleSection';
+import { QuickAction, QuickActionRow } from '@/components/QuickAction';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { Eyebrow, ScreenLoading, StateMessage } from '@/components/ui';
+import { ScreenShell } from '@/components/ScreenShell';
+import { InquiryStatusChip } from '@/components/StatusChip';
+import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
+import { stamp } from '@/lib/format';
 import { formatMoney } from '@/lib/giftCards';
+import { channelLabel } from '@/lib/inquiryDisplay';
 import { screenErrorMessage } from '@/lib/screenError';
 import {
   artistName,
@@ -15,7 +23,7 @@ import {
   pipelineStages,
   type StaffInquiryDetail,
 } from '@/lib/staffInquiry';
-import { colors, hairline, radius, space, type } from '@/theme';
+import { colors, hairline, space, type } from '@/theme';
 
 /**
  * The OWNER / FRONT_DESK view of an inquiry.
@@ -40,6 +48,19 @@ import { colors, hairline, radius, space, type } from '@/theme';
  * gets built unattended off a guess. Their exact contracts are recorded
  * in the session report so the next session starts from a finished
  * investigation rather than this one.
+ *
+ * ─── AND IT IS THE CLIENT PAGE'S DESIGN SYSTEM ──────────────────────
+ *
+ * It was not. This screen had grown its own `Section` (an `Eyebrow` over
+ * a plain bordered box), its own `Fact`, its own `Empty` and its own
+ * `stamp` — the last of which was byte-for-byte `lib/format`'s. Counting
+ * the client page and `DetailSection.tsx`, the app held THREE different
+ * `Fact` components, and they disagreed: this one aligned its rows to the
+ * top and padded 12, the client page's centred them and padded 10.
+ *
+ * All four are gone. What renders here is what renders on the client
+ * page — `Card`, `CollapsibleSection`, `Fact`, `CardEmpty`, `Banner`,
+ * `QuickAction` — imported, not reproduced.
  */
 export default function StaffInquiryScreen() {
   const router = useRouter();
@@ -49,6 +70,16 @@ export default function StaffInquiryScreen() {
 
   const [inquiry, setInquiry] = useState<StaffInquiryDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  /* Nine sections would be a lot to scroll past; these are seven and the
+     top three are the ones an owner opens this screen for. The rest stay
+     one tap away, which is the client page's own balance. */
+  const [open, setOpen] = useState<Record<string, boolean>>({
+    pipeline: true,
+    assignment: true,
+    estimate: true,
+  });
+  const toggle = (key: string) => setOpen((o) => ({ ...o, [key]: !o[key] }));
 
   const load = useCallback(async () => {
     if (!token || !id) return;
@@ -70,7 +101,8 @@ export default function StaffInquiryScreen() {
 
   return (
     <ScreenShell edges={['top']}>
-      <ScreenHeader title={clientLabel} onBack={() => router.back()} />
+      {/* Bare — the name leads the hero card, as on the client page. */}
+      <ScreenHeader onBack={() => router.back()} />
 
       {error ? (
         <StateMessage
@@ -83,16 +115,77 @@ export default function StaffInquiryScreen() {
         <ScreenLoading />
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          <View style={styles.statusRow}>
-            <View style={styles.statusPill}>
-              <Text style={styles.statusLabel}>
-                {inquiry.status.replace(/_/g, ' ').toUpperCase()}
-              </Text>
+          <Card>
+            <View style={styles.headerTop}>
+              <Avatar url={null} initials={initialsOf(clientLabel)} size={44} labelStyle={styles.headerInitials} />
+              <View style={styles.headerText}>
+                <Text style={styles.headerName} numberOfLines={2}>
+                  {clientLabel}
+                </Text>
+                {inquiry.channel ? (
+                  <Text style={styles.headerContact} numberOfLines={1}>
+                    {channelLabel(inquiry.channel)} · {stamp(inquiry.createdAt)}
+                  </Text>
+                ) : (
+                  <Text style={styles.headerContact} numberOfLines={1}>
+                    {stamp(inquiry.createdAt)}
+                  </Text>
+                )}
+              </View>
             </View>
-            {inquiry.channel ? <Text style={styles.channel}>{inquiry.channel}</Text> : null}
-          </View>
 
-          <Section title="Pipeline">
+            {/*
+              THE REAL CHIP, not a hand-rolled pill.
+
+              This was a bordered box that uppercased the raw status and
+              painted itself `colors.accent` REGARDLESS of what the status
+              was — a lost inquiry and a booked one drew the same gold.
+              `InquiryStatusChip` maps every one of the 15 enum values to
+              its own tone, and it is what the inquiries list and the
+              client page's inquiries card already use, so a status reads
+              the same in all three places now.
+
+              Its own row rather than the card's top-right corner, for the
+              reason measured on the artist screen: that slot is sized for
+              a short identifier, and an 88pt status chip in it costs the
+              client's name the width it needs.
+            */}
+            <View style={styles.statusRow}>
+              <InquiryStatusChip status={inquiry.status} />
+            </View>
+
+            {/*
+              The continuity links. Both routes already exist and both ids
+              are on this payload; the artist-side screen cannot offer the
+              client one at all, because `InquiryClientRef` carries only a
+              first and last name. Recorded as a finding, not worked
+              around here.
+            */}
+            <QuickActionRow>
+              <QuickAction
+                icon="user"
+                label="Client"
+                onPress={
+                  inquiry.client?.id
+                    ? () => router.push({ pathname: '/client/[id]', params: { id: inquiry.client!.id } })
+                    : undefined
+                }
+                note={inquiry.client?.id ? undefined : 'This inquiry has no client record yet.'}
+              />
+              <QuickAction
+                icon="calendar"
+                label="Appointment"
+                onPress={
+                  inquiry.appointmentId
+                    ? () => router.push({ pathname: '/appointment/[id]', params: { id: inquiry.appointmentId! } })
+                    : undefined
+                }
+                note={inquiry.appointmentId ? undefined : 'No appointment booked yet.'}
+              />
+            </QuickActionRow>
+          </Card>
+
+          <CollapsibleSection title="Pipeline" open={!!open.pipeline} onToggle={() => toggle('pipeline')}>
             {pipelineStages(inquiry).map((stage) => (
               <View key={stage.key} style={styles.stage}>
                 <Feather
@@ -111,21 +204,21 @@ export default function StaffInquiryScreen() {
                 </Text>
               </View>
             ))}
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="Assignment">
-            <Fact label="Artist" value={artistName(inquiry) ?? 'Unassigned'} />
-            {inquiry.assignedAt ? <Fact label="Assigned" value={stamp(inquiry.assignedAt)} /> : null}
-          </Section>
+          <CollapsibleSection title="Assignment" open={!!open.assignment} onToggle={() => toggle('assignment')}>
+            <Fact label="Artist" value={artistName(inquiry) ?? 'Unassigned'} last={!inquiry.assignedAt} />
+            {inquiry.assignedAt ? <Fact label="Assigned" value={stamp(inquiry.assignedAt)} last /> : null}
+          </CollapsibleSection>
 
-          <Section title="Estimate">
+          <CollapsibleSection title="Estimate" open={!!open.estimate} onToggle={() => toggle('estimate')}>
             {inquiry.priceEstimateLow != null && inquiry.priceEstimateHigh != null ? (
               <Fact
                 label="Price"
                 value={`$${inquiry.priceEstimateLow} – $${inquiry.priceEstimateHigh}`}
               />
             ) : (
-              <Empty text="No estimate entered." />
+              <CardEmpty text="No estimate entered." />
             )}
             {inquiry.timeEstimateHoursMin != null ? (
               <Fact
@@ -160,16 +253,23 @@ export default function StaffInquiryScreen() {
               />
             ) : null}
             {inquiry.estimateRevisionReason ? (
-              <Fact label="Revision reason" value={inquiry.estimateRevisionReason} />
+              <Fact label="Revision reason" value={inquiry.estimateRevisionReason} multiline />
             ) : null}
-          </Section>
+          </CollapsibleSection>
 
-          <Section title={`Deposits (${inquiry.depositForms.length})`}>
+          <CollapsibleSection
+            title={`Deposits (${inquiry.depositForms.length})`}
+            open={!!open.deposits}
+            onToggle={() => toggle('deposits')}
+          >
             {inquiry.depositForms.length === 0 ? (
-              <Empty text="No deposit form sent." />
+              <CardEmpty text="No deposit form sent." />
             ) : (
-              inquiry.depositForms.map((d) => (
-                <View key={d.id} style={styles.line}>
+              inquiry.depositForms.map((d, i) => (
+                <View
+                  key={d.id}
+                  style={[styles.line, i === inquiry.depositForms.length - 1 && styles.lineLast]}
+                >
                   <View style={styles.lineText}>
                     <Text style={styles.lineTitle}>
                       {formatMoney(Math.round(d.totalCharged * 100))}
@@ -181,16 +281,20 @@ export default function StaffInquiryScreen() {
                 </View>
               ))
             )}
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="Appointment">
+          <CollapsibleSection
+            title="Appointment"
+            open={!!open.appointment}
+            onToggle={() => toggle('appointment')}
+          >
             {inquiry.appointmentId ? (
               <Pressable
                 onPress={() =>
                   router.push({ pathname: '/appointment/[id]', params: { id: inquiry.appointmentId! } })
                 }
                 accessibilityRole="button"
-                style={({ pressed }) => [styles.line, pressed && styles.pressed]}
+                style={({ pressed }) => [styles.line, styles.lineLast, pressed && styles.pressed]}
               >
                 <View style={styles.lineText}>
                   <Text style={styles.lineTitle}>Booked</Text>
@@ -203,12 +307,12 @@ export default function StaffInquiryScreen() {
                 <Feather name="chevron-right" size={16} color={colors.fgMuted} />
               </Pressable>
             ) : (
-              <Empty text="No appointment booked yet." />
+              <CardEmpty text="No appointment booked yet." />
             )}
-          </Section>
+          </CollapsibleSection>
 
-          <Section title="The request">
-            {inquiry.description ? <Fact label="Wants" value={inquiry.description} /> : null}
+          <CollapsibleSection title="The request" open={!!open.request} onToggle={() => toggle('request')}>
+            {inquiry.description ? <Fact label="Wants" value={inquiry.description} multiline /> : null}
             {inquiry.placement ? <Fact label="Placement" value={inquiry.placement} /> : null}
             {inquiry.estimatedSize ? <Fact label="Size" value={inquiry.estimatedSize} /> : null}
             {inquiry.colorOrBlackGrey ? (
@@ -216,93 +320,44 @@ export default function StaffInquiryScreen() {
             ) : null}
             {inquiry.desiredTiming ? <Fact label="Timing" value={inquiry.desiredTiming} /> : null}
             {inquiry.clientStatedBudget || inquiry.budget ? (
-              <Fact label="Client budget" value={(inquiry.clientStatedBudget ?? inquiry.budget)!} />
+              <Fact label="Client budget" value={inquiry.clientStatedBudget ?? inquiry.budget} />
             ) : null}
             {inquiry.hasBeenTattooedBefore != null ? (
-              <Fact label="Tattooed before" value={inquiry.hasBeenTattooedBefore ? 'Yes' : 'No'} />
+              <Fact label="Tattooed before" value={inquiry.hasBeenTattooedBefore ? 'Yes' : 'No'} last />
             ) : null}
-          </Section>
+          </CollapsibleSection>
 
           {inquiry.closedReason || inquiry.declineNote || inquiry.archivedAt ? (
-            <Section title="Closed">
-              {inquiry.closedReason ? <Fact label="Reason" value={inquiry.closedReason} /> : null}
-              {inquiry.declineNote ? <Fact label="Note" value={inquiry.declineNote} /> : null}
-              {inquiry.archivedAt ? <Fact label="Archived" value={stamp(inquiry.archivedAt)} /> : null}
-            </Section>
+            <CollapsibleSection title="Closed" open={!!open.closed} onToggle={() => toggle('closed')}>
+              {inquiry.closedReason ? <Fact label="Reason" value={inquiry.closedReason} multiline /> : null}
+              {inquiry.declineNote ? <Fact label="Note" value={inquiry.declineNote} multiline /> : null}
+              {inquiry.archivedAt ? <Fact label="Archived" value={stamp(inquiry.archivedAt)} last /> : null}
+            </CollapsibleSection>
           ) : null}
 
-          <View style={styles.note}>
-            <Feather name="info" size={13} color={colors.fgMuted} />
-            <Text style={styles.noteText}>
-              Assigning, sending estimates and deposit forms, scheduling and closing are done in the
-              portal. This screen shows the inquiry; it doesn&apos;t change it.
-            </Text>
-          </View>
+          <Banner
+            icon="info"
+            align="top"
+            text="Assigning, sending estimates and deposit forms, scheduling and closing are done in the portal. This screen shows the inquiry; it doesn't change it."
+          />
         </ScrollView>
       )}
     </ScreenShell>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <Eyebrow>{title}</Eyebrow>
-      <View style={styles.sectionBody}>{children}</View>
-    </View>
-  );
-}
-
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.fact}>
-      <Text style={styles.factLabel}>{label.toUpperCase()}</Text>
-      <Text style={styles.factValue}>{value}</Text>
-    </View>
-  );
-}
-
-function Empty({ text }: { text: string }) {
-  return <Text style={styles.empty}>{text}</Text>;
-}
-
-/**
- * A real instant, shown in the viewer's own zone. Deliberately NOT forced
- * to UTC: unlike a gift card's `expiresAt`, these are moments (an
- * estimate went out, a deposit was paid), and CLAUDE.md's rule is that
- * the two conventions must not be mixed.
- */
-function stamp(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
 const styles = StyleSheet.create({
-  content: { padding: space.lg, gap: space.lg, paddingBottom: space.xxl },
+  /* The client page's scaffold: `space.xl` between cards, not `space.lg`.
+     A card carries 24 of its own padding, so 16 between them read as
+     cramped next to the client page's 24. */
+  content: { padding: space.lg, gap: space.xl, paddingBottom: space.xxl },
 
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  statusPill: {
-    borderWidth: hairline,
-    borderColor: colors.accent,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.md,
-    paddingVertical: 4,
-  },
-  statusLabel: { ...type.meta, color: colors.accent },
-  channel: { ...type.meta, color: colors.fgMuted },
-
-  section: { gap: space.sm },
-  sectionBody: {
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.card,
-    paddingHorizontal: space.lg,
-  },
+  headerTop: { flexDirection: 'row', gap: space.md, alignItems: 'flex-start', marginBottom: space.md },
+  headerText: { flex: 1, gap: 2 },
+  headerInitials: { ...type.label, fontSize: 14, color: colors.fgMuted },
+  headerName: { ...type.heading, color: colors.fg },
+  headerContact: { ...type.meta, color: colors.fgMuted },
+  statusRow: { flexDirection: 'row', alignItems: 'center', marginBottom: space.md },
 
   stage: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm },
   stageLabel: { ...type.body, color: colors.fgMuted },
@@ -313,33 +368,21 @@ const styles = StyleSheet.create({
   // Divergence logged rather than silently copied.
   stageCurrent: { color: colors.accent },
 
-  fact: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: space.md,
-    paddingVertical: space.md,
-    borderBottomWidth: hairline,
-    borderBottomColor: colors.borderSoft,
-  },
-  factLabel: { ...type.meta, color: colors.fgMuted, flexShrink: 0 },
-  factValue: { ...type.body, color: colors.fg, flexShrink: 1, textAlign: 'right' },
-
   line: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
-    paddingVertical: space.md,
+    paddingVertical: space.sm + 2,
     borderBottomWidth: hairline,
     borderBottomColor: colors.borderSoft,
   },
+  /* A trailing hairline under a card's last row is a stray line — the
+     client page's rule, and now `Fact`'s `last` prop does the same job
+     for the rows next to these. */
+  lineLast: { borderBottomWidth: 0 },
   lineText: { flex: 1 },
   lineTitle: { ...type.body, color: colors.fg },
   lineMeta: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
-  empty: { ...type.small, color: colors.fgMuted, paddingVertical: space.md },
-
-  note: { flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' },
-  noteText: { ...type.small, color: colors.fgMuted, flex: 1 },
   pressed: { opacity: 0.6 },
 });

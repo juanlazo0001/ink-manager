@@ -10,9 +10,11 @@ import { SmsConsentActions } from '@/components/SmsConsentActions';
 import { sendPrefillInquiryLink } from '@/lib/prefill';
 import { CONSENT_SOURCE_LABELS } from '@/lib/consentLabels';
 import { Avatar, initialsOf } from '@/components/Avatar';
+import { Banner } from '@/components/Banner';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
+import { QuickAction, QuickActionRow } from '@/components/QuickAction';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
-import { Card } from '@/components/editorial';
+import { Card, CardEmpty, Fact } from '@/components/editorial';
 import { ChannelGlyph, channelLabelFor } from '@/components/ChannelGlyph';
 import { InquiryStatusChip, StatusChip, type ChipTone } from '@/components/StatusChip';
 import {
@@ -599,7 +601,7 @@ export default function ClientScreen() {
               ) : null}
             </View>
 
-          <View style={styles.quickRow}>
+          <QuickActionRow>
             <QuickAction
               icon="message-circle"
               label="Message"
@@ -634,7 +636,7 @@ export default function ClientScreen() {
               label="More"
               onPress={() => setMoreOpen(true)}
             />
-          </View>
+          </QuickActionRow>
           </Card>
 
           {copyOpen ? (
@@ -765,7 +767,7 @@ export default function ClientScreen() {
             ) : client.phone ? (
               <ContactLine value={client.phone} label={null} primary kind="phone" />
             ) : (
-              <Empty text="No phone on file." />
+              <CardEmpty text="No phone on file." />
             )}
 
             <SubHead>Emails</SubHead>
@@ -786,7 +788,7 @@ export default function ClientScreen() {
             ) : client.email ? (
               <ContactLine value={client.email} label={null} primary kind="email" />
             ) : (
-              <Empty text="No email on file." />
+              <CardEmpty text="No email on file." />
             )}
 
             {client.instagramHandle ? <Fact label="Instagram" value={client.instagramHandle} /> : null}
@@ -840,7 +842,7 @@ export default function ClientScreen() {
             {inquiries.length === 0 ? (
               /* The CTA above is live now, so this empty state points at
                  a path that actually exists. */
-              <Empty text="No open inquiries." />
+              <CardEmpty text="No open inquiries." />
             ) : (
               <>
                 {/* Web keeps these two column headers at phone width and
@@ -869,7 +871,7 @@ export default function ClientScreen() {
             onToggle={() => toggle('projects')}
           >
             {projects.length === 0 ? (
-              <Empty text="No projects." />
+              <CardEmpty text="No projects." />
             ) : (
               projects.map((i, index) => (
                 <ProjectLine
@@ -898,7 +900,7 @@ export default function ClientScreen() {
             }
           >
             {client.giftCards.length === 0 ? (
-              <Empty text="No gift cards." />
+              <CardEmpty text="No gift cards." />
             ) : (
               client.giftCards.map((g) => (
                 <Pressable
@@ -942,7 +944,7 @@ export default function ClientScreen() {
             }
           >
             {deposits.length === 0 ? (
-              <Empty text="No deposit forms." />
+              <CardEmpty text="No deposit forms." />
             ) : (
               deposits.map((d) => (
                 <View key={d.id} style={styles.line}>
@@ -987,9 +989,9 @@ export default function ClientScreen() {
     'appointments': (
           <CollapsibleSection title="Appointments" open={!!open.appointments} onToggle={() => toggle('appointments')}>
             {appointments === null ? (
-              <Empty text="Loading appointments…" />
+              <CardEmpty text="Loading appointments…" />
             ) : appointments.length === 0 ? (
-              <Empty text="No appointments yet." />
+              <CardEmpty text="No appointments yet." />
             ) : (
               appointments.map((a, index) => (
                 <AppointmentLine key={a.id} appointment={a} last={index === appointments.length - 1} />
@@ -1013,7 +1015,7 @@ export default function ClientScreen() {
             }
           >
             {client.liabilityWaivers.length === 0 ? (
-              <Empty text="No waivers." />
+              <CardEmpty text="No waivers." />
             ) : (
               client.liabilityWaivers.map((w) => (
                 <View key={w.id} style={styles.line}>
@@ -1048,7 +1050,7 @@ export default function ClientScreen() {
               consolidated here, grouped by where it was written. Internal only — never shown to the
               client or shared with an artist.
             </Text>
-            <Empty text="Writing a note is done in the portal." />
+            <CardEmpty text="Writing a note is done in the portal." />
           </CollapsibleSection>
     ),
     'activity-history': (
@@ -1056,7 +1058,7 @@ export default function ClientScreen() {
             {/* Web groups this by date with a description per change. The
                 client payload carries no audit trail, so the card keeps
                 web's place and says so rather than showing nothing. */}
-            <Empty text="No activity recorded yet." />
+            <CardEmpty text="No activity recorded yet." />
           </CollapsibleSection>
     ),
   };
@@ -1107,33 +1109,6 @@ export default function ClientScreen() {
         }}
       />
     </ScreenShell>
-  );
-}
-
-function QuickAction({
-  icon,
-  label,
-  onPress,
-  note,
-}: {
-  icon: 'message-circle' | 'copy' | 'check' | 'edit-2' | 'more-horizontal' | 'move';
-  label: string;
-  onPress?: () => void;
-  note?: string;
-}) {
-  const enabled = !!onPress;
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={!enabled}
-      accessibilityRole="button"
-      accessibilityState={{ disabled: !enabled }}
-      accessibilityHint={note}
-      style={({ pressed }) => [styles.quick, !enabled && styles.quickDisabled, pressed && enabled && styles.pressed]}
-    >
-      <Feather name={icon} size={15} color={enabled ? colors.fg : colors.fgMuted} />
-      <Text style={[styles.quickLabel, !enabled && styles.quickLabelDisabled]}>{label}</Text>
-    </Pressable>
   );
 }
 
@@ -1379,30 +1354,6 @@ function SubHead({ children }: { children: string }) {
 }
 
 
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.fact}>
-      <Text style={styles.factLabel}>{label.toUpperCase()}</Text>
-      <Text style={styles.factValue} selectable>
-        {value}
-      </Text>
-    </View>
-  );
-}
-
-function Empty({ text }: { text: string }) {
-  return <Text style={styles.empty}>{text}</Text>;
-}
-
-function Banner({ icon, text }: { icon: 'archive' | 'git-merge' | 'log-out'; text: string }) {
-  return (
-    <View style={styles.banner}>
-      <Feather name={icon} size={13} color={colors.fgMuted} />
-      <Text style={styles.bannerText}>{text}</Text>
-    </View>
-  );
-}
-
 /**
  * Web's session badges, `sessionDepositBadge` and `sessionAppointmentBadge`
  * from `ClientDetail.tsx`, label for label.
@@ -1535,22 +1486,6 @@ const styles = StyleSheet.create({
   },
   codeChipText: { ...type.meta, color: colors.fgSecondary, letterSpacing: 1 },
 
-  quickRow: { flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' },
-  quick: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    flexShrink: 0,
-    borderWidth: hairline,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.pill,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-  },
-  quickDisabled: { borderColor: colors.border, opacity: 0.55 },
-  quickLabel: { ...type.small, color: colors.fg },
-  quickLabelDisabled: { color: colors.fgMuted },
-
   copyMenu: {
     borderWidth: hairline,
     borderColor: colors.border,
@@ -1564,33 +1499,10 @@ const styles = StyleSheet.create({
   copyItemLabelDisabled: { ...type.body, color: colors.fgMuted },
   copyItemNote: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
-  banner: {
-    flexDirection: 'row',
-    gap: space.sm,
-    alignItems: 'center',
-    borderWidth: hairline,
-    borderColor: colors.borderStrong,
-    borderRadius: radius.input,
-    padding: space.md,
-  },
-  bannerText: { ...type.small, color: colors.fgMuted, flex: 1 },
-
   /* Web: `flex items-center justify-between`, the eyebrow left and the
      add control right. The eyebrow keeps its own vertical rhythm; the
      32pt button is taller than it, so the row centres on the button. */
   subHead: { ...type.meta, color: colors.accent, marginTop: space.md, marginBottom: space.xs },
-
-  fact: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: space.md,
-    paddingVertical: space.sm + 2,
-    borderBottomWidth: hairline,
-    borderBottomColor: colors.borderSoft,
-  },
-  factLabel: { ...type.meta, color: colors.fgMuted },
-  factValue: { ...type.body, color: colors.fg, flexShrink: 1, textAlign: 'right' },
 
   line: {
     flexDirection: 'row',
@@ -1609,7 +1521,6 @@ const styles = StyleSheet.create({
   lineTitle: { ...type.body, color: colors.fg },
   lineMeta: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
-  empty: { ...type.small, color: colors.fgMuted, paddingVertical: space.sm },
 
   /* Web's column headers: 12px, muted, 12px of space beneath. */
   columnHead: {
