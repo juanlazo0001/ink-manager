@@ -34239,3 +34239,222 @@ press target moved from a row to a card), and pull-to-refresh.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Session AP — photo cards, matching the target's atmosphere
+
+Branch `session/ap-photo-atmosphere` in its own worktree, cut from `main`
+(`c74b078`, AO merged and tip-verified). Mobile-only: one component file
+changed.
+
+All three references were viewed before any code was written. **Path
+correction, per the architect:** the brief cites
+`design-refs/session-ao/target.jpeg`; the file is `target.jpg`. Searched
+the whole repo — `.jpeg` appears nowhere, and both in-repo references
+(REPORT.md's AO section and `InquiryRow.tsx`'s own comment) already say
+`.jpg`. The error was in the brief text only, so nothing needed changing;
+recorded here so a later session does not chase it.
+
+## 1. The wash — and the first fix was wrong in a useful way
+
+### 1a. Sampled, target vs the AO build on the owner's device
+
+Photo band: 0.06–0.50 of card height, **0.06–0.45 of width**. The width
+bound matters — a first pass sampled to 0.94 and reported a max of 234 on
+the current build, which turned out to be the date's white text, not the
+thermostat. The chip and date live in the right half of that same y
+range.
+
+| | mean | relL | card-to-card spread |
+| --- | --- | --- | --- |
+| **target** | 34.4/255 | 0.018 | **8.3** |
+| **current (AO, device)** | 45.0/255 | 0.033 | **16.1** |
+
+So AO ran **+10.6 levels bright** and **1.9× less uniform**.
+
+### The black scrim cannot converge, and measuring proved it
+
+The obvious retune — a heavier flat black scrim — was built at 0.72 and
+measured:
+
+    source     bright 201.7   dark 46.2   difference 155.5
+    card       bright  51.0   dark 11.7   difference  41.6
+    compression factor 0.267  (exactly the intended transmission)
+
+The scrim did precisely what it was designed to do and still left the
+bright card at 51 and the dark card at 12. **A black scrim multiplies.**
+It scales every source by the same transmission, so it can darken a
+bright photo but can never lift a dark one, and darkening further only
+drives the dark card to black. Convergence is unreachable that way at any
+value — not a tuning problem, a structural one.
+
+### What the target actually does
+
+Composite the photo at **low opacity over a ground that is dark but not
+black**, which lifts the floor for every source. Two independent readings
+of the target agree:
+
+    within-card texture range   37 levels over a ~200-level source
+                                -> photo opacity ~0.185
+    mean 34.4 at that opacity   -> ground 12.7-17.2
+
+And the app already owns a token in that range: **`surfaceInset`
+(#120f0b) is level 14.7**. So this is not a new colour — it is the card's
+own ground showing through a faint photograph.
+
+Shipped: `PHOTO_OPACITY = 0.18` over `surfaceInset`, with the gradient
+kept for text contrast only.
+
+### 1c. Convergence, measured
+
+| card | source | before (AO) | after |
+| --- | --- | --- | --- |
+| bright (thermostat case) | 201.7 | — | **44.9** |
+| dark (tattoo case) | 46.2 | — | **18.6** |
+| no-photo fallback | — | — | **13.7** |
+| pure white (worst case) | 255 | — | **53.0** |
+
+Measured compression factor **0.169**, against the intended 0.18.
+
+**The honest reading of convergence.** The two test photos are 155 levels
+apart — far more extreme than either reference, deliberately, because a
+gentle pair would flatter the result. At that spread they land 26.3
+apart. For *realistic* photo variety the number that matters is the
+compression factor: the device's own three photos spanned ~42 levels of
+source, so they now land
+
+    0.169 x 42 = 7.1 levels apart, against the target's 8.3
+
+which is the convergence the target shows. What cannot be claimed is that
+any two photos land identically — a linear composite preserves
+proportion, and the only way to fully erase the source is to erase the
+photo. The remaining photo presence is visible in the strip.
+
+## 2. Proportion and air
+
+**Ratio: 3.77:1**, measured off `intended-target.jpg`, superseding AO's
+3.64:1 per the ruling. Both numbers, as asked — and the change is 3.5%,
+99pt to 96pt at a 361pt card. The ratio was never where the "needs air"
+impression came from.
+
+**The target cannot pin it tighter than that.** Its three cards are not
+the same height: measured from their own left-border column they run
+**356, 326, 297px**, shrinking ~30px per card linearly down the image,
+which is a keystone artifact of how that reference was produced rather
+than three card sizes. Their ratios spread 3.46 / 3.77 / 4.14. The middle
+card sits where keystone distortion crosses zero, so it is the sample
+taken. AO's 3.64 was already inside that band.
+
+**The air is padding**, and that is what moved — measured as fractions of
+card height so the two references' scales do not matter:
+
+| metric | target | AO | **AP** |
+| --- | --- | --- | --- |
+| ratio | 3.77 | 3.77 | **3.76** |
+| chip row from top | 0.108 | 0.190 | **0.135** |
+| name row starts | 0.578 | 0.590 | **0.531** |
+| description to bottom | 0.138 | 0.109 | **0.135** |
+| left inset | 0.035 | 0.040 | **0.039** |
+
+`paddingTop: space.xs`, `paddingBottom: space.sm`, horizontal `space.md`.
+
+**Deviation, stated:** chip (0.135 vs 0.108) and name start (0.531 vs
+0.578) remain short of the target. The cause is measurable and is not
+padding: the target's name-block glyph span is ~0.284 of card height
+against this build's ~0.333. Its name type is smaller relative to the
+card. Closing the last of that gap means changing `type.heading` on this
+card, which the brief did not ask for and which would diverge from every
+other screen using it — so it is reported rather than done.
+
+Description is `numberOfLines={1}`, as the target.
+
+## 3. Card edge
+
+Present and unchanged from AO: `borderWidth: hairline`,
+`borderColor: colors.cardBorder` (rgba(201,154,91,0.1)),
+`borderRadius: radius.card` (10, the canon token). Visible in the strip's
+AFTER row and matching the target's subtle hairline.
+
+## 4. Chip, date, avatar
+
+Chip and date sit top-right on one line, spacing unchanged. **Avatar 34 →
+32pt**: the target's avatar is 0.265 of card height against the AO
+build's 0.289, measured the same way in both so the detection bias
+cancels — about 8% smaller.
+
+## 5. Contrast floor after darkening
+
+It holds with room to spare, which is the expected consequence of a
+darker card. Worst case per element, over the worst-case source:
+
+| element | worst ratio | |
+| --- | --- | --- |
+| client name | **10.50:1** | PASS |
+| description | **8.91:1** | PASS |
+| date | **10.66:1** | PASS |
+| status chip (neutral tone) | **5.40:1** | PASS |
+| UNASSIGNED | **7.92:1** | PASS |
+
+Worst element on any card: **5.40:1** (floor 4.5), up from AO's 4.66:1.
+Names clear the floor by 2.3×, as the brief expected.
+
+## 6. No-photo fallback
+
+Behaviour unchanged. It now sits *closer* to the photo cards than before:
+13.7 against the dark card's 18.6 and the bright card's 44.9, where under
+AO it was conspicuously darker than both. Visible as the third column of
+the AFTER row in the strip.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean, 5.68 MB bundle
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            ✓ built in 13.80s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+    worktree      npm ci (by scripts/new-session.ps1)
+
+Renders at **390/393pt** (`after-393.png`) and **320pt**
+(`after-320.png`): `bodyScrollsHorizontally: false`, no non-scrollable
+overflow, longest chip and longest name both intact.
+
+`design-refs/session-ap/strip-target-current-after.png` is the three-row
+comparison — target, current, after — across the bright, dark and
+third-case columns.
+
+### Retested vs untouched
+
+**Retested:** every number in every table above, re-measured after each
+change to the wash or the padding.
+
+**NOT retested:** scroll performance, still. Same reason as AO — the
+harness renders a handful of cards in a `ScrollView`, not a recycling
+`FlatList` under a finger. This session *reduces* the risk (the photo now
+draws at 0.18 opacity over a solid ground rather than at full strength
+under a six-stop gradient, and one absolutely-filled `View` was removed
+from every card), but that is reasoning, not measurement. **Device gate
+item.**
+
+Also untouched, as instructed: the Inquiries/Projects toggle,
+`ScreenTitle`, the filters, and navigation to detail.
+
+## Findings
+
+1. **`expo export --platform web` fails on `main` too**, identically:
+   `Cannot find module 'expo-router/build/utils/url'`, thrown from
+   `@expo/cli`'s static-render step *after* bundling succeeds (1637
+   modules, clean). Pre-existing and environmental — the monorepo hoists
+   `expo-router` where the nested `@expo/cli` copy cannot resolve it.
+   Not caused by this session and not fixed here (it would mean touching
+   root dependency layout, which the brief forbids). The iOS export, the
+   one that matters for an Expo Go app, is clean.
+2. **The target reference has a keystone artifact** — its cards shrink
+   linearly down the image. Worth knowing before anyone measures absolute
+   pixels from it again; fractions of card height are safe, absolute
+   sizes are not.
+3. **A black scrim can never converge two photos**, only compress them
+   toward black. If a future surface needs uniformity across arbitrary
+   images, the pattern is low-opacity-over-ground, as used here.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.

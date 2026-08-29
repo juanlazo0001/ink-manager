@@ -58,19 +58,75 @@ export interface InquiryRowData {
 /*
  * ─── THE CARD'S PROPORTION ──────────────────────────────────────────
  *
- * MEASURED off the owner's mockup (`design-refs/session-ao/target.jpg`),
- * not taken from the brief's estimate, because the two disagree and the
- * mockup is the named spec source.
+ * 3.77:1, measured off `design-refs/session-ap/intended-target.jpg` —
+ * which supersedes session AO's 3.64:1 by the architect's ruling. Both
+ * numbers, as asked:
  *
- *   card bounds in the mockup   2247 x 617 px
- *   ratio                       3.64 : 1
+ *   AO, from design-refs/session-ao/target.jpg      3.64 : 1
+ *   AP, from intended-target.jpg (middle card)      3.77 : 1
  *
- * The brief says "roughly 2.4:1", which at a 361pt card width would be
- * 150pt tall against the mockup's 99pt — a 50% difference in height, so
- * it is a real design decision rather than rounding. `CARD_RATIO` is one
- * constant precisely so the owner's gate can overrule it in one place.
+ * A 3.5% change in height — 99pt to 96pt at a 361pt card. Which is to
+ * say the ratio was never where the "needs more air" impression came
+ * from; the PADDING was, and that is changed below.
+ *
+ * ─── WHY THE MIDDLE CARD ────────────────────────────────────────────
+ *
+ * The target's three cards are NOT the same height. Measured from their
+ * own left-border column they run 356, 326 and 297px — shrinking by
+ * ~30px per card down the image, linearly, which is a keystone artifact
+ * of how that reference was produced rather than three different card
+ * sizes. Their ratios therefore spread 3.46 / 3.77 / 4.14.
+ *
+ * The middle card sits at the image's vertical centre where keystone
+ * distortion crosses zero, so it is the least distorted sample, and it
+ * is the one taken. The spread is reported rather than averaged away:
+ * this reference cannot pin the ratio tighter than about ±0.35, and AO's
+ * 3.64 was already inside that band.
  */
-const CARD_RATIO = 3.64;
+const CARD_RATIO = 3.77;
+
+/*
+ * ─── THE PHOTO IS A TEXTURE OVER THE CARD'S OWN GROUND ──────────────
+ *
+ * This is what session AP is really about, and the first attempt at it
+ * was wrong in an instructive way, so both are recorded.
+ *
+ * SAMPLED FIRST — target vs the AO build on the owner's own device
+ * (`design-refs/session-ap/`), over the photo band, which is 0.06-0.50
+ * of card height and 0.06-0.45 of width (above the name block, left of
+ * the chip):
+ *
+ *                      mean level   card-to-card spread
+ *   intended target       34.4/255            8.3
+ *   AO build (device)     45.0/255           16.1
+ *
+ * So AO ran +10.6 levels bright and 1.9x less uniform.
+ *
+ * THE FIRST FIX WAS A HEAVIER BLACK SCRIM, and it cannot work. A black
+ * scrim MULTIPLIES: it scales every source by the same transmission, so
+ * it can darken a bright photo but can never lift a dark one. Measured
+ * at 0.72 it compressed a 155-level source difference to 41.6 — a
+ * factor of 0.267, exactly as designed — and still left the bright card
+ * at 51 and the dark card at 12. Darkening further only drives the dark
+ * card to black. Convergence is unreachable that way at ANY value.
+ *
+ * WHAT THE TARGET ACTUALLY DOES is composite the photo at low opacity
+ * over a ground that is dark but NOT black, which lifts the floor for
+ * every source. Two independent readings of the target agree:
+ *
+ *   within-card texture range  37 levels over a ~200-level source
+ *                              -> photo opacity ~0.185
+ *   mean 34.4 at that opacity  -> ground 12.7-17.2 depending on the
+ *                                 source mean assumed
+ *
+ * And the app already owns a token in that range: `surfaceInset`
+ * (#120f0b) is level 14.7. So this is not a new colour, it is the
+ * card's own ground showing through a faint photograph.
+ *
+ * The photo survives as texture and depth, which is the ruling: the
+ * row's information is the name, description, status, date and avatar.
+ */
+const PHOTO_OPACITY = 0.18;
 
 /*
  * ─── THE WASH ───────────────────────────────────────────────────────
@@ -89,47 +145,39 @@ const CARD_RATIO = 3.64;
  * to sit at or below L = 0.076, which over white means at least 0.69
  * black. The name (`fg`, L = 0.842) only needs 0.58.
  *
- * ─── WHY THERE IS NO "PHOTO WINDOW" ────────────────────────────────
+ * NOW IT ONLY HAS ONE JOB. In AO this gradient carried both the card's
+ * overall darkness AND the text's contrast, so its shallowest point was
+ * pinned at 0.60 by what the name needed — which is why the AO card
+ * could never be uniformly moody: the gradient had to stay dark
+ * everywhere, and still tracked the photo's own brightness.
  *
- * The first version of these stops opened to 0.10 alpha at 38% of the
- * card height, on the assumption the middle band was empty photo. It
- * measured 1.25:1 for the name over a white photo — a hard fail — and
- * the reason is worth keeping:
+ * `BASE_SCRIM` now owns darkness and uniformity. This owns contrast, and
+ * starts fully transparent: at the top it adds nothing, because the base
+ * has already taken the card to the target's level.
  *
  *   MEASURED text bands, as a fraction of card height, at 393pt
  *     date          0.13 – 0.29
  *     name          0.38 – 0.63
  *     description   0.63 – 0.81
  *
- * At the mockup's 3.64:1 the card is 99pt tall and the content occupies
- * 38% to 81% of it. The "middle band" IS the name. There is no empty
- * middle to open up, so the wash cannot both guarantee contrast and let
- * the photograph through — at this proportion those two are in direct
- * conflict, and contrast wins because the brief makes it a floor.
+ * Combined transmission is the product of the two — (1 - base) x
+ * (1 - gradient):
  *
- * The consequence is stated plainly in the session report rather than
- * hidden here: at 3.64:1 the reference photo contributes TEXTURE, not a
- * readable image. A taller card (the brief's own 2.4:1 estimate) would
- * buy back a genuine window. That is an owner call, and `CARD_RATIO`
- * plus these stops are the two things that move together if it changes.
+ *     top    0.28 x 1.00 = 0.280
+ *     0.40   0.28 x 0.90 = 0.252
+ *     0.62   0.28 x 0.55 = 0.154
+ *     bottom 0.28 x 0.28 = 0.078
  *
- * The top scrim looks like over-darkening and is not: the DATE beside
- * the chip is bare text on the photo. The chip carries its own tinted
- * fill, as the brief notes; the date does not, and at a "light up top"
- * value it measured 1.60:1 over white.
- *
- * Every number below is verified by sampling composited pixels in the
- * harness, not by this arithmetic — see the report's contrast table.
+ * Every number is verified by sampling composited pixels in the harness
+ * rather than trusting this arithmetic — see the report's tables.
  */
 const WASH_COLORS = [
-  'rgba(0,0,0,0.66)', // the date's band
-  'rgba(0,0,0,0.62)',
-  'rgba(0,0,0,0.60)', // shallowest point — still above the 0.58 the name needs
-  'rgba(0,0,0,0.82)',
-  'rgba(0,0,0,0.92)',
-  'rgba(0,0,0,0.95)', // the description sits in here
+  'rgba(0,0,0,0)', // the base scrim already holds the top
+  'rgba(0,0,0,0.10)',
+  'rgba(0,0,0,0.45)', // the name enters here
+  'rgba(0,0,0,0.72)', // the description sits in here
 ] as const;
-const WASH_LOCATIONS = [0, 0.3, 0.36, 0.5, 0.7, 1] as const;
+const WASH_LOCATIONS = [0, 0.4, 0.62, 1] as const;
 
 /**
  * The ground for a card with no reference photo.
@@ -191,7 +239,7 @@ export function InquiryRow({ inquiry, onPress }: { inquiry: InquiryRowData; onPr
       {showPhoto ? (
         <Image
           source={{ uri: url }}
-          style={StyleSheet.absoluteFill}
+          style={[StyleSheet.absoluteFill, styles.photo]}
           contentFit="cover"
           transition={140}
           placeholderContentFit="cover"
@@ -202,8 +250,8 @@ export function InquiryRow({ inquiry, onPress }: { inquiry: InquiryRowData; onPr
         <NoPhotoGround />
       )}
 
-      {/* Over the photo, under the content. `pointerEvents none` so the
-          whole card stays one press target. */}
+      {/* Over the scrim, under the content — contrast for the text.
+          `pointerEvents none` so the whole card stays one press target. */}
       <LinearGradient
         colors={WASH_COLORS}
         locations={WASH_LOCATIONS}
@@ -297,7 +345,10 @@ export function InquiryRow({ inquiry, onPress }: { inquiry: InquiryRowData; onPr
           <Avatar
             url={inquiry.artist.avatarUrl}
             initials={initialsOf(inquiry.artist.name)}
-            size={34}
+            /* 0.265 of card height in the target against 0.289 in the
+               AO build, measured the same way in both so the bias
+               cancels — about 8% smaller. */
+            size={32}
             style={styles.artistAvatar}
           />
         ) : null}
@@ -318,7 +369,24 @@ const styles = StyleSheet.create({
     /* The ground behind a photo that has not decoded yet — never white. */
     backgroundColor: colors.surfaceInset,
     justifyContent: 'space-between',
-    padding: space.md,
+    /*
+     * Asymmetric, from the target's own proportions. Measured as
+     * fractions of card height, so the two references' different scales
+     * do not matter:
+     *
+     *                        target        AO build
+     *   chip row from top     0.108          0.190
+     *   description to bottom 0.138          0.109
+     *
+     * The chip sits nearly twice as far down in the AO build, and the
+     * description is closer to the floor. So the air moves from the top
+     * of the card to the bottom of it — which is the whole of the
+     * "name block sits lower with more breathing room" note, and it is
+     * padding rather than the ratio.
+     */
+    paddingTop: space.xs,
+    paddingBottom: space.sm,
+    paddingHorizontal: space.md,
   },
   /* Closed and cold inquiries are history, not pipeline. */
   closed: { opacity: 0.5 },
@@ -327,6 +395,9 @@ const styles = StyleSheet.create({
      photograph where that colour would go — so it dims instead. */
   pressed: { opacity: 0.72 },
 
+  /* See PHOTO_OPACITY: the card's `surfaceInset` background IS the
+     ground this composites over. */
+  photo: { opacity: PHOTO_OPACITY },
   noPhoto: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.cardGlass },
 
   topRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
