@@ -2,15 +2,16 @@ import Feather from '@expo/vector-icons/Feather';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as WebBrowser from 'expo-web-browser';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { isMessageEdited } from '@/lib/conversations';
 import { deliveryLabel, deliveryState, failedLineFor } from '@/lib/deliveryStatus';
 import { linkify, truncateMiddle } from '@/lib/linkify';
 import type { DisplayMessage } from '@/lib/threadRows';
 import { BALLOON, ReactionBalloon, ReactionTail } from '@/components/ReactionBalloon';
+import { traceReactionAnchor } from '@/lib/reactionProbe';
 
 /*
  * ─── §7 rev H: A REACTED ROW RESERVES ITS OWN HEADROOM ──────────
@@ -39,6 +40,46 @@ import { BALLOON, ReactionBalloon, ReactionTail } from '@/components/ReactionBal
  */
 const BALLOON_OVERLAP = Math.round(BALLOON * 0.45);
 const REACTION_HEADROOM = BALLOON - BALLOON_OVERLAP;
+
+/*
+ * ─── HOW FAR THE BALLOON HANGS PAST THE BUBBLE'S EDGE ───────────────
+ *
+ * The gate's measurement of the iMessage reference: the balloon GRIPS
+ * the corner rather than sitting inside it, so roughly half of it is
+ * outboard of the bubble's edge. 11 of a 30pt balloon leaves 19 over the
+ * bubble and 11 past it, which is the reference's proportion.
+ *
+ * It was `right: space.sm` — an INSET of 8, i.e. the balloon tucked
+ * fully inside the bubble's width. The sign was the bug: a corner grip
+ * is a negative offset, not a positive one.
+ */
+const BALLOON_OUTBOARD = 11;
+
+/*
+ * A balloon may hang off the bubble, never off the SCREEN. The row's own
+ * horizontal inset is `space.lg`; anything the balloon would take beyond
+ * that is given back, so the balloon can never come closer than this to
+ * the edge. On a bubble that is nowhere near the edge the clamp is
+ * inert — it only ever engages on a full-width own bubble.
+ */
+const BALLOON_SCREEN_CLAMP = 8;
+
+/*
+ * The clamp, resolved rather than checked at runtime.
+ *
+ * A bubble sits inside the row's `space.lg` inset, so the only balloon
+ * that can reach the screen edge is one anchored to the side the bubble
+ * is aligned to: an OWN bubble's right edge, or an INCOMING bubble's
+ * left edge. On that side the balloon may take the inset minus the
+ * floor; everywhere else the bubble's edge is mid-screen and the full
+ * outboard is safe.
+ *
+ *     clamped = space.lg − 8 = 8        (measured: screenGap was 6 at 11)
+ *
+ * Expressed as a function of the two constants, so changing either the
+ * inset or the floor moves this with them.
+ */
+const BALLOON_OUTBOARD_CLAMPED = Math.min(BALLOON_OUTBOARD, space.lg - BALLOON_SCREEN_CLAMP);
 import { ImageBubble } from '@/components/ImageBubble';
 import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
 import { timeOfDay } from '@/lib/time';
@@ -335,6 +376,31 @@ export function MessageBubble({
    */
   const hasReactions = reactionSummary.length > 0;
 
+  /*
+   * The anchor probe (`lib/reactionProbe.ts`). Both views measure
+   * THEMSELVES in window coordinates, which is the only frame that
+   * survives the inverted list's transform — session 20's DOM-side
+   * attempt measured in the flipped frame and reported nonsense.
+   */
+  const bubbleRef = useRef<View | null>(null);
+  const balloonRef = useRef<View | null>(null);
+  const measureAnchor = useCallback(() => {
+    if (!__DEV__ || !hasReactions) return;
+    const bubble = bubbleRef.current;
+    const balloon = balloonRef.current;
+    if (!bubble || !balloon) return;
+    bubble.measureInWindow((bx, by, bw, bh) => {
+      balloon.measureInWindow((lx, ly, lw, lh) => {
+        traceReactionAnchor({
+          label: `${own ? 'own' : 'incoming'} · ${myReactions.length > 0 ? 'mine' : 'theirs'}`,
+          bubble: { x: bx, y: by, width: bw, height: bh },
+          balloon: { x: lx, y: ly, width: lw, height: lh },
+          screenWidth: Dimensions.get('window').width,
+        });
+      });
+    });
+  }, [hasReactions, own, myReactions.length]);
+
   const attachments = message.attachments ?? [];
   const images = attachments.filter(isImageUrl);
   const others = attachments.filter((url) => !isImageUrl(url));
@@ -414,6 +480,8 @@ export function MessageBubble({
       ) : null}
 
       <Pressable
+          ref={bubbleRef}
+          onLayout={measureAnchor}
           onLongPress={onLongPress}
           /*
            * §7: 350ms, and a movement of more than 8pt cancels it.
@@ -556,8 +624,21 @@ export function MessageBubble({
             picking the side I am on.
           */}
           {theirReactions.length > 0 ? (
-            <View style={[styles.reactionCluster, styles.reactionsLeft]} pointerEvents="none">
-              <ReactionTail side="left" mine={false} />
+            <View
+              ref={balloonRef}
+              onLayout={measureAnchor}
+              style={[
+                styles.reactionCluster,
+                /* Their balloon hangs off the LEFT edge, which is the
+                   screen-adjacent one on an incoming bubble. */
+                { left: -(own ? BALLOON_OUTBOARD : BALLOON_OUTBOARD_CLAMPED) },
+              ]}
+              pointerEvents="none"
+            >
+              {/* Bubble-facing: a left-anchored balloon hangs off the
+                  bubble's LEFT edge, so the bubble is to its right and
+                  the dots descend on the balloon's lower-right. */}
+              <ReactionTail side="right" mine={false} />
               {theirReactions.map((r) => (
                 <ReactionBalloon key={r.emoji} emoji={r.emoji} count={r.count} mine={false} />
               ))}
@@ -565,8 +646,23 @@ export function MessageBubble({
           ) : null}
 
           {myReactions.length > 0 ? (
-            <View style={[styles.reactionCluster, styles.reactionsRight]} pointerEvents="none">
-              <ReactionTail side="right" mine />
+            <View
+              ref={balloonRef}
+              onLayout={measureAnchor}
+              style={[
+                styles.reactionCluster,
+                /* Mine hangs off the RIGHT edge, screen-adjacent on an
+                   own bubble. */
+                { right: -(own ? BALLOON_OUTBOARD_CLAMPED : BALLOON_OUTBOARD) },
+              ]}
+              pointerEvents="none"
+            >
+              {/* Bubble-facing: a right-anchored balloon hangs off the
+                  bubble's RIGHT edge, so the bubble is to its left and
+                  the dots descend on the balloon's lower-left. This was
+                  `side="right"`, which put them on the outer edge
+                  pointing away from the message they belong to. */}
+              <ReactionTail side="left" mine />
               {myReactions.map((r) => (
                 <ReactionBalloon key={r.emoji} emoji={r.emoji} count={r.count} mine />
               ))}
@@ -748,15 +844,25 @@ const styles = StyleSheet.create({
      construction rather than by luck. zIndex still orders the balloon
      over its OWN bubble, which is a paint decision inside one row -- it
      is no longer asked to defeat another row, which it could not do. */
+  /*
+   * `top` states the contract directly: the balloon's BOTTOM lands
+   * `BALLOON_OVERLAP` below the bubble's top edge, so
+   *
+   *     balloonBottom = bubbleTop + 14        (top = 14 − 30 = −16)
+   *
+   * which is the same 16 the row reserves above the bubble — the
+   * headroom and the grip are two readings of one number, and writing it
+   * as `overlap − BALLOON` keeps them that way if the balloon resizes.
+   */
   reactionCluster: {
     position: 'absolute',
-    top: -REACTION_HEADROOM,
+    top: BALLOON_OVERLAP - BALLOON,
     flexDirection: 'row',
     gap: 3,
     zIndex: 2,
   },
-  reactionsRight: { right: space.sm },
-  reactionsLeft: { left: space.sm },
+  /* The side offsets are applied inline, because the clamp depends on
+     which edge the bubble is aligned to — see BALLOON_OUTBOARD_CLAMPED. */
 
   images: { flexDirection: 'row', flexWrap: 'wrap', gap: 2 },
   /* 2 tiles + the gap between them. Messages' own collage is 2-up. */
