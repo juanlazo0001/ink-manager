@@ -7,7 +7,7 @@ import { ScreenShell } from '@/components/ScreenShell';
 import { NewTaskBar } from '@/components/NewTaskBar';
 import { PillMenu } from '@/components/PillMenu';
 import { PillRow } from '@/components/Pill';
-import { SegmentedControl } from '@/components/SegmentedControl';
+import { UnderlineTabs } from '@/components/UnderlineTabs';
 import { Card, SectionHeader } from '@/components/editorial';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { PersonalTaskRow, SystemTaskRow } from '@/components/TaskRow';
@@ -342,10 +342,13 @@ export default function TasksScreen() {
         {/* Only the segments this person's permissions actually earn —
             the same two keys the cards themselves are gated on. */}
         <View style={styles.segments}>
-          <SegmentedControl
+          {/* Converted with Inquiries: same job (a top-level view
+              switcher directly under the screen title), same shape, and
+              it carries no counts, so nothing is lost in the move. */}
+          <UnderlineTabs
             value={tab}
             onChange={setTab}
-            segments={[
+            tabs={[
               ...(canSeeQueue ? [{ key: 'queue' as const, label: solo ? 'Queue' : 'Studio queue' }] : []),
               { key: 'mine' as const, label: solo ? 'Personal' : 'Mine' },
               ...(canAssign ? [{ key: 'others' as const, label: 'Others' }] : []),
