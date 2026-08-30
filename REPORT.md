@@ -34633,3 +34633,200 @@ the filters, navigation, and the no-photo fallback's behaviour.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Marketing: Support Page (App Store Support URL)
+
+Marketing-site scoped. `apps/mobile`, `apps/api` and `apps/web` were read for
+sourcing and never modified.
+
+## Task A findings
+
+**Where the site lives.** `marketing/index.html` is a single self-contained
+static file — no framework, no router, no build step. "Routing" is directories:
+`privacy/index.html` and `terms/index.html`. `npm start` is
+`serve . -l tcp://0.0.0.0:${PORT:-3000} --no-clipboard` *without* `-s/--single`
+(`marketing/package.json:5`), so `serve` resolves `/privacy` → `privacy/index.html`
+on its own. A `/support` route is therefore literally a file at
+`marketing/support/index.html` — no config, no redirect rule, no new dependency.
+
+**Deploy path.** Its own Railway service, Root Directory = `marketing`, start
+command from `package.json` (`marketing/README.md:16`). **No `railway.json` or
+`nixpacks.toml` is checked in** — that configuration lives in the Railway
+dashboard, so the deploy *shape* is visible from the repo but the trigger branch
+is not. Treated as an assumption to confirm at the gate, not guessed at.
+
+Incidental observation, not acted on: `${PORT:-3000}` does not expand when npm
+runs the script through `cmd.exe` on Windows, so a local `PORT=4599 npm start`
+still binds 3000. On Railway (Linux `sh`) it expands correctly. No change made.
+
+**Design system.** Fraunces (serif) / Jura (kickers, buttons) / Outfit (body) via
+Google Fonts. Tokens at `index.html:31-43`: `--ink #0C0A08`, `--panel`,
+`--gold #C99A5B`, `--cream #F2ECE0`, `--smoke`, `--red #C2402F` — the last
+commented "micro-accents only," consistent with the standing red-as-punctuation
+rule. Dark only; no light mode. Per `marketing/README.md`, sub-pages are
+self-contained with their own inline `<style>` and a duplicated header/footer —
+no shared template, and that duplication is the convention rather than a defect.
+The support page follows it exactly rather than forking a parallel style.
+
+**What already existed.** `https://inkmanager.app/` (homepage),
+`/privacy` (platform Privacy Policy, last updated July 28 2026), `/terms`.
+**No support, help, FAQ, or contact page or route existed** — nothing to reuse
+or redirect. Pricing is an on-page anchor only (`#pricing`).
+
+## Task B — the page
+
+Live at **`https://inkmanager.app/support`** once deployed. Route resolution was
+confirmed against the real `serve` config locally: `/support` → 200 and
+`/support/` → 200, so the bare no-trailing-slash form (the string that goes into
+App Store Connect) resolves directly rather than only via a redirect.
+
+Header, a contact block above the fold, six FAQ sections, and the site footer with
+Privacy and Terms links. No contact form — no submission backend exists, and a
+`mailto:` that works beats a form that silently drops mail. Zero inert elements:
+every anchor resolves (verified below).
+
+**Everything on the page is sourced from the implementation:**
+
+| Claim | Source |
+| --- | --- |
+| Solo-artist vs. studio sign-up, 8-char password, solo studio name defaults to owner name | `apps/api/src/routes/auth.ts:389-412` |
+| Verification link valid 24 hours; resend exists | `auth.ts:26`, `auth.ts:496` |
+| Outbound texts refused without recorded consent | `apps/api/src/lib/clientSms.ts:326-330` |
+| Five consent paths (intake form, inbound text, consent link, three staff-recorded methods) and why the *method* is recorded | `apps/api/src/lib/smsConsent.ts:21-41` |
+| Consent link valid 14 days; re-issuing replaces the old one | `smsConsent.ts:19`, `smsConsent.ts:110-120` |
+| An opt-out is the client's to undo — the carrier blocks the number before the app is involved | `smsConsent.ts:78-100` |
+| Intake opt-in box is separate from the phone field | `apps/web/src/i18n/strings/en.ts:375-388` |
+| Waiver fields incl. government ID photo; template snapshotted at signing | `apps/api/prisma/schema.prisma` (`LiabilityWaiver`), `apps/api/src/routes/waivers.ts:245` |
+| Images go to a third-party image host, records to the platform DB | `apps/api/src/routes/uploads.ts:12-17`, `apps/web/src/pages/WaiverSign.tsx:132` |
+| Artists see that a waiver is signed/verified, not its contents | `apps/api/src/lib/permissions.ts:264`, `waivers.ts:347` |
+| Password reset link valid 1 hour; identical response either way | `auth.ts:24`, `auth.ts:118-157` |
+| Email change confirmed from the new address, 24h | `auth.ts:25`, `auth.ts:197` |
+
+**Omitted for lack of a reliable source — billing.** Two independent reasons, both
+disqualifying. (1) The homepage contradicts itself: `#pricing` sells
+$49 / $129 / $249 per-studio tiers with seat caps, while the CTA section on the
+same page says "Free to get started" (`index.html:661`). (2) More decisively,
+**no billing implementation exists in the product** — no `Subscription`/`Plan`
+model in `schema.prisma`, no plan-tier field, and no seat gating anywhere
+(`seatLimit`/`maxArtists`/`artistLimit` return zero hits across `apps/api` and
+`apps/web`). Stripe in this repo is `stripeConnect.ts`, i.e. *studio-side* client
+payments — deposits, gift cards, flash — not platform subscriptions. So the
+pricing table's prices, seat caps and per-tier feature gates describe nothing the
+code enforces, and any billing answer would have been invented. **Flagged as an
+open item: the pricing page needs an owner decision before it can be cited
+anywhere.**
+
+Also omitted: a response-time promise beyond "we reply as soon as we can," per
+the operator's own choice — no turnaround number is claimed.
+
+## Task C — account deletion
+
+The brief's premise ("in-app account creation and deletion are a future mobile
+iteration") is **partly outdated on web**, so the page documents the real thing:
+
+- `POST /users/me/delete-account` (`apps/api/src/routes/users.ts:279`), surfaced
+  on the Profile page (`apps/web/src/pages/Profile.tsx:352`), confirm by typing
+  `DELETE`.
+- Eligible: **any ARTIST**, and an **OWNER who is the only artist in their
+  studio** (`users.ts:295-300`) — the solo-artist case is covered.
+- Behaviour is anonymize-in-place, not a cascade delete: email replaced with a
+  synthetic `@deleted.inkmanager.invalid` address (freeing the real one for
+  reuse), password nulled, `isActive:false`, `deletedAt` stamped, every
+  outstanding token cleared; bio / specialties / portfolio / socials wiped; flash
+  pieces with no inquiry history deleted and ones with history retired; active
+  memberships ended. Studio-owned history is retained.
+
+**Flagged gaps for the operator:**
+
+1. **An owner with other staff has no self-serve path** — deliberately excluded
+   in `users.ts:295-300` as "delete my business," a materially bigger action. The
+   page routes this case to email.
+2. **No timeframe or scope for that emailed request exists anywhere in the
+   repo.** Per the brief, the page states the request path only and promises to
+   confirm what will be removed *before* anything is done — it does not invent an
+   SLA. **The operator needs to decide the actual timeframe and what a studio
+   deletion removes**, and the page should be updated once that exists.
+
+## Task D — privacy policy verdict (findings only, nothing drafted)
+
+**Exists**, at `https://inkmanager.app/privacy` (canonical draft
+`marketing/privacy-policy-platform.md`). Coverage of what the app actually
+collects is genuinely there and specific: contact details; project details and
+reference images; **government-issued ID images**, date of birth, health answers
+and signature data; **message content and delivery metadata**. Stripe and
+messaging providers are named. STOP/HELP/START keywords, retention, and deletion
+rights are covered.
+
+Four gaps, reported rather than fixed:
+
+1. **It addresses only the studio's *clients*, not the people who install the
+   app.** Opening line: "If you're a client of a Studio using Ink Manager…" The
+   app's actual users are owners and artists, whose own account data (name,
+   email, phone, avatar, credentials) is never described.
+2. **The mobile app is never mentioned** — no push tokens, though `PushToken[]`
+   exists on the user model (`schema.prisma:546`) and `lib/expoPush.ts` sends to
+   them; no device identifiers.
+3. **The image host is never named.** Intake photos, placement photos and waiver
+   ID images all go to Cloudinary (`routes/uploads.ts`, `lib/cloudinary.ts`). The
+   policy names Stripe and messaging providers specifically, so leaving the image
+   processor generic is an asymmetric omission — and ID images are the most
+   sensitive category in the list.
+4. **No deletion timeframe and no account-deletion path is stated**, which is
+   what App Store review looks for alongside account creation.
+
+Legal text is an operator/architect decision and none was drafted.
+
+## Verification
+
+- Rendered at **1440×900** and **390×844** against the real `serve` config;
+  screenshots reviewed at both, viewport and full-page.
+- **A mobile defect was found and fixed.** A fourth header nav item does not fit
+  beside the wordmark at phone width: it collided with the logo, clipped "Log In"
+  off the right edge, and made the whole page scroll sideways. The sub-page
+  header now stacks below the wordmark under 600px. Re-measured after the fix:
+  `scrollWidth - clientWidth == 0` on all three sub-pages.
+- **Every link exercised, not just inspected.** Support footer → `/privacy`;
+  privacy nav → `/support`; support footer → `/terms`; support wordmark → `/`;
+  homepage footer → `/support`; and a table-of-contents anchor click. All six
+  in-page anchors resolve to real `id`s; both images load (`naturalWidth > 0`).
+- The `mailto:` was verified in the DOM — resolved href
+  `mailto:support@inkmanager.app`, `protocol === 'mailto:'`, all three
+  occurrences identical and well-formed. Whether it launches a composer, and
+  whether that mailbox receives mail, are device/operator checks (see
+  Escalations).
+- External links checked live: `web.inkmanager.app/login` 200,
+  `web.inkmanager.app/signup` 200, `inkmanager.app/privacy` 200,
+  `inkmanager.app/terms` 200. `inkmanager.app/support` 404s until this deploys,
+  as expected. The apex (non-www) resolves directly, so the App Store Connect
+  string needs no `www.`.
+- No new dependencies; `marketing/package.json` is untouched. The marketing site
+  has no build step, so there is no build to run for it; nothing under `apps/`
+  was modified, so no app build was affected.
+
+**Retested vs. untouched.** `/privacy` and `/terms` were *modified* (a Support nav
+link, plus the same mobile header fix) and were re-rendered and re-clicked after
+the change; `/` was modified (a Support footer link) and its footer was re-checked
+at phone width for overflow. No other marketing page exists. Pre-existing and
+deliberately left alone: the homepage's own top-nav "Log In" overlapping the
+wordmark at phone width (`index.html:120` hides the other nav items but keeps
+`.nav-login`), a modified `apps/mobile/assets/images/icon.png`, an untracked
+`marketing/package-lock.json`, and an untracked
+`public/desktop/screenshots/ink-manager-portal-restyle-v3.html`.
+
+## Escalations
+
+1. **`support@inkmanager.app` must be confirmed to receive mail before this URL
+   goes into App Store Connect.** The operator selected it over two addresses
+   with evidence of being live — `hello@inkmanager.app` (receives new-signup
+   notifications, `routes/auth.ts:351`) and `juan.lazo@inkmanager.app` (already
+   published on `/privacy` and `/terms`). Apple may email the Support URL's
+   address during review, and a bounce there is worse than no page.
+2. **The pricing page is unusable as a source** — see Task B. Needs an owner
+   decision, and until then nothing should cite it.
+3. **Studio-deletion timeframe and scope are undefined** — see Task C.
+4. **The privacy policy does not cover app account holders or the mobile app** —
+   see Task D. Relevant to the same submission.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.

@@ -51,7 +51,12 @@
   footer{border-top:1px solid var(--line);padding:28px 0;}
   footer .wrap{display:flex;align-items:center;gap:16px;color:var(--smoke);font-size:.8rem;}
   footer img{height:20px;opacity:.85;}
-  @media(max-width:600px){h1{font-size:1.75rem;}header nav{gap:12px;}}
+  @media(max-width:600px){
+    h1{font-size:1.75rem;}
+    /* four nav items no longer fit beside the wordmark at phone width */
+    header .wrap{flex-direction:column;align-items:flex-start;gap:14px;}
+    header nav{gap:8px 18px;flex-wrap:wrap;}
+  }
 </style>
 </head>
 <body>
@@ -60,6 +65,7 @@
   <div class="wrap">
     <a href="/" aria-label="Ink Manager home"><img src="/assets/logo_nav.png" alt="ink. manager"/></a>
     <nav>
+      <a href="/support">Support</a>
       <a href="/privacy">Privacy</a>
       <a href="/terms">Terms</a>
       <a href="https://web.inkmanager.app/login">Log In</a>
