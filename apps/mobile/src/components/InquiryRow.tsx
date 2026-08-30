@@ -164,7 +164,31 @@ const CARD_RATIO = 3.6;
  * from 0.18 to 0.21, so bright and dark still converge, 17% less
  * tightly. Measured figures are in the session report.
  */
-const PHOTO_OPACITY = 0.21;
+/*
+ * ─── AS: ONE STEP LIGHTER AGAIN ─────────────────────────────────────
+ *
+ * 0.21 -> 0.24, the same +0.03 step AQ took, and the same lever: there
+ * is still no base scrim, so the scrim-equivalent moves 0.79 -> 0.76.
+ *
+ * MEASURED, composited pixels at 393pt (not arithmetic):
+ *
+ *                        0.21    0.24
+ *   thermostat name     12.49   11.83
+ *   thermostat desc      5.63    5.46     floor is 4.5
+ *   flat-white desc      5.28    5.14     the worst case that exists
+ *   uniformity spread    30.2    34.1     levels, bright vs dark
+ *
+ * The no-photo card does not move at all (14.1 both times), which is the
+ * control: with no photograph the opacity has nothing to composite.
+ *
+ * THE CEILING IS ~0.40, and it was measured rather than extrapolated: at
+ * 0.41 the description over the thermostat reads 4.47, just under the
+ * floor. A probe at 0.55 puts it at 3.75 and fails the NAME over white
+ * too (4.41) -- run deliberately, because a contrast check that has
+ * never failed is not evidence that it can. So 0.24 sits with real
+ * margin, and the description remains the binding constraint.
+ */
+const PHOTO_OPACITY = 0.24;
 
 /*
  * ─── THE WASH ───────────────────────────────────────────────────────
@@ -178,7 +202,9 @@ const PHOTO_OPACITY = 0.21;
  * So these stops are derived from the WCAG arithmetic for the worst
  * case — pure white behind them — and then verified by sampling real
  * composited pixels in the harness. The binding constraint is the
- * DESCRIPTION, not the name: `fgSecondary` (#c7bea9) has a relative
+ * DESCRIPTION, not the name: `fgMuted` (#9b927f, the token the style
+ * actually uses -- this block said `fgSecondary` until session AS,
+ * which was stale rather than wrong-in-kind) has a relative
  * luminance of 0.518, so 4.5:1 requires the composited ground under it
  * to sit at or below L = 0.076, which over white means at least 0.69
  * black. The name (`fg`, L = 0.842) only needs 0.58.
