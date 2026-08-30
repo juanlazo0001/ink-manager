@@ -66,7 +66,11 @@ const PERSONAS: { value: Persona; title: string; blurb: string }[] = [
   {
     value: 'SOLO',
     title: "I'm an independent artist",
-    blurb: 'Just you — your own bookings, clients, and profile.',
+    /* Web's own text, double hyphen and all. Rendering an em dash here
+       instead would be better typography and a difference between the
+       two clients -- flagged for a copy pass on BOTH rather than fixed
+       on one. */
+    blurb: 'Just you -- your own bookings, clients, and profile.',
   },
 ];
 
@@ -133,9 +137,12 @@ export default function SignupScreen() {
     key: keyof SignupDraft,
     placeholder: string,
     extra: Partial<React.ComponentProps<typeof TextInput>> = {},
+    /* Web gives the LAST field before the button `mb-6` where the others
+       get `mb-3`. Measured: web's field pitch is 58px, mine was 63. */
+    last = false,
   ) => (
     <TextInput
-      style={[styles.input, focused === key && styles.inputFocused]}
+      style={[styles.input, last && styles.inputLast, focused === key && styles.inputFocused]}
       value={draft[key] as string}
       onChangeText={(v) => set({ [key]: v } as Partial<SignupDraft>)}
       onFocus={() => setFocused(key)}
@@ -159,14 +166,19 @@ export default function SignupScreen() {
             contentContainerStyle={[styles.content, compact && styles.contentCompact]}
             keyboardShouldPersistTaps="handled"
           >
-            <Image
-              source={WORDMARK}
-              contentFit="contain"
-              style={[styles.wordmark, compact && styles.wordmarkCompact]}
-              accessibilityLabel="Ink Manager"
-            />
-
             <View style={styles.card}>
+              {/* INSIDE the card, as the first child -- web's
+                  Signup.tsx renders the logo as the first child of
+                  .login-panel-surface, and mobile's own login screen
+                  already does the same. This screen had it floating
+                  above the card, which is what made the two look
+                  unrelated. */}
+              <Image
+                source={WORDMARK}
+                contentFit="contain"
+                style={[styles.wordmark, compact && styles.wordmarkCompact]}
+                accessibilityLabel="Ink Manager"
+              />
               {step === 'persona' ? (
                 <>
                   <Text style={styles.prompt}>How will you be using Ink Manager?</Text>
@@ -178,10 +190,22 @@ export default function SignupScreen() {
                       accessibilityLabel={p.title}
                       style={({ pressed }) => [styles.persona, pressed && styles.personaPressed]}
                     >
-                      <Text style={styles.personaTitle}>{p.title}</Text>
+                      <Text style={styles.personaTitle}>{p.title.toUpperCase()}</Text>
                       <Text style={styles.personaBlurb}>{p.blurb}</Text>
                     </Pressable>
                   ))}
+
+                  {/* Web ends the persona step with this exact link. It
+                      is the counterpart to login's CREATE AN ACCOUNT --
+                      without it the two screens are a one-way door. */}
+                  <Pressable
+                    onPress={() => router.replace('/login')}
+                    accessibilityRole="link"
+                    hitSlop={8}
+                    style={({ pressed }) => [styles.quiet, pressed && styles.quietPressed]}
+                  >
+                    <Text style={styles.quietLabel}>ALREADY HAVE AN ACCOUNT? SIGN IN</Text>
+                  </Pressable>
                 </>
               ) : null}
 
@@ -200,7 +224,7 @@ export default function SignupScreen() {
                     secureTextEntry: true,
                     autoCapitalize: 'none',
                   })}
-                  {field('phone', 'Phone (optional)', { keyboardType: 'phone-pad' })}
+                  {field('phone', 'Phone (optional)', { keyboardType: 'phone-pad' }, true)}
 
                   {error ? (
                     <View style={styles.errorRow}>
@@ -295,7 +319,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.card,
     padding: space.xxl,
   },
-  prompt: { ...type.body, color: colors.fg, marginBottom: space.lg },
+  prompt: { ...type.body, color: colors.fg, marginBottom: space.lg, textAlign: 'center' },
   strong: { color: colors.accent },
 
   persona: {
@@ -307,7 +331,7 @@ const styles = StyleSheet.create({
     marginBottom: space.md,
   },
   personaPressed: { borderColor: colors.accent },
-  personaTitle: { ...type.body, color: colors.fg, marginBottom: space.xs },
+  personaTitle: { ...type.label, fontSize: 13, letterSpacing: 1.2, color: colors.fg, marginBottom: space.xs },
   personaBlurb: { ...type.small, color: colors.fgMuted },
 
   input: {
@@ -320,8 +344,9 @@ const styles = StyleSheet.create({
     fontSize: 15,
     paddingHorizontal: space.md,
     paddingVertical: space.md,
-    marginBottom: space.lg,
+    marginBottom: space.md,
   },
+  inputLast: { marginBottom: space.xl },
   inputFocused: { borderColor: colors.accent },
 
   errorRow: { flexDirection: 'row', gap: space.md, alignItems: 'stretch', marginBottom: space.lg },

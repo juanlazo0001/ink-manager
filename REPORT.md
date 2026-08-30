@@ -36851,3 +36851,82 @@ On-device: none of this ran on a phone.
 ## Database
 
 No schema change, migration or backfill. Dev writes only, all removed.
+
+# Session AU (sign-up), part 2 — mirroring web's signup screen properly
+
+Same branch, `session/au-signup`. The first pass built the right flow with
+the wrong screen: correct steps, fields, copy and endpoints, but a layout
+that did not match web. Compared side by side in Playwright, both at
+393pt, and fixed.
+
+## What was different
+
+The owner named the first two; the rest came out of the comparison.
+
+| # | web | iOS, first pass |
+| --- | --- | --- |
+| 1 | logo INSIDE the frosted card | floating above it |
+| 2 | "Already have an account? Sign in" on the persona step | absent |
+| 3 | persona titles UPPERCASE, letterspaced | sentence case |
+| 4 | prompt centred | left-aligned |
+| 5 | field pitch 58px (`mb-3`, `mb-6` before the button) | 63px (uniform 16) |
+
+**1 was mine alone.** Web puts the logo as the first child of
+`.login-panel-surface` in BOTH `Signup.tsx` and `SignInOrForgotCard.tsx`,
+and mobile's own login screen already does the same — its `<Image>` sits
+inside `styles.card`. This screen was the only one of the three that had
+it outside, which is what made the two look unrelated rather than merely
+different.
+
+**2** is `Signup.tsx:120-125`, in the persona block only; the check-email
+step has its own "Back to sign in", which mobile already had. It is the
+counterpart to the CREATE AN ACCOUNT link added to login in the first
+pass — without both, the two screens are a one-way door.
+
+**5** was measured, not eyeballed: web's inputs carry `mb-3` with `mb-6`
+on the last before the button. After the fix the pitch is **59px against
+web's 58**, down from 63.
+
+## One thing I got wrong while checking
+
+I read the persona titles as gold on iOS and cream on web, and was about
+to "fix" a colour that was already right. Sampling the brightest glyph
+pixel in each:
+
+    WEB  (156, 147, 129)
+    iOS  (155, 146, 127)
+
+The same colour. What I was seeing was the weight and antialiasing of a
+different font at a different size, not a different token. Recorded
+because the eye is not a measurement and this nearly cost a wrong change.
+
+## A copy difference left in place, deliberately
+
+Web's solo blurb reads "Just you **--** your own bookings…", a literal
+double hyphen. The first pass rendered an em dash, which is better
+typography and a difference between the clients. Now matched to web, and
+flagged as a candidate for a copy pass on BOTH rather than silently
+diverging on one.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 2.34s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+Three-up strips, web / iOS-before / iOS-after, at 393pt:
+`design-refs/session-au-signup/mirror-persona.png` and
+`mirror-details.png`.
+
+### Not verified
+
+The check-email step was not compared against web's, because reaching
+web's requires a successful signup and the signup rate limiter (5 per 15
+minutes) was already spent. Mobile's own check-email render is in
+`checkemail.png` from the first pass; its copy is taken from web's source
+verbatim.
+
+Nothing ran on a device. Login was left untouched — checked against web
+and it already matches.
