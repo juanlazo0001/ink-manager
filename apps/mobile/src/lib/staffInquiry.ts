@@ -117,3 +117,29 @@ export function artistName(inq: StaffInquiryDetail): string | null {
   const u = inq.assignedArtist?.user;
   return u ? (u.name ?? u.email) : null;
 }
+
+/**
+ * Assign (or reassign) the artist on an inquiry — a LIVE write.
+ *
+ * Web's own request, verbatim (`handleAssign`,
+ * apps/web/src/pages/InquiryDetail.tsx):
+ *
+ *     PATCH /inquiries/:id/assign      { artistId }
+ *
+ * The route returns the updated inquiry, so the caller can settle its
+ * optimistic state on the server's own answer rather than on what it
+ * guessed. Permission is `inquiries.assignArtist`, evaluated at the
+ * INQUIRY's studio — see AssignArtistSheet's note for why that matters
+ * and why the gate is the permission and never the role.
+ */
+export function assignInquiryArtist(
+  token: string,
+  inquiryId: string,
+  artistId: string,
+): Promise<StaffInquiryDetail> {
+  return apiFetch<StaffInquiryDetail>(`/inquiries/${encodeURIComponent(inquiryId)}/assign`, {
+    token,
+    method: 'PATCH',
+    body: JSON.stringify({ artistId }),
+  });
+}

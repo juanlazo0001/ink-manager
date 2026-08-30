@@ -35061,3 +35061,217 @@ both are top-level tabs.
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Session AR-2 — the note format contract, and the assignment write
+
+Branch `session/ar2-assign-notes` in its own worktree, cut from `main`
+(`f09ae90`). Mobile-only. Two live paths were in scope; **one shipped and
+is verified end to end, one is partly done** — see the closing section.
+
+## 1. The note format, which had to come first
+
+The brief allows a lighter editor "if a full rich-text editor is
+disproportionate on mobile" but requires that "the STORED format must
+match web's exactly so both clients render each other's notes". That
+sentence is the whole design, so the format got settled before any UI.
+
+### The contract is web's sanitiser, read rather than guessed
+
+`apps/web/src/lib/sanitizeHtml.ts`:
+
+    ALLOWED_TAGS = ['p','br','strong','em','u','ul','ol','li','a','h2','h3']
+    ALLOWED_ATTR = ['href','target','rel']
+
+which maps exactly onto the brief's control set — bold, italic,
+underline, heading, lists, link. Anything outside it is deleted by the
+other client's DOMPurify pass, silently.
+
+Web composes this with **TipTap (ProseMirror)**. That is not portable to
+React Native and would need a root dependency this session may not add,
+so the deviation is the EDITOR and the stored format is identical — which
+is the escape the brief itself offers.
+
+### `lib/noteHtml.ts` — a block model, not string surgery
+
+Parse to `Block[]` / `Inline[]`, serialise back. That is what makes the
+promise checkable: mobile can only ever emit tags this module knows how
+to write, and `roundTrip()` is a property a test can assert. Editing an
+HTML string in place is how two clients drift — one appends `<b>` where
+the other expects `<strong>` and nobody notices until a note renders
+wrong on the other device.
+
+Serialisation is canonical: marks nest in a fixed order
+(strong > em > u > a), so two identical documents always produce
+byte-identical HTML and a round trip cannot "change" a note nobody
+edited. `<b>`/`<i>` are accepted on the way in and normalised out.
+
+### The harness earned its place — it found a real bug
+
+16 cases, every one a shape web could actually store, asserting
+**idempotence** (parse→serialise twice changes nothing) plus a canonical
+form where one is specified.
+
+The first run failed, and the failure was not in the harness:
+
+    <p><strong>b</strong></p>   ->   ""        every word lost
+    <p>x <strong>b</strong></p> ->   fine
+
+The tag test was `/^<\/?([a-z0-9]+)/` — it matches any token that merely
+BEGINS with a tag, and the block splitter hands inline content over
+whole. So `<strong>b</strong>` was mistaken for a tag, matched no block
+name, and was skipped: **any block whose content started with a mark lost
+all of its text.** Anchored to `/^<\/?([a-z0-9]+)\b[^>]*>$/` and it
+passes. The two cases look identical by eye until one of them is empty,
+which is exactly why the assertion was idempotence rather than
+inspection.
+
+A second finding from the same run: `<script>` was being escaped to
+visible text rather than removed, so a note containing one would have
+rendered `alert(1)` as prose. `script`/`style` are now dropped WITH their
+contents, matching DOMPurify; everything else outside the set loses its
+tag and keeps its text, which is also DOMPurify's behaviour.
+
+Final: **16 passed, 0 failed, all idempotent, script stripped.**
+
+### Documented lossy case
+
+Nested lists. TipTap can produce `<ul>` inside `<li>`; this flattens to
+siblings. Flattening over dropping, because the words survive and the
+shape does not, and a note is read for its words. It only affects notes
+AUTHORED ON WEB with nesting — mobile's editor cannot create one.
+Asserted in the harness rather than left vague: `inner` survives.
+
+## 2. `NoteBody` — mobile can now READ what web writes
+
+Mobile had exactly one place touching `bodyHtml`:
+
+    note.bodyHtml.replace(/<[^>]*>/g, '')
+
+Every tag stripped. That was the right call while mobile could only read
+notes — unrenderable markup shown as markup is worse than markup shown as
+prose — and its comment said so honestly. **It stops being right the
+moment mobile can write one:** someone would bold a line, save, and get
+flat text back, and reasonably conclude the formatting had not saved. So
+the renderer came before the editor.
+
+**No sanitiser is needed, and that is structural.** `parseNoteHtml`
+reduces the string to data; everything renders React Native primitives
+from that data. There is no `dangerouslySetInnerHTML` equivalent in the
+path and no way for a tag to become behaviour. Web needs DOMPurify
+because it hands a string to the DOM; this does not.
+
+Verified across every allowed tag at 393pt
+(`design-refs/session-ar2/notes-rendered-393.png`): paragraph, bold,
+italic, underline, nested marks, h2+h3, bullet list, ordered list, two
+lists with numbering restarting, link, `<br>`, entities decoded, legacy
+`b`/`i`, and the block-starting-with-a-mark case that the parser bug ate.
+
+## 3. Assignment — LIVE, and verified in both directions
+
+    PATCH /inquiries/:id/assign      { artistId }
+
+Web's own request verbatim (`handleAssign`, `InquiryDetail.tsx`).
+
+**Gated on the PERMISSION, never the role.** The route carries no
+`requireRole`; it gates on
+`hasPermissionAt(user, inquiry.studioId, 'inquiries.assignArtist')` — at
+the RECORD's studio, not the caller's home. `DEFAULT_ROLE_PERMISSIONS`
+gives that key to FRONT_DESK and **not** to ARTIST, so an artist may not
+assign or reassign unless their studio has granted it. Web forbids it, so
+mobile forbids it. Reading the role in the client would be a second
+source of truth that can disagree with the server, since the matrix is
+studio-editable.
+
+Server truths deliberately NOT duplicated client-side (they would be a
+second source that drifts): non-terminal status only; the artist must
+belong to the inquiry's studio by home studio or active guest membership;
+a first assignment also moves status `NEW -> ARTIST_ASSIGNED`. Failures
+surface as the route's own message.
+
+**Optimistic, with a visible revert.** The card shows the new artist
+immediately; on failure the previous inquiry is restored verbatim — not
+re-fetched, which could race — and a notice appears ON THE CARD, because
+by then the sheet has closed and a message only inside it would be
+invisible. Success settles on the route's OWN response rather than the
+guess, precisely because of that server-side status transition.
+
+### Write-path evidence, against labelled dev fixtures
+
+Fixture clients are all named `QA FIXTURE …` with no real numbers. This
+path sends no client message — assignment is studio-internal — but the
+labelling is the habit.
+
+| step | observed |
+| --- | --- |
+| sheet opens, artists load | 3 fixture artists listed |
+| **failure** — pick the artist the fixture rejects (400) | sheet closed, artist line **reverted to "Unassigned"**, card shows `artistId must belong to your studio` — the route's own message, verbatim |
+| **success** — pick a valid artist | artist line `QA FIXTURE Dana Okafor`, assigned stamp populated, revert notice cleared |
+
+`assign-failure-revert.png`, `assign-success.png`.
+
+**Not exercised:** the `NEW -> ARTIST_ASSIGNED` status transition. The
+fixture returns a constant status, so the chip stayed `NEW` after a
+successful assign. The code settles on the server's response specifically
+so that transition arrives correctly — that is contract-verified from the
+route, not exercised here, and it is the one thing to watch on the device
+gate.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            ✓ built in 16.08s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+    noteHtml      round-trip harness              16/16, all idempotent
+
+### Retested vs untouched
+
+**Retested:** every note format case; both assignment outcomes.
+
+**NOT retested:** the artist-facing `inquiry/[id]` screen, whose notes
+card now renders through `NoteBody` instead of stripping — the change
+typechecks and `NoteBody` is verified in isolation, but that screen was
+not walked. 320pt was not captured for either surface this session.
+
+**Untouched:** every other screen, and all of AR-3.
+
+## What did NOT ship — the honest half
+
+The brief's AR-2 is "assignment + notes". **Assignment shipped and is
+verified. Notes shipped only as far as READING.**
+
+Still to build:
+1. **The note editor** — the block-based toolbar (bold/italic/underline,
+   h2/h3, bullet/ordered, link) producing the exact tag set. The format
+   layer it needs is done, verified, and is the hard half; the editor is
+   UI on top of a settled contract.
+2. **`POST/PATCH/DELETE /inquiries/:id/notes`** — routes exist and are
+   read, not yet called.
+3. **The "Share with assigned artist" toggle** — `visibleToArtist`, which
+   defaults false and is what gates a note into `ARTIST_INQUIRY_SELECT`.
+4. **Attachments** — `Array<{url, filename, mimeType}>`, uploaded through
+   Cloudinary's `auto/upload` (any file type), which is a different
+   endpoint from `Message.attachments`' image-only path.
+
+I stopped here rather than half-build the editor: a formatting control
+that silently emits the wrong tag is worse than no control, and the
+evidence bar for a live write is the two-state table above, which takes
+real time per path.
+
+## Findings
+
+1. **Mobile was flattening every note it displayed.** Pre-existing and
+   user-visible, fixed here as a precondition rather than as a feature.
+2. **A parser bug class that hides from inspection** — the empty and the
+   correct case look identical in code. Idempotence caught it; reading
+   would not have.
+3. **`expo start` leaves a dead port claim.** A stalled instance held
+   8106 without ever serving, and the retry refused with "Port 8106 is
+   being used" then `Skipping dev server` in non-interactive mode. Worth
+   knowing: kill the holder and move ports rather than waiting.
+
+## Database
+
+No schema change, no migration, no backfill. No production contact; all
+write testing against the scratchpad fixture.
