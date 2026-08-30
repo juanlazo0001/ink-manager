@@ -36561,3 +36561,103 @@ share were.
 
 No schema change, migration or backfill. Dev only: fixtures created and
 removed as above. **No production contact.**
+
+# Session AW — "Inquiries & Projects" becomes "Pipeline"
+
+Branch `session/aw-pipeline-rename`, cut from `main` (`6a4f04e`). Owner
+instruction: rename the destination to **Pipeline** on both clients, and
+rename the inquiry-detail **Pipeline card to Progress**. Labels only.
+
+**This branch touches `apps/web`, deliberately and on instruction.** It is
+therefore NOT eligible for the standing "auto-merge the previous mobile
+branch" rule — a later session must stop and ask, as that rule requires
+for anything outside `apps/mobile`.
+
+## What changed, and what deliberately did not
+
+Renamed — the navigation destination and the things that name it:
+
+| file | was | now |
+| --- | --- | --- |
+| `web Sidebar.tsx` | Inquiries & Projects | Pipeline |
+| `web Inquiries.tsx` h1 | Inquiries & Projects | Pipeline |
+| `web Inquiries.tsx` eyebrow | The Pipeline | Open Work |
+| `web InquiryDetail.tsx` | Back to Inquiries / Projects | Back to Pipeline |
+| `web MyProjectDetail.tsx` | Back to Inquiries & Projects | Back to Pipeline |
+| `web permissions.ts` group | Inquiries & Projects | Pipeline |
+| `mobile permissionGroups.ts` | Inquiries & Projects | Pipeline |
+| `mobile (tabs)/_layout.tsx` | INQUIRIES | PIPELINE |
+| `mobile (tabs)/inquiries.tsx` | Inquiries | Pipeline |
+
+The card, on both clients:
+
+| `web InquiryDetail.tsx` | `Widget title="Pipeline"` | `title="Progress"` |
+| `web InquiryPipeline.tsx` | its own caption "Pipeline" | "Progress" |
+| `mobile staff-inquiry/[id].tsx` | `CollapsibleSection title="Pipeline"` | "Progress" |
+
+**The eyebrow is the one piece of new copy.** It read "The Pipeline" above
+a heading that now reads "Pipeline", which would have stacked the word
+twice. Changed to "Open Work", parallel to the projects tab's existing
+"Confirmed Work". Flagged because it is the only string here that is not a
+straight substitution.
+
+### Deliberately NOT renamed
+
+* **Routes, ids, query keys.** `/inquiries`, `Widget id="pipeline"`,
+  `section: 'inquiries'`, `pageKey` values. `id="pipeline"` in particular
+  is the persisted widget-layout key — renaming it would silently reset
+  every user's saved card order.
+* **The in-page tabs "Inquiries" / "Projects".** They are sub-filters
+  within Pipeline and still distinguish two real stages. Renaming them
+  would delete the distinction rather than move it.
+* **Per-client cards and tabs called "Inquiries"** on the client detail
+  page (both clients) and in the search palette. Those list a client's own
+  inquiry records; they are not the pipeline page.
+* **`MyInquiries` / "Back to My Inquiries"** — the CLIENT-facing portal,
+  a different audience with its own vocabulary.
+* **"+ New inquiry"** — the action still creates an inquiry record.
+* Code comments mentioning the old name. Five remain, all comments.
+
+## A wrong turn, corrected
+
+The first pass renamed `InquiryPipeline.tsx`'s internal caption and
+assumed that was the card heading. It is not: the visible heading comes
+from `<Widget key="pipeline" id="pipeline" title="Pipeline">` in
+`InquiryDetail.tsx`. Caught by loading the page and finding NEITHER
+"Progress" nor "PIPELINE" in the rendered text — the internal caption is
+suppressed there by `hideLabel`. Both are renamed now; the component
+caption still shows in the other places it is used, so it wanted the same
+word anyway.
+
+Worth recording because a grep-driven rename would have shipped believing
+the card was done.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 13.10s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+Loaded in a browser against the dev API rather than trusted to grep.
+
+**Web:** sidebar reads Pipeline, heading reads Pipeline, eyebrow reads
+OPEN WORK, the inner Inquiries/Projects tabs survive, the detail page's
+back link reads "Back to Pipeline" and its first card reads PROGRESS.
+`design-refs/session-aw/`.
+
+**Mobile:** the staff inquiry screen renders "Progress" and no longer
+renders "Pipeline" anywhere — checked in the rendered text, not the
+source.
+
+**NOT visually verified on mobile: the tab-bar label and the list screen
+title.** Both are literal props (`title: 'PIPELINE'` on the Tabs.Screen,
+`title="Pipeline"` on the list's ScreenTitle) and both are behind a login
+the web harness cannot pass — expo-secure-store has no web
+implementation. The device gate shows them immediately.
+
+## Database
+
+No schema change, migration or backfill. No writes of any kind — this
+session only read. No production contact.

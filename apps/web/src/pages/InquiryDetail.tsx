@@ -1944,7 +1944,7 @@ export default function InquiryDetail() {
             className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg"
           >
             <ArrowLeftIcon className="h-4 w-4" />
-            Back to {isConverted ? 'Projects' : 'Inquiries'}
+            Back to Pipeline
           </Link>
 
           {error && (
@@ -2233,7 +2233,7 @@ export default function InquiryDetail() {
               </div>
 
               <ReorderableWidgetList pageKey="inquiry-detail" defaultOrder={INQUIRY_WIDGET_ORDER}>
-              <Widget key="pipeline" id="pipeline" title="Pipeline">
+              <Widget key="pipeline" id="pipeline" title="Progress">
                 {isConverted ? (
                   <>
                     <InquiryPipeline

@@ -19,7 +19,7 @@ export interface PermissionGroup {
 
 export const PERMISSION_GROUPS: PermissionGroup[] = [
   {
-    label: 'Inquiries & Projects',
+    label: 'Pipeline',
     keys: [
       { key: 'inquiries.view', label: 'View inquiries & projects', description: 'See the inquiries/projects list and detail pages.' },
       { key: 'inquiries.create', label: 'Log a new inquiry', description: 'Record a walk-in or phone-call inquiry on a client’s behalf.' },

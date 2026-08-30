@@ -712,7 +712,7 @@ export default function StaffInquiryScreen() {
             </QuickActionRow>
           </Card>
 
-          <CollapsibleSection title="Pipeline" open={!!open.pipeline} onToggle={() => toggle('pipeline')}>
+          <CollapsibleSection title="Progress" open={!!open.pipeline} onToggle={() => toggle('pipeline')}>
             {pipelineStages(inquiry).map((stage) => (
               <View key={stage.key} style={styles.stage}>
                 <Feather

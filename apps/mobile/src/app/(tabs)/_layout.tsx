@@ -80,7 +80,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="inquiries"
         options={{
-          title: 'INQUIRIES',
+          title: 'PIPELINE',
           tabBarIcon: ({ color, size }) => <DocumentIcon size={size - 2} color={color} />,
         }}
       />

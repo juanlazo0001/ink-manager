@@ -108,7 +108,7 @@ export default function InquiryPipeline({
   if (isCandidacyReview) {
     return (
       <div className={className}>
-        {!hideLabel && <p className={isEditorial ? "font-jura text-[10px] font-semibold uppercase tracking-[0.3em] text-fg-muted" : "text-xs font-semibold uppercase tracking-wider text-fg-muted"}>Pipeline</p>}
+        {!hideLabel && <p className={isEditorial ? "font-jura text-[10px] font-semibold uppercase tracking-[0.3em] text-fg-muted" : "text-xs font-semibold uppercase tracking-wider text-fg-muted"}>Progress</p>}
         <div className={`flex items-center gap-2 ${hideLabel ? '' : 'mt-2'}`}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-warning" />
           <span className="text-sm font-semibold text-fg">Awaiting candidacy review</span>
@@ -120,7 +120,7 @@ export default function InquiryPipeline({
   if (isClosed) {
     return (
       <div className={className}>
-        {!hideLabel && <p className={isEditorial ? "font-jura text-[10px] font-semibold uppercase tracking-[0.3em] text-fg-muted" : "text-xs font-semibold uppercase tracking-wider text-fg-muted"}>Pipeline</p>}
+        {!hideLabel && <p className={isEditorial ? "font-jura text-[10px] font-semibold uppercase tracking-[0.3em] text-fg-muted" : "text-xs font-semibold uppercase tracking-wider text-fg-muted"}>Progress</p>}
         <div className={`flex items-center gap-2 ${hideLabel ? '' : 'mt-2'}`}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-neutral" />
           <span className="text-sm font-semibold text-fg">
@@ -205,7 +205,7 @@ export default function InquiryPipeline({
 
   const vertical = (
     <div className={className}>
-      {!hideLabel && <p className={isEditorial ? "font-jura text-[10px] font-semibold uppercase tracking-[0.3em] text-fg-muted" : "text-xs font-semibold uppercase tracking-wider text-fg-muted"}>Pipeline</p>}
+      {!hideLabel && <p className={isEditorial ? "font-jura text-[10px] font-semibold uppercase tracking-[0.3em] text-fg-muted" : "text-xs font-semibold uppercase tracking-wider text-fg-muted"}>Progress</p>}
       {stepsList}
     </div>
   )
