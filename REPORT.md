@@ -36027,3 +36027,103 @@ Script parses clean under the PowerShell AST parser.
 If `npm ci` fails now, the error names the worktree that already exists
 and gives both the finish command and the discard command, rather than
 leaving the next person to work out what state the disk is in.
+
+# Session AS — photo card wash, one step lighter
+
+Branch `session/as-photo-wash`, cut from `main` (`8c81786`, with the whole
+AR line merged — verified before starting). Mobile-only. One value.
+
+## The lever, again
+
+The brief asks to reduce "the base scrim". There still isn't one — AP
+removed it after measuring that a black scrim MULTIPLIES and therefore
+cannot converge a bright photo with a dark one at any value, and AQ
+recorded the same correction. The equivalent control is `PHOTO_OPACITY`,
+where the scrim-equivalent is `1 - PHOTO_OPACITY`:
+
+    photo opacity      0.21  ->  0.24
+    scrim-equivalent   0.79  ->  0.76      a 3.8% relative reduction
+
+The same +0.03 step AQ took, as the brief asked.
+
+## Measured, not calculated
+
+Composited pixels sampled from a real 393pt render. Ground under text is
+each row's MEDIAN across the card's inner width — never the text pixels
+themselves, because glyph antialiasing makes those unusable and session
+AO already got caught sampling glyphs instead of ground. Contrast is then
+the known token colour against that measured ground.
+
+|                    | 0.21 | 0.24 | floor |
+| --- | --- | --- | --- |
+| thermostat, name        | 12.49 | 11.83 | 4.5 |
+| thermostat, description |  5.63 |  5.46 | 4.5 |
+| flat white, name        | 11.05 | 10.38 | 4.5 |
+| flat white, description |  5.28 |  5.14 | 4.5 |
+| uniformity spread       |  30.2 |  34.1 | — |
+
+Both required floors hold with margin, so the brief's fallback ("stop at
+the lightest value that does") never engaged.
+
+**Uniformity**, bright vs dark source, photo band mean level:
+
+    0.21    bright 50.4    dark 20.2    spread 30.2
+    0.24    bright 55.1    dark 20.9    spread 34.1
+
+Convergence is preserved and 13% looser, the same behaviour in kind as
+AQ's own step and for the same reason: the compression factor is the
+opacity itself.
+
+**The no-photo card does not move** — 14.1 at both values, against
+`surfaceInset`'s known level of 14.7. That is the control, and it is also
+what validates the whole measuring pipeline: with no photograph there is
+nothing for the opacity to composite, so any movement there would mean
+the harness was measuring something other than what it claimed.
+
+## The ceiling, measured rather than extrapolated
+
+A floor that has never been crossed is not evidence that it can be, so
+two deliberate over-shoots were run:
+
+    0.41   thermostat description  4.47   -- just under the floor
+    0.55   thermostat description  3.75
+           flat-white NAME         4.41   -- even the name fails here
+
+So the real ceiling is **~0.40** over the thermostat fixture, and the
+shipped 0.24 sits with substantial margin. It also confirms the recorded
+claim that the DESCRIPTION is the binding constraint: at 0.55 it is at
+3.75 while the name is still at 6.15.
+
+## A stale comment corrected
+
+The wash rationale said the binding text was `fgSecondary` (#c7bea9,
+relative luminance 0.518). The style has used `colors.fgMuted` (#9b927f)
+since AQ; the block was never updated. Corrected in place, and the
+arithmetic in this session used the token the component actually renders.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 12.80s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+Preview strip for bright / dark / no-photo / flat-white, before and after:
+`design-refs/session-as/strip-before-after.png`. Final render:
+`design-refs/session-as/after-393.png`.
+
+The shipped value was re-rendered and re-measured after restoring it from
+the probes, and reproduced the 0.24 column exactly — so the numbers above
+describe the committed code and not a stale build.
+
+### Not verified
+
+On-device appearance. Every figure here is from the web harness at 393pt;
+the owner's phone is what decides whether the step reads right, and this
+is a purely perceptual change.
+
+## Database
+
+No schema change, no migration, no backfill. No network writes of any
+kind — the fixture serves synthetic images from localhost.
