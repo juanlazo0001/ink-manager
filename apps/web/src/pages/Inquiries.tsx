@@ -700,7 +700,7 @@ export default function Inquiries() {
 
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              {isEditorial && <Eyebrow>{activeTab === 'projects' ? 'Confirmed Work' : 'The Pipeline'}</Eyebrow>}
+              {isEditorial && <Eyebrow>{activeTab === 'projects' ? 'Confirmed Work' : 'Open Work'}</Eyebrow>}
               <h1
                 className={
                   isEditorial
@@ -708,7 +708,7 @@ export default function Inquiries() {
                     : 'text-2xl font-bold text-fg sm:text-3xl'
                 }
               >
-                Inquiries &amp; Projects
+                Pipeline
               </h1>
               <p className="mt-1 text-sm text-fg-secondary">
                 {activeTab === 'projects'

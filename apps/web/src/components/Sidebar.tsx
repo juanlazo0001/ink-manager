@@ -37,7 +37,7 @@ interface NavItem {
 // to the top-bar personal cluster / account menu.
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', to: '/dashboard', icon: DashboardIcon },
-  { label: 'Inquiries & Projects', to: '/inquiries', icon: DocumentIcon, roles: ['OWNER', 'FRONT_DESK'], section: 'inquiries' },
+  { label: 'Pipeline', to: '/inquiries', icon: DocumentIcon, roles: ['OWNER', 'FRONT_DESK'], section: 'inquiries' },
   { label: 'My Inquiries', to: '/my-inquiries', icon: DocumentIcon, roles: ['ARTIST'], section: 'inquiries' },
   { label: 'Calendar', to: '/calendar', icon: AppointmentsIcon, section: 'appointments' },
   // ARTIST has no clients.view permission by default -- the API 403s the

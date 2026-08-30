@@ -251,7 +251,7 @@ export default function MyProjectDetail() {
   // real Inquiries & Projects page instead, or "back" would just bounce
   // them again.
   const backTo = user?.role === 'OWNER' ? '/inquiries' : '/my-inquiries'
-  const backLabel = user?.role === 'OWNER' ? 'Back to Inquiries & Projects' : 'Back to My Inquiries'
+  const backLabel = user?.role === 'OWNER' ? 'Back to Pipeline' : 'Back to My Inquiries'
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-6 sm:px-10 sm:py-8">

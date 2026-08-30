@@ -194,7 +194,7 @@ export default function InquiriesScreen() {
         route itself checks inline.
       */}
       <ScreenTitle
-        title="Inquiries"
+        title="Pipeline"
         counts={
           items === null
             ? null
