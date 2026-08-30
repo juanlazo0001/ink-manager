@@ -36340,3 +36340,40 @@ disagree with the numbers in EITHER direction.
 
 No schema change, migration or backfill. Read-only queries against dev to
 establish the reference-image distribution above; nothing written.
+
+# Marketing: Support Page — post-deploy addendum
+
+Two things resolved after the section above was written, once the page was live.
+
+**The deploy trigger is confirmed, no longer an assumption.** Task A above flagged
+that no `railway.json` is checked in, so the marketing service's trigger branch was
+not visible from the repo. It is now demonstrated: a push to `main` (`a93bfca`)
+redeployed the marketing service on its own, with the change visible live inside
+roughly 40 seconds. Railway auto-deploys `marketing/` from `main`.
+
+**`www.inkmanager.app` serves nothing, and has not for some time.** Every path on
+that host returns 404 — `/`, `/privacy`, `/terms`, `/support` alike — while the
+apex serves all of them 200. The 404 is a **Railway edge 404, not the application
+404**: `Content-Type: application/json` with `Cache-Control: public, max-age=5`,
+i.e. no service is mapped to that hostname. Per the standing rule about edge-vs-app
+404s, this is "unreachable host," not "page missing."
+
+Consequences, one fixed and two left for the owner:
+
+1. **Fixed.** `marketing/support/index.html` had inherited the `www` canonical from
+   `privacy/` and `terms/`, so it pointed crawlers at a dead host — and at a
+   different host than the URL going into App Store Connect. It now points at the
+   apex, matching `index.html`, with the reasoning inline (`a93bfca`). Verified
+   live after redeploy.
+2. **Open.** `privacy/index.html:9` and `terms/index.html:9` still carry
+   `https://www.inkmanager.app/...` canonicals aimed at that dead host. Left
+   untouched deliberately: the fix depends on whether `www` is *supposed* to be
+   mapped at Railway (in which case the DNS/domain config is the bug) or whether
+   the tags are simply stale. That is an owner decision and not one to guess at
+   from the repo.
+3. **Open.** `marketing/README.md:3` still describes the site as
+   "served at https://inkmanager.app (canonical: www.inkmanager.app)". The
+   parenthetical is false today. Same decision governs it.
+
+None of this blocks the App Store submission: the string
+`https://inkmanager.app/support` is live and correct.
