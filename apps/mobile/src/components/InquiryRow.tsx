@@ -188,7 +188,35 @@ const CARD_RATIO = 3.6;
  * never failed is not evidence that it can. So 0.24 sits with real
  * margin, and the description remains the binding constraint.
  */
-const PHOTO_OPACITY = 0.24;
+/*
+ * ─── AT: ONE STEP LIGHTER AGAIN, AND PROBABLY THE LAST ──────────────
+ *
+ * 0.24 -> 0.27, the same +0.03 step as AQ and AS.
+ *
+ *                        0.24    0.27    floor
+ *   thermostat name     11.83   11.18      4.5
+ *   thermostat desc      5.46    5.28      4.5
+ *   flat-white desc      5.14    4.90      4.5
+ *   uniformity spread    34.1    38.6        -
+ *
+ * WHICH CONSTRAINT NOW BINDS HAS CHANGED, and that is the thing worth
+ * knowing here. AS measured the ceiling over the THERMOSTAT fixture at
+ * ~0.40. But the flat-white case -- the worst case the wash's arithmetic
+ * was originally derived against, and the one a client photographing a
+ * sheet of paper actually produces -- is falling roughly 0.24 per step
+ * and reaches 4.5 at about 0.32.
+ *
+ * So there is approximately ONE more step of this size before the
+ * absolute worst case loses the floor, and it will be flat white that
+ * fails first, not the thermostat. A fourth step needs either a
+ * measurement showing flat white still holds, or a decision that the
+ * thermostat is the real-world bound and pure white is not.
+ *
+ * Uniformity keeps loosening as designed -- the compression factor IS
+ * the opacity -- and the no-photo card stays at 14.1 throughout, which
+ * is the control that proves the harness is measuring compositing.
+ */
+const PHOTO_OPACITY = 0.27;
 
 /*
  * ─── THE WASH ───────────────────────────────────────────────────────

@@ -36127,3 +36127,97 @@ is a purely perceptual change.
 
 No schema change, no migration, no backfill. No network writes of any
 kind — the fixture serves synthetic images from localhost.
+
+# Session AT — photo card wash, a third step lighter
+
+Branch `session/at-photo-wash`, cut from `main` (`58ff3b8`, with AS
+merged). Mobile-only. One value, same lever and same method as AS.
+
+## The step
+
+    photo opacity      0.24  ->  0.27
+    scrim-equivalent   0.76  ->  0.73      a 3.9% relative reduction
+
+The same +0.03 increment as AQ and AS.
+
+## Measured
+
+Composited pixels from a real 393pt render, ground taken as each row's
+median across the card's inner width. The 0.24 column was re-measured
+from scratch in this worktree before changing anything, and reproduced
+AS's published figures exactly — so the two columns are comparable rather
+than one being quoted from a previous session.
+
+|                    | 0.24 | 0.27 | floor |
+| --- | --- | --- | --- |
+| thermostat, name        | 11.83 | 11.18 | 4.5 |
+| thermostat, description |  5.46 |  5.28 | 4.5 |
+| flat white, name        | 10.38 |  9.48 | 4.5 |
+| flat white, description |  5.14 |  4.90 | 4.5 |
+| uniformity spread       |  34.1 |  38.6 | — |
+
+Both required floors hold. The brief's fallback did not engage.
+
+**Uniformity**, photo band mean level:
+
+    0.24   bright 55.1   dark 20.9   spread 34.1
+    0.27   bright 60.4   dark 21.8   spread 38.6
+
+Still converging, and loosening at the same rate as before — the
+compression factor is the opacity itself, so this is arithmetic rather
+than a surprise.
+
+**The no-photo card stays at 14.1** across every value measured in AS and
+AT. That is the control: with no photograph there is nothing for the
+opacity to composite, so any movement there would mean the harness was
+reading something other than what it claims.
+
+## The binding constraint has changed hands
+
+This is the finding, and it is what a next step needs to know.
+
+AS measured the ceiling at **~0.40**, over the thermostat fixture. That
+is still true. But the FLAT WHITE case — the worst case AP originally
+derived the wash's arithmetic against, and what a client photographing a
+sheet of paper or a bright stencil actually produces — is falling about
+0.24 per step:
+
+    0.21   5.28
+    0.24   5.14
+    0.27   4.90      <- shipped here
+    ~0.32  4.5       <- extrapolated, NOT measured
+
+So there is roughly **one more step of this size** before the absolute
+worst case loses the floor, and **flat white will fail before the
+thermostat does** — the reverse of the ordering AS reported, because AS
+was measuring the ceiling against the thermostat only.
+
+A fourth step therefore needs one of two things first: a measurement
+showing flat white still holds at that value, or an explicit decision
+that the thermostat is the real-world bound and pure white is not a case
+worth protecting. That is an owner call about what a client photograph
+can be, not an implementation detail.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 14.24s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+Preview strip, bright / dark / no-photo / flat-white, before and after:
+`design-refs/session-at/strip-before-after.png`. Final render:
+`design-refs/session-at/after-393.png`.
+
+### Not verified
+
+On-device appearance — every figure is from the web harness at 393pt, and
+this is a purely perceptual change. Also not measured: the ~0.32
+flat-white crossing above, which is a two-point extrapolation and is
+labelled as one.
+
+## Database
+
+No schema change, no migration, no backfill. No network writes; the
+fixture serves synthetic images from localhost.
