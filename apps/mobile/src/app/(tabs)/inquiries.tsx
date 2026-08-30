@@ -8,7 +8,7 @@ import { countLine, ScreenTitle, TitleAction } from '@/components/ScreenTitle';
 import { PlusIcon } from '@/components/icons';
 import { InquiryRow, type InquiryRowData } from '@/components/InquiryRow';
 import { TopBar } from '@/components/TopBar';
-import { SegmentedControl } from '@/components/SegmentedControl';
+import { UnderlineTabs } from '@/components/UnderlineTabs';
 import { SkeletonList } from '@/components/Skeleton';
 import { Appear } from '@/components/Appear';
 import { StateMessage } from '@/components/ui';
@@ -238,8 +238,15 @@ export default function InquiriesScreen() {
         copy of the same two numbers, 40px away, and they were the copy
         that could not fit.
       */}
-      <SegmentedControl
-        segments={INQUIRY_TABS.map((v) => ({ key: v.key, label: v.label.toUpperCase() }))}
+      {/*
+        Underline tabs, per design-refs/session-ar/tabs-target.png. Two
+        things went with the pills: the counts (the sub-header directly
+        above already says "24 inquiries · 18 projects" — they were a
+        second copy of the same numbers) and the `.toUpperCase()`, since
+        the target sets these in sentence case.
+      */}
+      <UnderlineTabs
+        tabs={INQUIRY_TABS.map((v) => ({ key: v.key, label: v.label }))}
         value={view}
         onChange={setView}
       />

@@ -34830,3 +34830,234 @@ wordmark at phone width (`index.html:120` hides the other nav items but keeps
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Session AR-1 — underline tabs, and the investigation AR-2/AR-3 need
+
+Branch `session/ar1-tabs-detail` in its own worktree, cut from `main`
+(`c012952`). Mobile-only. **No writes** — that was the point of the
+split.
+
+AR was scoped as one session covering a tabs redesign plus a full
+inquiry-detail rebuild with eleven sub-items and five live write paths.
+It was split, on the owner's agreement, into AR-1 (tabs + read-only
+detail), AR-2 (assignment + notes) and AR-3 (estimate + booking). This is
+AR-1.
+
+**Delivered: item 1 in full.** Items 2a/2b/2f still wait on
+`design-refs/session-ar/web-inquiry-detail.jpeg`, which is not on disk —
+`tabs-target.png` arrived, that reference did not. The investigation
+those items depend on is done and recorded below, so the build is a
+short session once the screenshot lands.
+
+## 1. Underline tabs
+
+### Measured off the target, not eyeballed
+
+`design-refs/session-ar/tabs-target.png`, sampled:
+
+| | measured | taken as |
+| --- | --- | --- |
+| gold bar | y 143–148, 6px, rgb(190,156,105) | 2pt, `colors.accent` (#c99a5b) |
+| hairline | y 149–151, 3px, rgb(55,48,35) | `hairline` token, `colors.border` |
+| active label | near-white | `colors.fg` |
+| inactive label | rgb(151,145,133) | `colors.fgMuted` (#9b927f) |
+
+**The detail that makes it a tab rather than an underlined word:** the
+bar is the TAB's width, not the label's. Measured, it spans x 72–325
+(254px) while the glyphs span 123–275 (152px) — it runs under the tab's
+padding, ~15pt either side.
+
+### The one calibration, and why it is padding rather than type
+
+First render came out at a bar:label ratio of **1.53** against the
+target's **1.66**. Padding was not the cause — mine measured 16.5px
+against the target's ~15pt, effectively identical. The difference is that
+this build sets the tab label larger than the reference does: the
+target's type reads ~12.5pt if its crop is a 393pt screen.
+
+I did not move the type down to 12.5pt. The crop's absolute scale is not
+certain enough to justify it, 12.5pt is small for a primary tab on a
+phone, and it would break step with the repo's own type scale. The RATIO
+is scale-independent and certain, so that is what was matched — padding
+16 → 20:
+
+    after: bar 103px / label 62px = 1.66     target 1.66     delta 0.001
+
+Recorded so a later session with a known-scale reference can revisit the
+type instead of the padding.
+
+### Two deliberate removals
+
+**Counts are gone.** The pill row carried them; the screen's own
+sub-header directly above already says "24 inquiries · 18 projects", so
+the badges were a second copy of the same two numbers 40px away. The
+target has none either. Per the brief, counts stay in the ScreenTitle
+sub-header.
+
+**`.toUpperCase()` is gone.** The pill call site uppercased its labels;
+the target is sentence case.
+
+### Inventory of pill-as-view-switcher spots
+
+Four `SegmentedControl` call sites:
+
+| site | verdict | reason |
+| --- | --- | --- |
+| `(tabs)/inquiries.tsx` | **converted** | the brief's own target |
+| `tasks.tsx` | **converted** | same job, same position under the screen title, and it carries no counts, so nothing is lost in the move |
+| `(tabs)/team.tsx` — roster | **tabled** | structurally the closest remaining match, but its segments carry counts (Staff 12 / Artists 8) and Team has no sub-header line to move them to. Converting would either lose the counts or require redesigning that screen's header, which is past "convert clear matches" |
+| `(tabs)/team.tsx` — permissions | **tabled** | not a view switcher. It picks WHICH ROLE the matrix below is showing — a parameter selector nested inside a panel, where a pill is the right affordance |
+
+`SegmentedControl` and `Pill` both stay for the two tabled sites.
+
+### Verified
+
+Rendered at 393 and 320, five cases: active-first, active-second, three
+tabs, an overflow set, and a single tab (renders nothing, by design).
+
+- 393: bar/label ratio 1.66, matching the target to 0.001
+- 320: `bodyScrollsHorizontally: false`. The Tasks set (Studio queue /
+  Mine / Others) overflows its 288pt row by 26px and **scrolls** — the
+  designed degradation, and the same behaviour the pill row had, since
+  that was a horizontal ScrollView too. Worth knowing that the 20pt
+  padding makes it start scrolling slightly earlier than the pills did.
+
+`design-refs/session-ar/tabs-target-vs-after.png` is the comparison.
+
+## 2. Investigation for AR-2 and AR-3
+
+Read-only, from source. Nothing here was built.
+
+### (d) The estimate send dispatches a real client message — the safety item
+
+`POST /inquiries/:id/send-estimate` → `lib/estimates.ts`'s
+`generateAndSendEstimate`, which:
+
+1. mints a 32-byte `estimateToken` with `ESTIMATE_TOKEN_TTL_DAYS`
+2. sets status → `AWAITING_CLIENT_RESPONSE`
+3. shortens `${PUBLIC_APP_URL}/estimate/${token}`
+4. **dispatches to the client** — `sendClientSms` by default, or
+   `sendClientEmail` when `channel: 'EMAIL'` — with
+   `logAttemptEvenOnFailure: true`
+
+So "send estimate" is an outbound message to a person, not a state
+change, and there is no dry-run path. AR-3 must test only against a dev
+fixture client with a non-real number; a mistyped inquiry id texts a
+stranger. Gate: `inquiries.sendEstimate`, evaluated via `hasPermissionAt`
+at the INQUIRY's own studio.
+
+**`POST /:id/revise-estimate` is a different route with different rules**
+— `requireRole(OWNER, FRONT_DESK)` regardless of the permission matrix,
+its own revision token, and a staff-typed reason. Its own comment
+explains why: `PATCH /:id` hard-blocks estimate fields once an inquiry
+converts to a Project, "specifically so a number the client already paid
+a deposit against can't be silently rewritten."
+
+### (c) Assignment
+
+`PATCH /inquiries/:id/assign`, body `{ artistId }`. No `requireRole` —
+gated purely on `hasPermissionAt(user, inquiry.studioId,
+'inquiries.assignArtist')`, i.e. **at the record's studio, not the
+caller's home**. Also enforces: non-terminal status only; the artist must
+belong to the inquiry's studio by HOME studio **or active guest
+membership**; and a first assignment (status `NEW`) additionally moves
+status → `ARTIST_ASSIGNED` while a reassignment does not.
+
+### (k) Role gating — the answer to the brief's ARTIST question
+
+From `DEFAULT_ROLE_PERMISSIONS`:
+
+| key | ARTIST | FRONT_DESK |
+| --- | --- | --- |
+| total keys | 11 | 40 |
+| `inquiries.assignArtist` | **no** | yes |
+| `inquiries.sendEstimate` | **no** | yes |
+| `inquiries.enterEstimate` | yes | yes |
+| `inquiries.artistSendEstimate` | yes | — |
+
+So by default an ARTIST may **not** assign, reassign, or send the studio
+estimate; they may enter an estimate on their own assigned inquiry. Web
+forbids it, so mobile forbids it.
+
+**Gate on the PERMISSION, never the role.** These are studio-configurable
+through the matrix, and the route itself has no `requireRole` to fall
+back on. (This repo's notes already record dev-studio carrying surprise
+ARTIST overrides from unrelated sessions — worth checking
+`RolePermission` before trusting a live check there.)
+
+### (g) Intake details are a TWO-SOURCE merge, not a config lookup
+
+The brief asks how web sources the field configuration. It is subtler
+than either "hardcoded" or "fetch the config":
+
+`InquiryDetailsSection.tsx` fetches `GET /intake-forms/{formId}/fields`
+→ `LiveIntakeField[]`, then walks those fields **in their configured
+order**:
+
+- `fieldKind: SYSTEM` → `systemFieldValue(field.systemFieldKey, inquiry)`,
+  read off the inquiry's own columns
+- `fieldKind: CUSTOM` → `inquiry.customFieldAnswers[field.id]`, skipped
+  when absent
+- `field.label` overrides the default display label either way
+
+Then a **second, orphan pass**: any `customFieldAnswers` entry whose id
+is not in the live custom set is still rendered, labelled from the
+snapshot's own `answer.question`. That is how answers survive a studio
+deleting the field afterwards.
+
+`customFieldAnswers` is therefore self-describing —
+`Record<id, { question, type, answer }>` — and the schema comment is
+explicit that snapshots "keep their own originally-captured type tag and
+render from that, never this live value". `formatCustomAnswer` handles
+arrays (comma-joined), `YES_NO` **and** legacy lowercase `yes_no` (both
+spellings, so old and new snapshots render identically), and empty →
+"Not provided".
+
+**Open for AR-2:** where `formId` comes from on the inquiry payload — not
+yet traced.
+
+### (i) Activity history
+
+Already solved. Session AN built `ActivityHistory` against
+`GET /audit?entityType=&entityId=`, and mounting it here is
+`entityType="Inquiry"`. AN's finding stands and applies: that route
+scopes by the CALLER's JWT `studioId`, not the record's, so a guest
+artist sees an empty feed for a legitimate record.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            ✓ built in 16.41s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+    worktree      npm ci (by scripts/new-session.ps1)
+
+### Retested vs untouched
+
+**Retested:** the five tab cases at 393 and 320, the bar/label ratio
+before and after the padding change.
+
+**NOT retested:** Inquiries and Tasks in situ with real data — the
+preview mounts `UnderlineTabs` directly. The call-site change is a
+component swap with the same value/onChange contract and it typechecks,
+but the screens were not walked. Device-gate item, and cheap to check:
+both are top-level tabs.
+
+**Untouched:** `SegmentedControl`, `Pill`, and the two Team call sites.
+
+## Findings
+
+1. **`web-inquiry-detail.jpeg` is still missing**, so items 2a/2b/2f are
+   unbuilt. The content spec can largely be read from
+   `apps/web/src/pages/InquiryDetail.tsx`, but the layout parity the
+   brief asks for needs the screenshot.
+2. **Estimate send is a live outbound client message** with no dry-run
+   path — the single most dangerous write in the AR set, and the reason
+   AR-3 is its own session.
+3. **`GET /audit` scoping** (carried from AN) will affect the activity
+   card here exactly as it does on the client page.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
