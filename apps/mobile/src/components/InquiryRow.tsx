@@ -188,7 +188,35 @@ const CARD_RATIO = 3.6;
  * never failed is not evidence that it can. So 0.24 sits with real
  * margin, and the description remains the binding constraint.
  */
-const PHOTO_OPACITY = 0.24;
+/*
+ * ─── AT: ONE STEP LIGHTER AGAIN, AND PROBABLY THE LAST ──────────────
+ *
+ * 0.24 -> 0.27, the same +0.03 step as AQ and AS.
+ *
+ *                        0.24    0.27    floor
+ *   thermostat name     11.83   11.18      4.5
+ *   thermostat desc      5.46    5.28      4.5
+ *   flat-white desc      5.14    4.90      4.5
+ *   uniformity spread    34.1    38.6        -
+ *
+ * WHICH CONSTRAINT NOW BINDS HAS CHANGED, and that is the thing worth
+ * knowing here. AS measured the ceiling over the THERMOSTAT fixture at
+ * ~0.40. But the flat-white case -- the worst case the wash's arithmetic
+ * was originally derived against, and the one a client photographing a
+ * sheet of paper actually produces -- is falling roughly 0.24 per step
+ * and reaches 4.5 at about 0.32.
+ *
+ * So there is approximately ONE more step of this size before the
+ * absolute worst case loses the floor, and it will be flat white that
+ * fails first, not the thermostat. A fourth step needs either a
+ * measurement showing flat white still holds, or a decision that the
+ * thermostat is the real-world bound and pure white is not.
+ *
+ * Uniformity keeps loosening as designed -- the compression factor IS
+ * the opacity -- and the no-photo card stays at 14.1 throughout, which
+ * is the control that proves the harness is measuring compositing.
+ */
+const PHOTO_OPACITY = 0.27;
 
 /*
  * ─── THE WASH ───────────────────────────────────────────────────────
@@ -235,13 +263,77 @@ const PHOTO_OPACITY = 0.24;
  * Every number is verified by sampling composited pixels in the harness
  * rather than trusting this arithmetic — see the report's tables.
  */
-const WASH_COLORS = [
-  'rgba(0,0,0,0)', // the base scrim already holds the top
-  'rgba(0,0,0,0.10)',
-  'rgba(0,0,0,0.45)', // the name enters here
-  'rgba(0,0,0,0.72)', // the description sits in here
-] as const;
-const WASH_LOCATIONS = [0, 0.4, 0.62, 1] as const;
+/*
+ * ─── AU: THE GRADIENT IS GENERATED, NOT HAND-PLACED ─────────────────
+ *
+ * The four hand-placed stops above had a VISIBLE edge, and the cause is
+ * measurable rather than a matter of taste. Their segment slopes were:
+ *
+ *     0.00 -> 0.40   slope 0.25
+ *     0.40 -> 0.62   slope 1.59     <- a 6.4x jump
+ *     0.62 -> 1.00   slope 0.71     <- and back down again
+ *
+ * A linear gradient is piecewise linear, so each of those corners is a
+ * discontinuity in the FIRST derivative of luminance. The eye resolves
+ * that as a band (Mach banding) -- it is looking at the kink, not the
+ * darkness. Adding stops in the same shape would not help; the shape is
+ * the problem.
+ *
+ * So the stops are sampled from a smooth curve instead. `t ** CURVE` is
+ * monotone with a continuously varying slope and no corner anywhere, and
+ * sampling it at STEPS points leaves slope changes ~1/STEPS^2 of the old
+ * jump -- far below what the eye can pick out. The top stays clear
+ * because the curve starts flat, which is also what keeps the photograph
+ * readable as a photograph.
+ *
+ * PEAK owns the darkness, CURVE owns where the darkness arrives. They
+ * are separate on purpose: "too dark" and "I can see the gradient" were
+ * two different complaints and they have two different fixes.
+ */
+const WASH_PEAK = 0.72;
+/* Where darkening begins. Above this the photograph is untouched. */
+const WASH_START = 0.25;
+const WASH_STEPS = 16;
+
+/*
+ * SMOOTHSTEP, not a power curve, and the difference is the whole point.
+ *
+ * `t ** k` was tried first and it is smooth but it arrives too late: it
+ * puts its darkness at the very bottom, so the DESCRIPTION band (0.63 to
+ * 0.81 of card height) sat too light and flat white fell to 3.97:1,
+ * under the 4.5 floor. Measured, not guessed.
+ *
+ * smoothstep(3u^2 - 2u^3) has ZERO slope at both ends and a continuous
+ * derivative throughout, so it has no corner to see, and its steep part
+ * is in the MIDDLE -- which is exactly where the text is. Starting it at
+ * WASH_START keeps the top of the card, where the photograph actually
+ * reads, almost untouched.
+ *
+ * Against the old hand-placed stops, alpha at each landmark:
+ *
+ *          0.40   0.50   0.62   0.72   1.00
+ *   old    0.10   0.26   0.45   0.52   0.72
+ *   this   0.08   0.19   0.35   0.49   0.72
+ *
+ * Lighter everywhere the photograph shows, level with it where the
+ * description needs a ground, identical at the bottom edge.
+ */
+function buildWash(): { colors: string[]; locations: number[] } {
+  const colors: string[] = [];
+  const locations: number[] = [];
+  for (let i = 0; i <= WASH_STEPS; i += 1) {
+    const t = i / WASH_STEPS;
+    const u = t <= WASH_START ? 0 : (t - WASH_START) / (1 - WASH_START);
+    const eased = u * u * (3 - 2 * u);
+    colors.push(`rgba(0,0,0,${(WASH_PEAK * eased).toFixed(4)})`);
+    locations.push(t);
+  }
+  return { colors, locations };
+}
+
+const WASH = buildWash();
+const WASH_COLORS = WASH.colors as unknown as readonly [string, string, ...string[]];
+const WASH_LOCATIONS = WASH.locations as unknown as readonly [number, number, ...number[]];
 
 /**
  * The ground for a card with no reference photo.

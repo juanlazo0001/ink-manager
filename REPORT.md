@@ -36127,3 +36127,216 @@ is a purely perceptual change.
 
 No schema change, no migration, no backfill. No network writes of any
 kind — the fixture serves synthetic images from localhost.
+
+# Session AT — photo card wash, a third step lighter
+
+Branch `session/at-photo-wash`, cut from `main` (`58ff3b8`, with AS
+merged). Mobile-only. One value, same lever and same method as AS.
+
+## The step
+
+    photo opacity      0.24  ->  0.27
+    scrim-equivalent   0.76  ->  0.73      a 3.9% relative reduction
+
+The same +0.03 increment as AQ and AS.
+
+## Measured
+
+Composited pixels from a real 393pt render, ground taken as each row's
+median across the card's inner width. The 0.24 column was re-measured
+from scratch in this worktree before changing anything, and reproduced
+AS's published figures exactly — so the two columns are comparable rather
+than one being quoted from a previous session.
+
+|                    | 0.24 | 0.27 | floor |
+| --- | --- | --- | --- |
+| thermostat, name        | 11.83 | 11.18 | 4.5 |
+| thermostat, description |  5.46 |  5.28 | 4.5 |
+| flat white, name        | 10.38 |  9.48 | 4.5 |
+| flat white, description |  5.14 |  4.90 | 4.5 |
+| uniformity spread       |  34.1 |  38.6 | — |
+
+Both required floors hold. The brief's fallback did not engage.
+
+**Uniformity**, photo band mean level:
+
+    0.24   bright 55.1   dark 20.9   spread 34.1
+    0.27   bright 60.4   dark 21.8   spread 38.6
+
+Still converging, and loosening at the same rate as before — the
+compression factor is the opacity itself, so this is arithmetic rather
+than a surprise.
+
+**The no-photo card stays at 14.1** across every value measured in AS and
+AT. That is the control: with no photograph there is nothing for the
+opacity to composite, so any movement there would mean the harness was
+reading something other than what it claims.
+
+## The binding constraint has changed hands
+
+This is the finding, and it is what a next step needs to know.
+
+AS measured the ceiling at **~0.40**, over the thermostat fixture. That
+is still true. But the FLAT WHITE case — the worst case AP originally
+derived the wash's arithmetic against, and what a client photographing a
+sheet of paper or a bright stencil actually produces — is falling about
+0.24 per step:
+
+    0.21   5.28
+    0.24   5.14
+    0.27   4.90      <- shipped here
+    ~0.32  4.5       <- extrapolated, NOT measured
+
+So there is roughly **one more step of this size** before the absolute
+worst case loses the floor, and **flat white will fail before the
+thermostat does** — the reverse of the ordering AS reported, because AS
+was measuring the ceiling against the thermostat only.
+
+A fourth step therefore needs one of two things first: a measurement
+showing flat white still holds at that value, or an explicit decision
+that the thermostat is the real-world bound and pure white is not a case
+worth protecting. That is an owner call about what a client photograph
+can be, not an implementation detail.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 14.24s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+Preview strip, bright / dark / no-photo / flat-white, before and after:
+`design-refs/session-at/strip-before-after.png`. Final render:
+`design-refs/session-at/after-393.png`.
+
+### Not verified
+
+On-device appearance — every figure is from the web harness at 393pt, and
+this is a purely perceptual change. Also not measured: the ~0.32
+flat-white crossing above, which is a two-point extrapolation and is
+labelled as one.
+
+## Database
+
+No schema change, no migration, no backfill. No network writes; the
+fixture serves synthetic images from localhost.
+
+# Session AU — the gradient itself: lighter, and no longer visible
+
+On `session/at-photo-wash`, continuing the same line rather than opening a
+second one. Mobile-only.
+
+## The premise correction that started it
+
+Three sessions (AQ, AS, AT) tuned `PHOTO_OPACITY` and the owner reported
+seeing no change. The dev database explains why it looked that way — of
+150 inquiries, 86 have no reference image and 48 point at `example.com`,
+so 87% of Dev Studio's cards render with no photograph and `PHOTO_OPACITY`
+is inert for them by construction.
+
+**That is a property of the test fixtures, not the product.** The owner
+corrected it and the code agrees: `checkRequired("referenceImages", ...
+length > 0)` in `routes/inquiries.ts`, and web enforces the same. Every
+real inquiry has a photo. The dev rows are junk left by earlier sessions.
+
+Recorded because the earlier reading, taken alone, would have justified
+redesigning the card around a case that cannot occur.
+
+## What was actually wrong
+
+Two separate complaints, and they needed two separate fixes:
+
+1. too dark
+2. the gradient is visible as a gradient
+
+The second has a measurable cause. The wash was four hand-placed stops,
+and its segment slopes were:
+
+    0.00 -> 0.40   slope 0.25
+    0.40 -> 0.62   slope 1.59      a 6.4x jump
+    0.62 -> 1.00   slope 0.71      and back down
+
+A linear gradient is piecewise linear, so each of those corners is a
+discontinuity in the FIRST derivative of luminance. The eye resolves that
+as a band — Mach banding — and what it is seeing is the kink, not the
+darkness. **No amount of lightening fixes it**, which is why three
+sessions of opacity tuning did not.
+
+## The fix
+
+The stops are now sampled from a smooth curve rather than placed by hand:
+
+    WASH_PEAK  = 0.72     unchanged -- owns darkness
+    WASH_START = 0.25     above this the photograph is untouched
+    WASH_STEPS = 16
+    alpha(t)   = PEAK * smoothstep((t - START) / (1 - START))
+
+`smoothstep` (3u² − 2u³) has zero slope at both ends and a continuous
+derivative throughout, so there is no corner to see, and its steep part
+sits in the MIDDLE — which is where the text is.
+
+A power curve `t ** k` was tried first and rejected on measurement, not
+taste: it is equally smooth but arrives too late, leaving the description
+band light. Flat white fell to **3.97:1**, under the floor. That attempt
+is why `WASH_START` exists.
+
+Alpha at each landmark:
+
+|        | 0.40 | 0.50 | 0.62 | 0.72 | 1.00 |
+| --- | --- | --- | --- | --- | --- |
+| old    | 0.10 | 0.26 | 0.45 | 0.52 | 0.72 |
+| now    | 0.08 | 0.19 | 0.35 | 0.49 | 0.72 |
+
+Lighter everywhere the photograph shows, level where the description
+needs a ground, identical at the bottom edge.
+
+## Measured
+
+| | on main | proposed | floor |
+| --- | --- | --- | --- |
+| thermostat, name        | 11.18 | 10.40 | 4.5 |
+| thermostat, description |  5.28 |  5.16 | 4.5 |
+| flat white, description |  4.90 |  4.71 | 4.5 |
+| photo band, thermostat  |  60.4 |  63.4 | — |
+| photo band, flat white  |  73.6 |  77.3 | — |
+
+Both floors hold, and the card is lighter.
+
+**Smoothness** — a new metric, because darkness measurements cannot see
+this and that is precisely how it survived three sessions. The card's
+vertical median-luminance profile is differenced twice; the number is the
+largest slope CHANGE per row, so lower is smoother:
+
+    case          kink max        kink avg
+    thermostat  0.529 -> 0.396   0.100 -> 0.092
+    flat white  0.597 -> 0.500   0.101 -> 0.053
+    no-photo    0.400 -> 0.200   0.098 -> 0.036
+
+The **no-photo row is the cleanest evidence**: with no photograph there is
+no texture, so that card is the gradient and nothing else. Its worst kink
+halved and its average dropped by 63%.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 2.38s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+`design-refs/session-au/strip-before-after.png`, and the render at
+`design-refs/session-au/after-393.png`.
+
+### Not verified
+
+On-device. Mach banding is display-dependent — an OLED phone at low
+brightness shows it far more readily than a desktop LCD, so the harness
+figures are a lower bound on the improvement rather than a substitute for
+looking. This is the one change in the series where the device could
+disagree with the numbers in EITHER direction.
+
+## Database
+
+No schema change, migration or backfill. Read-only queries against dev to
+establish the reference-image distribution above; nothing written.
