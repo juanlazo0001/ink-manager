@@ -5,7 +5,9 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { AssignArtistSheet } from '@/components/AssignArtistSheet';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
-import { PersonIcon } from '@/components/icons';
+import { NoteBody } from '@/components/NoteBody';
+import { NoteEditor } from '@/components/NoteEditor';
+import { PersonIcon, PlusIcon, TrashIcon } from '@/components/icons';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { Banner } from '@/components/Banner';
 import { Card, CardEmpty, Fact } from '@/components/editorial';
@@ -19,6 +21,14 @@ import { useAuth } from '@/context/auth';
 import { stamp } from '@/lib/format';
 import { formatMoney } from '@/lib/giftCards';
 import { channelLabel } from '@/lib/inquiryDisplay';
+import {
+  canModifyNote,
+  createInquiryNote,
+  deleteInquiryNote,
+  fetchInquiryNotes,
+  updateInquiryNote,
+  type InquiryNote,
+} from '@/lib/inquiryNotes';
 import { screenErrorMessage } from '@/lib/screenError';
 import {
   artistName,
@@ -66,6 +76,11 @@ import { colors, hairline, space, type } from '@/theme';
  * page — `Card`, `CollapsibleSection`, `Fact`, `CardEmpty`, `Banner`,
  * `QuickAction` — imported, not reproduced.
  */
+/** Newest first, matching the route's own ordering. */
+function byNewest(a: InquiryNote, b: InquiryNote): number {
+  return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+}
+
 export default function StaffInquiryScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -93,6 +108,17 @@ export default function StaffInquiryScreen() {
    * would be a second source of truth that can disagree with the server.
    */
   const canAssign = (session?.profile.permissions ?? []).includes('inquiries.assignArtist');
+  /* Same rule as assignment: the PERMISSION, at the record's studio. All
+     four note routes gate on this one key. */
+  const canManageNotes = (session?.profile.permissions ?? []).includes('inquiries.notes.manage');
+
+  const [notes, setNotes] = useState<InquiryNote[] | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  /* null = composing a new note; a note = editing that one. */
+  const [editing, setEditing] = useState<InquiryNote | null>(null);
+  const [savingNote, setSavingNote] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
+  const [noteNotice, setNoteNotice] = useState<string | null>(null);
 
   /* Nine sections would be a lot to scroll past; these are seven and the
      top three are the ones an owner opens this screen for. The rest stay
@@ -138,7 +164,16 @@ export default function StaffInquiryScreen() {
         setInquiry(updated);
       } catch (err) {
         setInquiry(previous);
-        const message = screenErrorMessage(err, 'that artist could not be assigned');
+        /*
+         * A NOUN, not a clause. screenErrorMessage substitutes its
+         * second argument into its own sentences -- "Your role does not
+         * have access to ${subject}." -- so passing "that artist could
+         * not be assigned" produced "Your role does not have access to
+         * that artist could not be assigned." It only escaped the AR-2
+         * evidence because that fixture returned 400, which takes the
+         * err.message branch instead.
+         */
+        const message = screenErrorMessage(err, 'that artist');
         setAssignError(message);
         setRevertNotice(message);
       } finally {
@@ -146,6 +181,74 @@ export default function StaffInquiryScreen() {
       }
     },
     [token, id, inquiry],
+  );
+
+  const loadNotes = useCallback(async () => {
+    if (!token || !id) return;
+    try {
+      setNotes(await fetchInquiryNotes(token, id));
+    } catch {
+      /* The notes card degrades to empty rather than taking the screen
+         down with it — the inquiry itself is still perfectly readable
+         without them. */
+      setNotes([]);
+    }
+  }, [token, id]);
+
+  /*
+   * Create and update share one path, because the routes do: identical
+   * body, identical permission, and the only difference is the URL.
+   *
+   * NOT optimistic, unlike assignment, and the difference is deliberate.
+   * An assignment is one field with an obvious previous value to put
+   * back. A note is a body someone just typed; showing it as saved and
+   * then removing it would be worse than a moment's wait, and the
+   * server also normalises (`bodyHtml.trim()`) and stamps `updatedAt`,
+   * so the optimistic object would be a guess at its own content.
+   */
+  const onSaveNote = useCallback(
+    async (bodyHtml: string, visibleToArtist: boolean) => {
+      if (!token || !id) return;
+      setSavingNote(true);
+      setNoteError(null);
+      try {
+        const saved = editing
+          ? await updateInquiryNote(token, id, editing.id, { bodyHtml, visibleToArtist })
+          : await createInquiryNote(token, id, { bodyHtml, visibleToArtist });
+        setNotes((current) => {
+          const rest = (current ?? []).filter((n) => n.id !== saved.id);
+          return editing ? [...rest, saved].sort(byNewest) : [saved, ...rest].sort(byNewest);
+        });
+        setEditorOpen(false);
+        setEditing(null);
+      } catch (err) {
+        setNoteError(screenErrorMessage(err, 'that note'));
+      } finally {
+        setSavingNote(false);
+      }
+    },
+    [token, id, editing],
+  );
+
+  /*
+   * Delete IS optimistic, and reverts the same way assignment does. The
+   * row vanishes on tap because that is what the tap means; on failure
+   * it comes back in place and says why.
+   */
+  const onDeleteNote = useCallback(
+    async (note: InquiryNote) => {
+      if (!token || !id) return;
+      const previous = notes;
+      setNoteNotice(null);
+      setNotes((current) => (current ?? []).filter((n) => n.id !== note.id));
+      try {
+        await deleteInquiryNote(token, id, note.id);
+      } catch (err) {
+        setNotes(previous);
+        setNoteNotice(screenErrorMessage(err, 'that note'));
+      }
+    },
+    [token, id, notes],
   );
 
   const load = useCallback(async () => {
@@ -161,6 +264,10 @@ export default function StaffInquiryScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void loadNotes();
+  }, [loadNotes]);
 
   const clientLabel = inquiry?.client
     ? `${inquiry.client.firstName} ${inquiry.client.lastName}`
@@ -430,6 +537,92 @@ export default function StaffInquiryScreen() {
             onAssign={onAssign}
           />
 
+          {/*
+            NOTES. Staff-facing and internal: the schema's own note says a
+            note is "never shown to the client or shared with an artist"
+            unless `visibleToArtist` is set, and this card shows every
+            note regardless of that flag because the staff routes always
+            do.
+          */}
+          <CollapsibleSection
+            title="Notes"
+            open={!!open.notes}
+            onToggle={() => toggle('notes')}
+            headerActions={
+              canManageNotes ? (
+                <CardActionRow>
+                  <CardIconButton
+                    Icon={PlusIcon}
+                    label="Write a note"
+                    onPress={() => {
+                      setEditing(null);
+                      setNoteError(null);
+                      setEditorOpen(true);
+                    }}
+                  />
+                </CardActionRow>
+              ) : undefined
+            }
+          >
+            {noteNotice ? <Text style={styles.revert}>{noteNotice}</Text> : null}
+
+            {notes === null ? (
+              <CardEmpty text="Loading…" />
+            ) : notes.length === 0 ? (
+              <CardEmpty text="No notes yet." />
+            ) : (
+              notes.map((note, i) => {
+                const mine = canModifyNote(note, session?.profile ?? null);
+                return (
+                  <View key={note.id} style={i > 0 ? styles.noteFollowing : undefined}>
+                    <View style={styles.noteHead}>
+                      <Text style={styles.noteAuthor}>
+                        {(note.author?.name ?? note.author?.email ?? 'Studio').toUpperCase()}
+                      </Text>
+                      {/* The share state is visible on the note itself —
+                          whether an artist can see it is the single most
+                          consequential thing about a note. */}
+                      {note.visibleToArtist ? <Text style={styles.shared}>SHARED WITH ARTIST</Text> : null}
+                      {canManageNotes && mine ? (
+                        <View style={styles.noteActions}>
+                          <CardIconButton
+                            Icon={PersonIcon}
+                            label="Edit this note"
+                            onPress={() => {
+                              setEditing(note);
+                              setNoteError(null);
+                              setEditorOpen(true);
+                            }}
+                          />
+                          <CardIconButton
+                            Icon={TrashIcon}
+                            label="Delete this note"
+                            tone="danger"
+                            onPress={() => void onDeleteNote(note)}
+                          />
+                        </View>
+                      ) : null}
+                    </View>
+                    <NoteBody html={note.bodyHtml} />
+                  </View>
+                );
+              })
+            )}
+          </CollapsibleSection>
+
+          <NoteEditor
+            visible={editorOpen}
+            onClose={() => {
+              setEditorOpen(false);
+              setEditing(null);
+            }}
+            initialHtml={editing?.bodyHtml ?? ''}
+            initialVisibleToArtist={editing?.visibleToArtist ?? false}
+            saving={savingNote}
+            error={noteError}
+            onSave={onSaveNote}
+          />
+
           <Banner
             icon="info"
             align="top"
@@ -480,5 +673,11 @@ const styles = StyleSheet.create({
   lineMeta: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
   revert: { ...type.small, color: colors.danger, paddingTop: space.sm },
+
+  noteFollowing: { marginTop: space.lg },
+  noteHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.xs },
+  noteAuthor: { ...type.meta, color: colors.fgMuted },
+  shared: { ...type.label, fontSize: 9, color: colors.accent },
+  noteActions: { flexDirection: 'row', gap: space.xs, marginLeft: 'auto' },
   pressed: { opacity: 0.6 },
 });
