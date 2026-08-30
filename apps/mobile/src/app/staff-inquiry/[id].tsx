@@ -1,13 +1,14 @@
 import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { AssignArtistSheet } from '@/components/AssignArtistSheet';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
+import { EstimateSheet } from '@/components/EstimateSheet';
 import { NoteBody } from '@/components/NoteBody';
 import { NoteEditor } from '@/components/NoteEditor';
-import { PersonIcon, PlusIcon, TrashIcon } from '@/components/icons';
+import { PersonIcon, PlusIcon, SendIcon, TrashIcon } from '@/components/icons';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { Banner } from '@/components/Banner';
 import { Card, CardEmpty, Fact } from '@/components/editorial';
@@ -20,6 +21,13 @@ import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { stamp } from '@/lib/format';
 import { formatMoney } from '@/lib/giftCards';
+import {
+  buildSendBody,
+  draftFromInquiry,
+  sendEstimate,
+  type EstimateChannel,
+  type EstimateDraft,
+} from '@/lib/estimate';
 import { channelLabel } from '@/lib/inquiryDisplay';
 import {
   canModifyNote,
@@ -111,6 +119,22 @@ export default function StaffInquiryScreen() {
   /* Same rule as assignment: the PERMISSION, at the record's studio. All
      four note routes gate on this one key. */
   const canManageNotes = (session?.profile.permissions ?? []).includes('inquiries.notes.manage');
+
+  /*
+   * `inquiries.sendEstimate` — FRONT_DESK holds it by default, ARTIST
+   * does NOT (they have `inquiries.artistSendEstimate`, a different key
+   * for their own scoped flow on their own assigned inquiry). Gate on
+   * the permission, never the role, for the same reason as assignment:
+   * the route has no requireRole and the matrix is studio-editable.
+   */
+  const canSendEstimate = (session?.profile.permissions ?? []).includes('inquiries.sendEstimate');
+
+  const [estimateOpen, setEstimateOpen] = useState(false);
+  const [estimateDraft, setEstimateDraft] = useState<EstimateDraft | null>(null);
+  const [sendingEstimate, setSendingEstimate] = useState(false);
+  /** Synchronous in-flight guard for the send. See onSendEstimate. */
+  const sendInFlight = useRef(false);
+  const [estimateError, setEstimateError] = useState<string | null>(null);
 
   const [notes, setNotes] = useState<InquiryNote[] | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -249,6 +273,53 @@ export default function StaffInquiryScreen() {
       }
     },
     [token, id, notes],
+  );
+
+  /*
+   * SEND — and this puts a real message on a real phone. NOT optimistic,
+   * for the obvious reason: there is no local state that can stand in
+   * for "a text has left the building", and pretending otherwise would
+   * be the worst possible thing to be wrong about. The sheet's own
+   * confirmation gates the tap; this settles on the route's response,
+   * which carries the new status (AWAITING_CLIENT_RESPONSE) and the
+   * estimate URL.
+   */
+  const onSendEstimate = useCallback(
+    async (channel: EstimateChannel) => {
+      if (!token || !id || !estimateDraft) return;
+
+      /*
+       * A REF, not the state flag, and this is not belt-and-braces.
+       *
+       * The button already checks `!sending`, but setSendingEstimate is
+       * React state: two presses in the same tick both read false and
+       * both proceed. Caught in the harness, where a synthetic press
+       * dispatches pointerup AND click and fired two identical
+       * send-estimate requests -- on this endpoint that is two text
+       * messages to a client, which is the single worst thing on this
+       * screen to get wrong.
+       *
+       * A ref flips synchronously, so the second call returns before it
+       * can reach the network.
+       */
+      if (sendInFlight.current) return;
+      sendInFlight.current = true;
+
+      setSendingEstimate(true);
+      setEstimateError(null);
+      try {
+        const updated = await sendEstimate(token, id, buildSendBody(estimateDraft, channel));
+        setInquiry(updated);
+        setEstimateOpen(false);
+        setEstimateDraft(null);
+      } catch (err) {
+        setEstimateError(screenErrorMessage(err, 'this estimate'));
+      } finally {
+        sendInFlight.current = false;
+        setSendingEstimate(false);
+      }
+    },
+    [token, id, estimateDraft],
   );
 
   const load = useCallback(async () => {
@@ -403,7 +474,30 @@ export default function StaffInquiryScreen() {
             {revertNotice ? <Text style={styles.revert}>{revertNotice}</Text> : null}
           </CollapsibleSection>
 
-          <CollapsibleSection title="Estimate" open={!!open.estimate} onToggle={() => toggle('estimate')}>
+          <CollapsibleSection
+            title="Estimate"
+            open={!!open.estimate}
+            onToggle={() => toggle('estimate')}
+            headerActions={
+              canSendEstimate ? (
+                <CardActionRow>
+                  <CardIconButton
+                    Icon={SendIcon}
+                    label={inquiry.estimateSentAt ? 'Send a new estimate' : 'Compose an estimate'}
+                    onPress={() => {
+                      /* Seeded from whatever the inquiry already carries,
+                         so a resend starts from the last numbers rather
+                         than from nothing. */
+                      setEstimateDraft(draftFromInquiry(inquiry, false));
+                      setEstimateError(null);
+                      setEstimateOpen(true);
+                    }}
+                    busy={sendingEstimate}
+                  />
+                </CardActionRow>
+              ) : undefined
+            }
+          >
             {inquiry.priceEstimateLow != null && inquiry.priceEstimateHigh != null ? (
               <Fact
                 label="Price"
@@ -609,6 +703,22 @@ export default function StaffInquiryScreen() {
               })
             )}
           </CollapsibleSection>
+
+          {estimateDraft ? (
+            <EstimateSheet
+              visible={estimateOpen}
+              onClose={() => {
+                setEstimateOpen(false);
+                setEstimateDraft(null);
+              }}
+              clientName={clientLabel}
+              draft={estimateDraft}
+              onDraftChange={setEstimateDraft}
+              sending={sendingEstimate}
+              error={estimateError}
+              onSend={onSendEstimate}
+            />
+          ) : null}
 
           <NoteEditor
             visible={editorOpen}

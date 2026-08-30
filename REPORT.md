@@ -35431,3 +35431,171 @@ items 2a/2b/2f, which remain blocked on
 
 No schema change, no migration, no backfill. No production contact; all
 write testing against the scratchpad fixture.
+
+# Session AR-3 — the estimate, and its send
+
+Branch `session/ar3-estimate` in its own worktree, cut from `main`
+(`f22ade4`). Mobile-only.
+
+**Scope call, made before building:** AR-3 was briefed as estimate AND
+booking. Booking is a whole feature of its own — `handleSchedule`, a
+separate consultation flow, scheduling-conflict badges, and interactions
+with auto-booking-from-deposit — so this session is the estimate and
+booking becomes **AR-3b**, on the same logic that split AR-2. The
+estimate is also the one that dispatches to a real person, which is
+reason enough for it to have a session's full attention.
+
+## What the estimate actually is
+
+The brief guessed "line items". It is not. Web's `EstimateDraft`
+(`components/EstimateFieldsEditor.tsx`):
+
+| field | meaning |
+| --- | --- |
+| `isFlat` | one price, or a low–high range |
+| `showDurationToClient` | whether the client sees hours at all |
+| `sessionCount` | how many sittings |
+| `hoursMin/Max`, `priceLow/High` | the whole job's ranges |
+| `sessionRows[]` | the same four numbers PER SITTING, each with its own `isFlat` and `showDurationToClient` |
+
+No line items anywhere.
+
+**And with a plan, the totals are server-derived.** `lib/estimates.ts`
+sets `hasPlan = finalSessionCount > 1` and then OVERRIDES the top-level
+price with the sum of the rows. So a multi-session estimate's headline
+number is not something a client proposes — whatever it sends is
+replaced. The sheet therefore shows the total as *derived* (the number
+that will be stored) rather than as an input.
+
+## Validation, mirrored rule for rule and checked
+
+`lib/estimates.ts` enforces, per row: four numeric values; hours > 0;
+hours min ≤ max; price > 0; price low ≤ high. `lib/estimate.ts` mirrors
+each so the form refuses in place rather than bouncing off a 400 — the
+server stays the authority.
+
+A harness asserts mobile reaches the same verdict as the route on every
+case, with the dangerous asymmetry called out explicitly (a mobile
+"valid" where the route would 400 means a request goes out and fails):
+
+    15 validation cases + 6 shape assertions -> 21 passed, 0 failed
+
+including the boundaries that are easy to get backwards — `min == max`
+is VALID, zero is not — and the flat-price handling, where one price is
+sent as both ends because the route requires both and requires low ≤
+high.
+
+The bodies it produces, asserted:
+
+    single : {"channel":"SMS","timeEstimateHoursMin":2,...,"priceEstimateHigh":500}
+    flat   : {...,"priceEstimateLow":450,"priceEstimateHigh":450}
+    multi  : {"channel":"SMS","sessions":[{...},{...}]}   // no top-level price
+
+## The send, and the one screen web does not have
+
+`POST /inquiries/:id/send-estimate` mints a token, moves the inquiry to
+`AWAITING_CLIENT_RESPONSE`, shortens the client-facing URL, and calls
+`sendClientSms` or `sendClientEmail`. **It texts or emails a person.
+There is no dry-run path.**
+
+So there is a **confirmation step**, and it is a deliberate addition
+rather than a copy of web. Web sends on submit. This asks first, naming
+the client, the channel, the session count and the price, and saying
+plainly: *It cannot be unsent.*
+
+That is not a change to what is sent or when — the request, its body and
+its semantics are web's exactly. It is a guard against a mis-tap on a
+device held in one hand, for an action that cannot be recalled. Recorded
+here as the one place mobile shows a screen web does not.
+
+## A real defect the evidence caught
+
+The first successful send produced **two identical requests**.
+
+The synthetic press dispatches `pointerup` and `click`, so `onPress` ran
+twice — but the cause is not the harness. The button checks `!sending`,
+and `setSendingEstimate(true)` is React state: **two presses in the same
+tick both read `false` and both proceed.** On this endpoint that is two
+text messages to a client.
+
+Fixed with a `useRef` guard, which flips synchronously so the second call
+returns before it reaches the network. Re-verified under the identical
+double-fire:
+
+    before: requestCount 2
+    after:  requestCount 1
+
+This is the kind of thing a spinner hides and a wire capture does not.
+
+## Write-path evidence, labelled fixtures only
+
+The fixture's `send-estimate` **logs the body it receives and never
+dispatches anything**; `channel: 'EMAIL'` returns 400 so the failure
+shape is reachable. Clients are `QA FIXTURE …` with no real numbers.
+
+| step | observed |
+| --- | --- |
+| open composer | flat toggle, duration toggle, hour/price fields, "Break this into sessions", channel chooser |
+| validation | "The estimate needs a numeric price range." in place; Review blocked |
+| confirmation | names `QA FIXTURE Client`, channel `Text message`, `One sitting`, `$300.00 – $500.00`, and "It cannot be unsent." |
+| send | ONE request, `{"channel":"SMS","timeEstimateHoursMin":3,"timeEstimateHoursMax":6,"priceEstimateLow":450,"priceEstimateHigh":900}` |
+| after | status moves to `AWAITING CLIENT RESPONSE`; the card's action becomes "Send a new estimate" |
+
+`design-refs/session-ar3/send-confirmation.png`.
+
+**One probe error worth recording so the numbers are not misread.** An
+early capture showed `timeEstimateHoursMin: 300` — hours carrying the
+price. That was my probe, not the code: `SwitchField` renders a
+checkbox, so the first two `input` elements are the toggles and the
+hour fields are the next two. The app faithfully sent the form's actual
+state. Corrected by filtering `type !== 'checkbox'`.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            ✓ built in 17.39s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+    estimate      validation/body harness         21/21
+
+### Retested vs untouched
+
+**Retested:** every harness case; the confirmation; the send body; the
+double-send guard before and after.
+
+**NOT retested:** the EMAIL failure path end to end (the fixture returns
+400 for it and the code surfaces `screenErrorMessage(err, 'this
+estimate')`, but I did not drive that interaction); the multi-session
+form in the UI — its body shape is asserted in the harness, and its
+fields render, but I did not fill two rows on screen; 320pt for this
+sheet.
+
+**Untouched:** assignment, notes, and everything outside the Estimate
+card.
+
+## What did not ship
+
+**Booking — AR-3b.** Appointments and consultations, web's
+buffer-conflict warnings (flagged, not blocked, per the SOP), and
+whether cancellation/reschedule are offered here without Stripe side
+effects. Not started; the investigation above stopped at establishing
+that it is a separate feature.
+
+## Findings
+
+1. **React state is not a submit guard.** The `!sending` check reads
+   stale within a tick. Any live-dispatch button in this app wants a ref.
+   Worth checking the other write paths shipped in AR-2/AR-2b — none of
+   them dispatch outward, so a double-fire is merely a duplicate write
+   rather than a duplicate message, but the pattern is the same.
+2. **`ARTIST` cannot send the studio estimate** —
+   `inquiries.sendEstimate` is FRONT_DESK/OWNER by default; ARTIST holds
+   `inquiries.artistSendEstimate`, a different key for their own scoped
+   flow. The card's action is permission-gated accordingly, not
+   role-gated.
+
+## Database
+
+No schema change, no migration, no backfill. No production contact; the
+fixture never dispatched a message.
