@@ -5,10 +5,11 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { AssignArtistSheet } from '@/components/AssignArtistSheet';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
+import { ConsultationSheet } from '@/components/ConsultationSheet';
 import { EstimateSheet } from '@/components/EstimateSheet';
 import { NoteBody } from '@/components/NoteBody';
 import { NoteEditor } from '@/components/NoteEditor';
-import { PersonIcon, PlusIcon, SendIcon, TrashIcon } from '@/components/icons';
+import { CalendarIcon, PersonIcon, PlusIcon, SendIcon, TrashIcon } from '@/components/icons';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { Banner } from '@/components/Banner';
 import { Card, CardEmpty, Fact } from '@/components/editorial';
@@ -28,6 +29,7 @@ import {
   type EstimateChannel,
   type EstimateDraft,
 } from '@/lib/estimate';
+import { buildBookingBody, createConsultation, type BookingDraft } from '@/lib/booking';
 import { channelLabel } from '@/lib/inquiryDisplay';
 import {
   canModifyNote,
@@ -135,6 +137,26 @@ export default function StaffInquiryScreen() {
   /** Synchronous in-flight guard for the send. See onSendEstimate. */
   const sendInFlight = useRef(false);
   const [estimateError, setEstimateError] = useState<string | null>(null);
+
+  /* `appointments.create`, the key POST /appointments is gated on. */
+  const canBook = (session?.profile.permissions ?? []).includes('appointments.create');
+
+  const [consultOpen, setConsultOpen] = useState(false);
+  const [consultDraft, setConsultDraft] = useState<BookingDraft>({
+    date: '',
+    startTime: '',
+    endTime: '',
+    artistId: null,
+    notes: '',
+  });
+  const [booking, setBooking] = useState(false);
+  const [bookError, setBookError] = useState<string | null>(null);
+  /* The server's own scheduling-buffer warning, shown AFTER a successful
+     booking. Never used to block — see ConsultationSheet's note. */
+  const [bufferWarning, setBufferWarning] = useState<string | null>(null);
+  /* Same synchronous guard the estimate send needed: React state reads
+     stale within a tick, so two presses would both pass `!booking`. */
+  const bookInFlight = useRef(false);
 
   const [notes, setNotes] = useState<InquiryNote[] | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -321,6 +343,45 @@ export default function StaffInquiryScreen() {
     },
     [token, id, estimateDraft],
   );
+
+  const onBookConsultation = useCallback(async () => {
+    if (!token || !id || !inquiry?.clientId) return;
+    if (bookInFlight.current) return;
+    bookInFlight.current = true;
+
+    setBooking(true);
+    setBookError(null);
+    setBufferWarning(null);
+    try {
+      const created = await createConsultation(
+        token,
+        buildBookingBody(consultDraft, { clientId: inquiry.clientId, inquiryId: id }),
+      );
+      /*
+       * The warning rides along with a SUCCESSFUL booking, so it is
+       * surfaced on the card rather than in the sheet, which closes.
+       *
+       * AND THE CARD IS OPENED when there is one. Caught in the harness:
+       * the Appointment section is collapsed by default and its header
+       * action is what opens the sheet, so a booking made from the
+       * collapsed card put the warning somewhere nobody could see it.
+       * The route returns this specifically so staff can decide, and
+       * they cannot decide what is hidden.
+       */
+      setBufferWarning(created.bufferWarning ?? null);
+      if (created.bufferWarning) setOpen((o) => ({ ...o, appointment: true }));
+      setConsultOpen(false);
+      setConsultDraft({ date: '', startTime: '', endTime: '', artistId: null, notes: '' });
+      await load();
+    } catch (err) {
+      setBookError(screenErrorMessage(err, 'this appointment'));
+    } finally {
+      bookInFlight.current = false;
+      setBooking(false);
+    }
+    // `load` is defined below and is stable for this screen's lifetime.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, id, inquiry?.clientId, consultDraft]);
 
   const load = useCallback(async () => {
     if (!token || !id) return;
@@ -573,7 +634,29 @@ export default function StaffInquiryScreen() {
             title="Appointment"
             open={!!open.appointment}
             onToggle={() => toggle('appointment')}
+            headerActions={
+              canBook ? (
+                <CardActionRow>
+                  <CardIconButton
+                    Icon={CalendarIcon}
+                    label="Schedule a consultation"
+                    onPress={() => {
+                      setBookError(null);
+                      setConsultOpen(true);
+                    }}
+                    busy={booking}
+                  />
+                </CardActionRow>
+              ) : undefined
+            }
           >
+            {/*
+              The studio's scheduling buffer, reported after the fact.
+              The route returns this ALONGSIDE a successful booking so
+              staff can decide -- it is not an error and the appointment
+              exists either way.
+            */}
+            {bufferWarning ? <Text style={styles.bufferWarning}>{bufferWarning}</Text> : null}
             {inquiry.appointmentId ? (
               <Pressable
                 onPress={() =>
@@ -704,6 +787,18 @@ export default function StaffInquiryScreen() {
             )}
           </CollapsibleSection>
 
+          <ConsultationSheet
+            visible={consultOpen}
+            onClose={() => setConsultOpen(false)}
+            token={token!}
+            clientName={clientLabel}
+            draft={consultDraft}
+            onDraftChange={setConsultDraft}
+            booking={booking}
+            error={bookError}
+            onBook={onBookConsultation}
+          />
+
           {estimateDraft ? (
             <EstimateSheet
               visible={estimateOpen}
@@ -783,6 +878,9 @@ const styles = StyleSheet.create({
   lineMeta: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
   revert: { ...type.small, color: colors.danger, paddingTop: space.sm },
+  /* Accent, not danger: a buffer breach is information the studio asked
+     to be told, not a failure. */
+  bufferWarning: { ...type.small, color: colors.accent, paddingBottom: space.sm },
 
   noteFollowing: { marginTop: space.lg },
   noteHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.xs },
