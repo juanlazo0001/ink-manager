@@ -35599,3 +35599,157 @@ that it is a separate feature.
 
 No schema change, no migration, no backfill. No production contact; the
 fixture never dispatched a message.
+
+# Session AR-3b — booking, and the deposit coupling it exposed
+
+Branch `session/ar3b-booking` in its own worktree, cut from `main`
+(`b4bd897`). Mobile-only.
+
+## The finding that shaped the session
+
+Web's inquiry page does **not** book a session through
+`POST /appointments`. There are two distinct routes, and they are not
+variants of each other:
+
+| | route | deposit |
+| --- | --- | --- |
+| **session** | `POST /inquiries/:id/schedule` | **requires a non-empty `giftCardIds`** |
+| **consultation** | `POST /appointments`, `appointmentType: CONSULTATION` | none |
+
+`POST /inquiries/:id/schedule` takes `{ startTime, endTime, giftCardIds }`,
+requires the inquiry in `SCHEDULING` with an assigned artist, and in ONE
+transaction creates a CONFIRMED appointment **and attaches those gift
+cards to it** (`tx.giftCard.update({ data: { appointmentId } })`), then
+moves the inquiry to CONFIRMED.
+
+**So booking a session consumes a client's paid deposit. It is not a
+calendar action.**
+
+That puts two lines of the brief in direct conflict: booking is listed
+LIVE, and gift-card moves are listed GATED. This route is both at once.
+**Not built here** — which of those wins is an owner call, not an
+implementer's. The full contract is recorded above so the decision can be
+made without re-deriving it.
+
+A CONSULTATION is genuinely money-free, in the route's own words: it
+"skips the gift-card requirement entirely -- it's an informal,
+no-commitment step, not a booked session". Web's copy agrees: "no deposit
+needed, and this can happen at any point regardless of where the project
+is in its pipeline." That is what shipped.
+
+## The two-timezone proof, because a booking is an instant
+
+CLAUDE.md requires it for anything date-touching, and a booking is
+squarely the "real instant" convention rather than the calendar-date one.
+Ran the same inputs under two zones:
+
+    14:30 on 2026-09-14   ->  New York   2026-09-14T18:30:00.000Z
+                              Tokyo      2026-09-14T05:30:00.000Z
+
+The properties asserted, and they are the ones that matter for an
+instant: the same wall time in two zones is a DIFFERENT moment (it must
+be), and each round-trips back to 14:30 in its own zone. Malformed input
+is rejected rather than coerced — including `2026-02-31`, which
+`new Date` would silently roll to 3 March.
+
+    16 passed, 0 failed
+
+Confirmed live in the render: 14:30 typed on this UTC-4 machine went out
+as `2026-09-14T18:30:00.000Z`.
+
+## The write, and what the harness caught
+
+Body captured off the wire:
+
+    POST /appointments
+    {"artistId":"a-ok","clientId":"c-fixture","inquiryId":"inq-fixture",
+     "startTime":"2026-09-14T18:30:00.000Z","endTime":"2026-09-14T19:30:00.000Z",
+     "notes":"First sit-down","appointmentType":"CONSULTATION"}
+
+All five required fields, `appointmentType` explicit. **It is never
+inferred:** the route defaults an absent field to `TATTOO_SESSION`
+(deliberately, so older clients keep working), so omitting it would
+silently ask for a session booking and be rejected for want of gift
+cards.
+
+`requestCount: 1` under the same synthetic double-fire that exposed the
+estimate's double-send. The ref guard from AR-3 was applied here from the
+start rather than after the fact.
+
+### A real defect: the warning nobody could see
+
+The scheduling-buffer warning comes back **alongside a successful
+booking** — the route's own comment says it surfaces the conflict "so
+staff can decide" — so mobile shows it and never blocks on it. Blocking
+would be enforcing a rule the server deliberately declined to make.
+
+But the harness showed it arriving invisible:
+
+    booked from the collapsed card   warning visible: NO
+    after expanding by hand          warning visible: yes
+
+The Appointment section is collapsed by default and its header action is
+what opens the booking sheet — so the ordinary path put the server's
+conflict warning inside a closed card. Staff cannot decide what is
+hidden.
+
+Fixed by opening the section when a warning arrives. Re-verified:
+**visible without expanding anything**, reading "This is within 30
+minutes of another appointment."
+
+`design-refs/session-ar3b/buffer-warning.png`.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            ✓ built in 13.54s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+    booking       two-timezone + body harness     16/16
+
+All write testing against the scratchpad fixture; clients are
+`QA FIXTURE …`. A consultation dispatches no client message.
+
+### Retested vs untouched
+
+**Retested:** the timezone harness under both zones; the wire body; the
+single-request guard; the buffer warning before and after the fix.
+
+**NOT retested:** the failure path end to end (the fixture returns the
+route's real "no gift card covering the required deposit" message for a
+non-consultation, and the code surfaces `screenErrorMessage`, but I did
+not drive it); 320pt for this sheet; and the appointments LIST, which
+this session did not touch — the card still shows what AR-1 left.
+
+## What did not ship, and why
+
+1. **Session booking** — the deposit coupling above. Owner call.
+2. **Cancellation and reschedule.** The brief asks for them "only if web
+   offers them here and they carry no Stripe side effects". Web's inquiry
+   page does not offer either; appointment cancellation lives on the
+   appointment routes with their own archive/unarchive semantics. So the
+   brief's own condition is not met and they are correctly absent, rather
+   than omitted for want of time.
+3. **The appointments LIST.** The card shows the single linked
+   appointment as before; a full list belongs with whatever settles item 1.
+
+## Findings
+
+1. **Booking a session is a money move**, and nothing in the route's name
+   says so. Worth knowing before anyone treats "scheduling" as a calendar
+   feature.
+2. **A collapsed card can swallow a server warning.** The pattern —
+   header action opens a sheet, result renders in the body — recurs on
+   this screen (assignment's revert notice and the notes notice have the
+   same shape, though both sit in sections that are open by default).
+   Worth a sweep if more cards gain header actions.
+3. **The ref-guard fix from AR-3 generalises.** It was applied here
+   pre-emptively and the harness confirmed one request under a
+   double-fire. The AR-2/AR-2b write paths still use the state flag; none
+   dispatch outward, so a double-fire there duplicates a write rather
+   than a message.
+
+## Database
+
+No schema change, no migration, no backfill. No production contact.
