@@ -41,7 +41,15 @@ import { apiFetch } from './api';
  */
 export interface ArtistOption {
   id: string;
-  user: { name: string | null; email: string; avatarUrl: string | null };
+  /*
+   * `user.id` is the USER id, not the artist id, and the two are not
+   * interchangeable: `POST /inquiries/:id/share-to-artist` takes
+   * `artistUserId` and rejects an Artist.id outright. `GET /artists` has
+   * always selected it (`artistListSelect` in routes/artists.ts) -- the
+   * type simply never declared it, the same way `portfolioImages` did
+   * not until something needed it.
+   */
+  user: { id: string; name: string | null; email: string; avatarUrl: string | null };
   /**
    * Cloudinary URLs on the artist record.
    *

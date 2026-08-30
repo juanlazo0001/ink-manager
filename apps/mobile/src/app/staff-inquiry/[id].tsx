@@ -8,6 +8,8 @@ import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
 import { ConsultationSheet } from '@/components/ConsultationSheet';
 import { EstimateSheet } from '@/components/EstimateSheet';
 import { AttachmentChip } from '@/components/AttachmentChip';
+import { InquiryActionsSheet, type ActionsMode } from '@/components/InquiryActionsSheet';
+import { ShareToArtistSheet } from '@/components/ShareToArtistSheet';
 import { NoteBody } from '@/components/NoteBody';
 import { NoteEditor } from '@/components/NoteEditor';
 import { CalendarIcon, PersonIcon, PlusIcon, SendIcon, TrashIcon } from '@/components/icons';
@@ -31,6 +33,18 @@ import {
   type EstimateDraft,
 } from '@/lib/estimate';
 import { buildBookingBody, createConsultation, type BookingDraft } from '@/lib/booking';
+import { fetchArtists, type ArtistOption } from '@/lib/artists';
+import {
+  archiveInquiry,
+  deleteInquiry,
+  fetchDeletePreview,
+  fetchSharePreview,
+  holdInquiry,
+  markInquiryLost,
+  shareToArtist,
+  unarchiveInquiry,
+  type DeletePreview,
+} from '@/lib/inquiryActions';
 import { channelLabel } from '@/lib/inquiryDisplay';
 import {
   canModifyNote,
@@ -49,7 +63,7 @@ import {
   pipelineStages,
   type StaffInquiryDetail,
 } from '@/lib/staffInquiry';
-import { colors, hairline, space, type } from '@/theme';
+import { colors, hairline, radius, space, type } from '@/theme';
 
 /**
  * The OWNER / FRONT_DESK view of an inquiry.
@@ -93,6 +107,31 @@ function byNewest(a: InquiryNote, b: InquiryNote): number {
   return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
 }
 
+/*
+ * Every collapsible card on this screen, in render order. Kept beside the
+ * screen rather than inside it so the collapse-all control cannot drift
+ * out of sync with what is actually rendered.
+ */
+/*
+ * Web's own status groupings, copied rather than re-derived — its
+ * `isTerminal` and `isConverted` at InquiryDetail.tsx:592-599. Widened to
+ * `string` for `.includes` so the union type does not reject a
+ * comparison it considers impossible; the values are the authority.
+ */
+const TERMINAL_STATUSES: string[] = ['CLOSED_LOST', 'COLD_LEAD', 'TRANSFERRED'];
+const CONVERTED_STATUSES: string[] = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'];
+
+const SECTION_KEYS = [
+  'pipeline',
+  'assignment',
+  'estimate',
+  'deposits',
+  'appointment',
+  'closed',
+  'request',
+  'notes',
+] as const;
+
 export default function StaffInquiryScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -133,6 +172,35 @@ export default function StaffInquiryScreen() {
    * write notes — they simply cannot obtain an upload signature, so
    * offering them the control would produce a 403 and nothing else.
    */
+  /* Web's own gates, key for key. `isOwner` is the odd one out and
+     deliberately so: DELETE /inquiries/:id is requireRole(Role.OWNER)
+     with no permission behind it, so this is the second place on this
+     screen that must read a ROLE (the first being note attachments). */
+  const canShareWithArtist = (session?.profile.permissions ?? []).includes('inquiries.shareWithArtist');
+  const canEditInquiry = (session?.profile.permissions ?? []).includes('inquiries.edit');
+  const canMarkLost = (session?.profile.permissions ?? []).includes('inquiries.markLost');
+  const isOwner = session?.profile.role === 'OWNER';
+
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [actionsMode, setActionsMode] = useState<ActionsMode>('menu');
+  const [actionsBusy, setActionsBusy] = useState(false);
+  const [actionsError, setActionsError] = useState<string | null>(null);
+  const [actionReason, setActionReason] = useState('');
+  const [deletePreview, setDeletePreview] = useState<DeletePreview | null>(null);
+  const [deletePreviewLoading, setDeletePreviewLoading] = useState(false);
+  const actionInFlight = useRef(false);
+
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareArtists, setShareArtists] = useState<ArtistOption[]>([]);
+  const [shareUserId, setShareUserId] = useState<string | null>(null);
+  const [shareBody, setShareBody] = useState('');
+  const [shareAttachments, setShareAttachments] = useState<string[]>([]);
+  const [sharePreviewLoading, setSharePreviewLoading] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [shareSent, setShareSent] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const shareInFlight = useRef(false);
+
   const canAttachToNote =
     session?.profile.role === 'OWNER' || session?.profile.role === 'FRONT_DESK';
 
@@ -189,6 +257,26 @@ export default function StaffInquiryScreen() {
     estimate: true,
   });
   const toggle = (key: string) => setOpen((o) => ({ ...o, [key]: !o[key] }));
+
+  /*
+   * COLLAPSE / EXPAND ALL — an owner-directed addition, not a mirror.
+   * Web has no equivalent: its cards are draggable widgets and its
+   * overflow offers "Auto-order sections" instead, which is a different
+   * thing (layout order, not open state). Recorded as a divergence.
+   *
+   * The rule is the brief's: if ANY card is open, collapse everything;
+   * only when all are closed does the control expand. That makes a single
+   * tap always do the visible thing rather than depending on a hidden
+   * toggle state of its own.
+   *
+   * SECTION_KEYS is explicit rather than derived from `open`, because
+   * `open` only ever holds keys that have been touched — a card never
+   * toggled has no entry at all, so expanding "everything" from that
+   * object would silently skip the sections nobody had opened yet.
+   */
+  const anyOpen = SECTION_KEYS.some((key) => !!open[key]);
+  const toggleAll = () =>
+    setOpen(Object.fromEntries(SECTION_KEYS.map((key) => [key, !anyOpen])));
 
   /*
    * OPTIMISTIC, with a visible revert.
@@ -397,6 +485,83 @@ export default function StaffInquiryScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, id, inquiry?.clientId, consultDraft]);
 
+  /* Opening the share sheet fetches the server's own default body, so
+     the composer shows the real message rather than a blank box. */
+  const onOpenShare = useCallback(async () => {
+    if (!token || !id) return;
+    setShareError(null);
+    setShareSent(false);
+    setShareOpen(true);
+    setSharePreviewLoading(true);
+    try {
+      const [preview, artists] = await Promise.all([
+        fetchSharePreview(token, id),
+        fetchArtists(token),
+      ]);
+      setShareBody(preview.body);
+      setShareAttachments(preview.attachments);
+      setShareArtists(artists);
+      /* Default to whoever is already assigned -- web's own default, and
+         almost always who staff mean. Nothing to default to otherwise. */
+      const assigned = artists.find((a) => a.id === inquiry?.assignedArtist?.id);
+      setShareUserId(assigned?.user.id ?? null);
+    } catch (err) {
+      setShareError(screenErrorMessage(err, 'this inquiry'));
+    } finally {
+      setSharePreviewLoading(false);
+    }
+  }, [token, id, inquiry?.assignedArtist?.id]);
+
+  const onSendShare = useCallback(async () => {
+    if (!token || !id || !shareUserId) return;
+    if (shareInFlight.current) return;
+    shareInFlight.current = true;
+    setSharing(true);
+    setShareError(null);
+    try {
+      await shareToArtist(token, id, { artistUserId: shareUserId, body: shareBody });
+      setShareSent(true);
+    } catch (err) {
+      setShareError(screenErrorMessage(err, 'this inquiry'));
+    } finally {
+      shareInFlight.current = false;
+      setSharing(false);
+    }
+  }, [token, id, shareUserId, shareBody]);
+
+  /*
+   * One runner for every overflow action. They differ only in the request
+   * and in what happens afterwards, and sharing the guard/busy/error
+   * plumbing is what keeps a second ref-guard bug from appearing in the
+   * fourth copy of it.
+   */
+  const runAction = useCallback(
+    async (fn: () => Promise<unknown>, after: 'stay' | 'leave') => {
+      if (actionInFlight.current) return;
+      actionInFlight.current = true;
+      setActionsBusy(true);
+      setActionsError(null);
+      try {
+        const result = await fn();
+        if (after === 'leave') {
+          setActionsOpen(false);
+          router.back();
+          return;
+        }
+        setInquiry(result as StaffInquiryDetail);
+        setActionsOpen(false);
+        setActionsMode('menu');
+        setActionReason('');
+      } catch (err) {
+        setActionsError(screenErrorMessage(err, 'this inquiry'));
+      } finally {
+        actionInFlight.current = false;
+        setActionsBusy(false);
+      }
+    },
+    [],
+  );
+
   const load = useCallback(async () => {
     if (!token || !id) return;
     setError(null);
@@ -421,8 +586,31 @@ export default function StaffInquiryScreen() {
 
   return (
     <ScreenShell edges={['top']}>
-      {/* Bare — the name leads the hero card, as on the client page. */}
-      <ScreenHeader onBack={() => router.back()} />
+      {/* Bare — the name leads the hero card, as on the client page.
+          `right` carries the collapse/expand-all control: the screen's
+          header row is the only place on this page that is not itself a
+          card, so a control that acts on ALL the cards belongs there
+          rather than inside one of them. */}
+      <ScreenHeader
+        onBack={() => router.back()}
+        right={
+          inquiry ? (
+            <Pressable
+              onPress={toggleAll}
+              accessibilityRole="button"
+              accessibilityLabel={anyOpen ? 'Collapse all sections' : 'Expand all sections'}
+              hitSlop={8}
+              style={({ pressed }) => [styles.collapseAll, pressed && styles.collapseAllPressed]}
+            >
+              <Feather
+                name={anyOpen ? 'chevrons-up' : 'chevrons-down'}
+                size={18}
+                color={colors.fgMuted}
+              />
+            </Pressable>
+          ) : undefined
+        }
+      />
 
       {error ? (
         <StateMessage
@@ -502,6 +690,25 @@ export default function StaffInquiryScreen() {
                 }
                 note={inquiry.appointmentId ? undefined : 'No appointment booked yet.'}
               />
+              {/* Web's own label. It reads like a link but it is not one --
+                  see ShareToArtistSheet's header comment. */}
+              {canShareWithArtist ? (
+                <QuickAction icon="share-2" label="Share" onPress={() => void onOpenShare()} />
+              ) : null}
+              {/* Web hides the whole overflow unless at least one of its
+                  three gates passes; same condition, not an inference. */}
+              {canMarkLost || canEditInquiry || isOwner ? (
+                <QuickAction
+                  icon="more-horizontal"
+                  label="More"
+                  onPress={() => {
+                    setActionsMode('menu');
+                    setActionsError(null);
+                    setActionReason('');
+                    setActionsOpen(true);
+                  }}
+                />
+              ) : null}
             </QuickActionRow>
           </Card>
 
@@ -811,6 +1018,70 @@ export default function StaffInquiryScreen() {
             )}
           </CollapsibleSection>
 
+          <ShareToArtistSheet
+            visible={shareOpen}
+            onClose={() => setShareOpen(false)}
+            artists={shareArtists}
+            selectedUserId={shareUserId}
+            onSelect={setShareUserId}
+            body={shareBody}
+            onBodyChange={setShareBody}
+            attachments={shareAttachments}
+            loadingPreview={sharePreviewLoading}
+            sending={sharing}
+            sent={shareSent}
+            error={shareError}
+            onSend={() => void onSendShare()}
+          />
+
+          <InquiryActionsSheet
+            visible={actionsOpen}
+            onClose={() => setActionsOpen(false)}
+            mode={actionsMode}
+            onModeChange={(next) => {
+              setActionsError(null);
+              setActionsMode(next);
+              if (next === 'delete' && token && id) {
+                /* Fetched when the confirm opens, not on mount: it is an
+                   OWNER-only endpoint and every other role would take a
+                   403 on a screen they can otherwise use. */
+                setDeletePreview(null);
+                setDeletePreviewLoading(true);
+                fetchDeletePreview(token, id)
+                  .then(setDeletePreview)
+                  .catch(() => setDeletePreview(null))
+                  .finally(() => setDeletePreviewLoading(false));
+              }
+            }}
+            archived={!!inquiry.archivedAt}
+            canMarkLost={canMarkLost}
+            canEditInquiry={canEditInquiry}
+            isOwner={!!isOwner}
+            /* Web's own two lists, value for value -- see its
+               `isTerminal` / `isConverted` at InquiryDetail.tsx:592. */
+            isTerminal={TERMINAL_STATUSES.includes(inquiry.status)}
+            isConverted={CONVERTED_STATUSES.includes(inquiry.status)}
+            busy={actionsBusy}
+            error={actionsError}
+            reason={actionReason}
+            onReasonChange={setActionReason}
+            noteCount={notes?.length ?? 0}
+            deletePreview={deletePreview}
+            deletePreviewLoading={deletePreviewLoading}
+            onMarkLost={() => void runAction(() => markInquiryLost(token!, id!, actionReason), 'stay')}
+            onHold={() => void runAction(() => holdInquiry(token!, id!, actionReason), 'stay')}
+            onArchiveToggle={() =>
+              void runAction(
+                () =>
+                  inquiry.archivedAt ? unarchiveInquiry(token!, id!) : archiveInquiry(token!, id!),
+                'stay',
+              )
+            }
+            /* 'leave' — the row it was showing no longer exists, so the
+               screen cannot stay on it. */
+            onDelete={() => void runAction(() => deleteInquiry(token!, id!), 'leave')}
+          />
+
           <ConsultationSheet
             visible={consultOpen}
             onClose={() => setConsultOpen(false)}
@@ -905,6 +1176,14 @@ const styles = StyleSheet.create({
   lineMeta: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
   revert: { ...type.small, color: colors.danger, paddingTop: space.sm },
+  collapseAll: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.pill,
+  },
+  collapseAllPressed: { backgroundColor: colors.surfaceInset },
   noteAttachments: { gap: space.xs, alignItems: 'flex-start', paddingTop: space.sm },
   /* Accent, not danger: a buffer breach is information the studio asked
      to be told, not a failure. */

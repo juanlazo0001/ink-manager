@@ -36377,3 +36377,187 @@ Consequences, one fixed and two left for the owner:
 
 None of this blocks the App Store submission: the string
 `https://inkmanager.app/support` is live and correct.
+
+# Session AV — inquiry header actions
+
+Branch `session/av-header-actions`, cut from `main` (`1719487`). Named AV
+rather than AT because AT was taken by the photo-wash line. Mobile-only.
+
+Precondition: no unmerged mobile branch, `main` == `origin/main`. Nothing
+to auto-merge.
+
+## 1. What "share" actually is
+
+**An internal message. Not a link, not a visibility flag.**
+
+    GET  /inquiries/:id/share-to-artist/preview   -> { body, attachments }
+    POST /inquiries/:id/share-to-artist           { artistUserId, body }
+
+The POST opens (or reuses) a STAFF conversation with the chosen artist and
+posts into it at `MessageChannel.IN_APP`, tagged
+`metadata.kind = "shared_inquiry"` so the thread renders it as a card. It
+un-archives the conversation and writes an audit row. **Nothing leaves the
+app** — no SMS, no email, and no push in the route itself.
+
+So `expo-sharing` would have been the wrong tool, and the brief's other
+branch is the right one. Built live, with web's own confirm-and-feedback
+shape: the composer is seeded from the preview, and the sheet says "Sent"
+rather than just vanishing.
+
+Two details that would each have broken the request:
+
+* `artistUserId` is the **USER** id. `ArtistOption` on mobile declared no
+  `user.id` at all, though `GET /artists` has always selected it. Passing
+  `Artist.id` returns 400.
+* Permission `inquiries.shareWithArtist`, evaluated at the **inquiry's**
+  studio.
+
+## 2. The overflow menu — web's real list
+
+| item | gate | ported |
+| --- | --- | --- |
+| Auto-order sections | — | **no** |
+| Mark as lost | `inquiries.markLost` && !terminal | yes |
+| Put on hold | `inquiries.edit` && converted | yes |
+| Archive / Unarchive | `inquiries.edit` | yes |
+| Delete Permanently | **role OWNER** | yes |
+
+"Auto-order sections" resets web's draggable widget layout. Mobile's cards
+are a fixed order, so the item would do nothing — omitted rather than
+stubbed. Everything else is ported, gate for gate. The whole menu hides
+unless one of the three gates passes, which is web's own condition.
+
+**One sheet, contents swap** — not one sheet per confirm. CLAUDE.md's
+modal rule: `Sheet` stays mounted ~300ms after `visible` goes false, so
+closing a menu and opening a confirm in the same tick overlaps two RN
+modals by construction.
+
+### Archive
+
+`POST /:id/archive`, `inquiries.edit` at the record's studio, sets
+`archivedAt`. Exercised live against a labelled fixture:
+
+    archive        archivedAt 2026-08-30T20:38:16.730Z
+    archive again  archivedAt 2026-08-30T20:38:16.730Z   idempotent
+    unarchive      archivedAt null
+
+## 3. Delete: HARD, and broken for any inquiry with a note
+
+**Hard.** `tx.inquiry.delete()` inside a transaction that also removes
+appointments, waivers, deposit forms, planned sessions and conversation
+tags. Gift cards attached to those appointments are **detached, not
+destroyed** — the route's own comment says it is the client's money.
+
+**The server demands the typed word.** `DELETE /:id` rejects any body
+whose `confirm` is not exactly `"DELETE"`. The typed confirmation is the
+route's contract, not a flourish.
+
+The measured matrix, live:
+
+    ARTIST      delete        403
+    FRONT_DESK  delete        403
+    OWNER  confirm "delete"   400   Type "DELETE" to confirm this action.
+    OWNER  inquiry WITH note  500   Internal server error
+    OWNER  plain inquiry      200   {"success":true,"detachedGiftCards":[]}
+
+### The defect
+
+`InquiryNote.inquiryId` is **ON DELETE RESTRICT** in the database, and the
+delete transaction never removes notes. So the delete cannot succeed for
+any inquiry that has one. Proven twice:
+
+* the route's own transaction replayed against a real dev inquiry inside a
+  deliberate rollback — `violates RESTRICT setting of foreign key
+  constraint "InquiryNote_inquiryId_fkey"`;
+* then end to end through the API, which returns an opaque **500 Internal
+  server error**.
+
+`delete-preview` does not count notes either, so nothing warns first.
+**Web has this defect too** and shows the same 500. It is in `apps/api`,
+out of scope for a mobile session, so it is reported rather than fixed.
+
+Mobile does not reproduce the dead end: the screen already has the notes
+loaded, so the confirm says *"This inquiry has 2 notes, and the server
+cannot delete an inquiry that still has notes. Delete them first."* and
+disables the button. That reports a measured server limitation rather than
+inventing a rule — if the API is fixed to cascade, the guard stops
+applying on its own.
+
+## 4. Collapse / expand all
+
+**Web has no equivalent** — searched; its overflow offers "Auto-order
+sections", which is layout order, not open state. So this is the brief's
+owner-directed addition, in the screen's header row (the only part of the
+page that is not itself a card).
+
+One control, label and glyph derived from state: any card open → collapse
+all; all closed → expand all. Verified both directions.
+
+**Persistence: none, and none added.** Open state is component state
+(`useState<Record<string, boolean>>`) and dies with the screen. Web does
+not persist per-card collapse either. Per the brief, the option is
+reported rather than built: the natural home would be the existing
+widget-layout endpoint (`GET/POST /widget-layout/:pageKey`, already used
+by web for card ORDER), which would make it per-user and cross-device.
+
+**Client detail page: TABLED, not half-done.** It does share
+`CollapsibleSection`, but its open state is declared separately with its
+own keys, so the control is not portable as-is — it needs the same
+`SECTION_KEYS` treatment there. That is a second screen's worth of care
+and the brief says to table rather than half-do it.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 2.08s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+Previews in `design-refs/session-av/`: `header.png` (full row + collapse
+control), `menu.png`, `delete.png` (server-counted losses, the gift-card
+line, the notes guard, Delete disabled), `share.png`.
+
+Role gating driven rather than asserted, with **every permission granted
+in both cases so only the role differs**:
+
+    OWNER    mark-lost yes  hold yes  archive yes  DELETE yes
+    ARTIST   mark-lost yes  hold yes  archive yes  DELETE no
+
+A permission-based implementation passes the first row and fails the
+second.
+
+### Fixtures
+
+All destructive testing ran against purpose-made rows described
+`QA FIXTURE AV probe -- safe to delete`. Removed afterwards: 3 inquiries,
+7 clients, 0 remaining. No real inquiry was archived or deleted; the
+rollback probe left its subject untouched (verified present with both
+notes after).
+
+### Not verified
+
+On-device. The share sheet's artist list is unbounded — on this dev studio
+it is long enough to push the composer below the fold, which scrolls but
+is not ideal; a real studio has a handful. Worth a follow-up, not a
+blocker. Mark-as-lost and put-on-hold were built and typecheck but were
+NOT exercised against the API this session — only archive, delete and
+share were.
+
+## Findings
+
+1. **Delete is broken server-side for any inquiry with a note**, on both
+   clients, and fails with an opaque 500. Fix belongs in `apps/api`:
+   either delete notes in the transaction, or make the FK cascade.
+2. **`delete-preview` under-reports** — it counts appointments, waivers,
+   deposit forms, gift cards, tags and planned sessions, but not notes,
+   which are exactly what blocks the delete.
+3. **`ArtistOption.user.id` was undeclared** though the API always sends
+   it. Now declared.
+4. Delete is the second control on this screen that must gate on a ROLE
+   rather than a permission (note attachments was the first).
+
+## Database
+
+No schema change, migration or backfill. Dev only: fixtures created and
+removed as above. **No production contact.**
