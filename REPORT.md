@@ -35753,3 +35753,82 @@ this session did not touch — the card still shows what AR-1 left.
 ## Database
 
 No schema change, no migration, no backfill. No production contact.
+
+# Fix — new-session.ps1 died on native stderr
+
+Branch `fix/new-session-stderr`, cut from `main` (`7528d9e`). Tooling
+only; no app code.
+
+## The failure
+
+`scripts/new-session.ps1` is CLAUDE.md's mandated single entry point for
+launching a concurrent session. Under Windows PowerShell 5.1 — the shell
+this machine actually runs — it did not work at all.
+
+PS 5.1 wraps ANY stderr output from a native executable in an ErrorRecord,
+and `$ErrorActionPreference = 'Stop'` promotes that to a TERMINATING
+error. Neither of the two things that killed it was a failure:
+
+    git fetch origin main   writes "From https://github.com/..." to stderr
+                            on every SUCCESSFUL fetch
+    npm ci                  writes deprecation warnings to stderr
+
+Both were fatal. Observed twice on 2026-08-30 while launching AR-4:
+
+1. Died at the fetch, before anything was created.
+2. Died at `npm ci` — **after** the worktree existed and its `.env` files
+   had been copied. That is the worse one: it leaves a half-built worktree
+   (created, env-copied, no `node_modules`) with no indication that the
+   only remaining step is an `npm ci`. Finished by hand from bash.
+
+## The fix
+
+An `Invoke-Native` helper that drops the preference to `Continue` for the
+duration of a native call, restores it in `finally`, and then checks
+`$LASTEXITCODE` — which is how native tools actually report failure, and
+which every one of these call sites already checked. Applied to
+`git fetch`, `git worktree add` and `npm ci`.
+
+Cmdlet errors still stop the script; only native-command stderr stops
+being treated as fatal.
+
+## A second bug found while fixing the first
+
+The obvious move — wrap every native call — is wrong for one of them:
+
+    $primaryWorktreeLine = (git worktree list --porcelain |
+      Select-String '^worktree ' | Select-Object -First 1).Line
+
+`Select-Object -First 1` terminates the pipeline as soon as it has its
+match, which stops git mid-write. Measured:
+
+    LASTEXITCODE after the pipeline: -1
+    LASTEXITCODE after a bare call:   0
+
+The data is correct and complete either way. **Exit codes are meaningless
+for an early-terminated pipeline**, so that read is guarded by preference
+only, and the existing empty-check plus fallback remains the real test.
+Wrapping it turned a working read into a hard failure, which is how this
+was found.
+
+## Verification
+
+The script now runs end to end. `-Name probe-newsession` produced a
+complete worktree — 772 packages installed, all three `.env` files copied,
+free ports reported — with npm's deprecation warnings printing and no
+longer terminating. Probe worktree and branch removed afterwards.
+
+`Invoke-Native` tested both ways, because a "fix" that merely swallowed
+everything would pass the first case alone:
+
+    stderr + exit 0   does NOT throw     (the bug)
+    stderr + exit 1   DOES throw         (still fails when it should)
+    afterwards        preference is back to Stop
+
+Script parses clean under the PowerShell AST parser.
+
+## Also improved
+
+If `npm ci` fails now, the error names the worktree that already exists
+and gives both the finish command and the discard command, rather than
+leaving the next person to work out what state the disk is in.

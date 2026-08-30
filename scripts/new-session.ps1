@@ -35,6 +35,34 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# --- Running native tools under $ErrorActionPreference = 'Stop' ----------
+# Windows PowerShell 5.1 wraps ANY stderr output from a native executable
+# in an ErrorRecord, and 'Stop' promotes that to a TERMINATING error. That
+# is not a failure signal: `git fetch` writes its ordinary "From <url>"
+# progress line to stderr on every successful fetch, and `npm ci` writes
+# deprecation warnings there. Both killed this script mid-run -- the fetch
+# before anything was created, the npm ci AFTER the worktree existed and
+# its .env files had been copied, leaving a half-built worktree that had
+# to be finished by hand. Twice, on 2026-08-30.
+#
+# Native tools report failure through their EXIT CODE, which is what this
+# checks (and what every call site here already checked). Preference is
+# restored in `finally` so cmdlet errors keep stopping the script.
+function Invoke-Native {
+  param(
+    [Parameter(Mandatory = $true)][scriptblock]$Command,
+    [Parameter(Mandatory = $true)][string]$FailureMessage
+  )
+  $previous = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & $Command
+  } finally {
+    $ErrorActionPreference = $previous
+  }
+  if ($LASTEXITCODE -ne 0) { throw $FailureMessage }
+}
+
 if (-not $Name) {
   $Name = Get-Date -Format 'yyyyMMdd-HHmmss'
 }
@@ -44,7 +72,12 @@ if (-not $Name) {
   throw 'Name sanitized to an empty string -- pick something with at least one letter or digit.'
 }
 
+# Not Invoke-Native: a non-repo is a legitimate answer here, not a
+# failure to report, so this swallows both the stderr and the exit code
+# and lets the emptiness of $repoRoot do the talking.
+$ErrorActionPreference = 'Continue'
 $repoRoot = (git rev-parse --show-toplevel 2>$null)
+$ErrorActionPreference = 'Stop'
 if (-not $repoRoot) {
   throw 'Not inside a git repository. Run this from within the ink-manager repo.'
 }
@@ -59,7 +92,16 @@ Set-Location $repoRoot
 # own (possibly incomplete) copy instead of the canonical primary
 # checkout. `git worktree list --porcelain`'s first `worktree` line is
 # always the original checkout, never a linked one.
-$primaryWorktreeLine = (git worktree list --porcelain | Select-String '^worktree ' | Select-Object -First 1).Line
+# NOT Invoke-Native, and not an exit-code check of any kind: `Select-Object
+# -First 1` terminates the pipeline as soon as it has its one match, which
+# stops git mid-write and leaves $LASTEXITCODE = -1 on a completely
+# SUCCESSFUL read. Exit codes are meaningless for an early-terminated
+# pipeline. The emptiness check below is the real test, and it already has
+# a fallback.
+$ErrorActionPreference = 'Continue'
+$primaryWorktreeLine =
+  (git worktree list --porcelain | Select-String '^worktree ' | Select-Object -First 1).Line
+$ErrorActionPreference = 'Stop'
 $envSourceRoot = ($primaryWorktreeLine -replace '^worktree ', '') -replace '/', '\'
 if (-not $envSourceRoot -or -not (Test-Path $envSourceRoot)) {
   Write-Warning "Could not resolve the primary checkout's path -- falling back to $repoRoot for .env sourcing."
@@ -75,14 +117,16 @@ if (Test-Path $worktreePath) {
 }
 
 Write-Host "Fetching latest main from origin..."
-git fetch origin main
-if ($LASTEXITCODE -ne 0) { throw 'git fetch origin main failed.' }
+Invoke-Native -FailureMessage 'git fetch origin main failed.' -Command {
+  git fetch origin main
+}
 
 $branchName = "session/$Name"
 
 Write-Host "Creating worktree at $worktreePath on new branch '$branchName' (from origin/main)..."
-git worktree add -b $branchName $worktreePath origin/main
-if ($LASTEXITCODE -ne 0) { throw 'git worktree add failed -- see output above.' }
+Invoke-Native -FailureMessage 'git worktree add failed -- see output above.' -Command {
+  git worktree add -b $branchName $worktreePath origin/main
+}
 
 # --- Copy local .env files ------------------------------------------
 # A git worktree only ever contains TRACKED files -- every .env* file in
@@ -137,8 +181,18 @@ if (-not $playwrightIsolated) {
 Write-Host "Running npm ci in the new worktree (repo root, full monorepo install)..."
 Push-Location $worktreePath
 try {
-  npm ci
-  if ($LASTEXITCODE -ne 0) { throw 'npm ci failed in the new worktree -- see output above.' }
+  # Past this point the worktree and its .env files already exist, so a
+  # failure here leaves something real on disk. Say what it is and how to
+  # finish or undo it, rather than leaving a half-built worktree the next
+  # person has to diagnose.
+  Invoke-Native -FailureMessage (
+    "npm ci failed in the new worktree -- see output above.`n" +
+    "  The worktree at $worktreePath EXISTS and its .env files are copied.`n" +
+    "  Finish it with:  cd '$worktreePath'; npm ci`n" +
+    "  Or discard it:   git worktree remove '$worktreePath'; git branch -D $branchName"
+  ) -Command {
+    npm ci
+  }
 } finally {
   Pop-Location
 }
