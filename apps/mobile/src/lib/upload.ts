@@ -1,3 +1,4 @@
+import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 
 import { apiFetch } from './api';
@@ -46,9 +47,37 @@ export const SIGNATURE_ENDPOINTS = {
   // photo with the chat purpose" reads as a mistake at the call site even
   // when it is correct.
   inquiry: '/uploads/signature',
+  /*
+   * Note attachments. The ONE purpose in this map that is not an image
+   * — see RESOURCE_TYPE below — and the one whose signature route gates
+   * on a ROLE rather than a permission (uploads.ts:
+   * `requireRole(Role.OWNER, Role.FRONT_DESK)`). Every other write in
+   * this screen gates on a permission key because the matrix is
+   * studio-editable; this one cannot, because the server does not.
+   */
+  noteAttachment: '/uploads/note-attachment-signature',
 } as const;
 
 export type UploadPurpose = keyof typeof SIGNATURE_ENDPOINTS;
+
+/*
+ * Cloudinary's resource type is part of the ENDPOINT URL, never a signed
+ * parameter — only `folder` and `timestamp` are ever signed (uploads.ts
+ * says so explicitly). That is why one signature route can serve both:
+ * switching image/upload to auto/upload changes nothing about what was
+ * signed.
+ *
+ * `auto` for note attachments because they can be a PDF or anything
+ * else; posting a PDF to image/upload is rejected. apps/web draws the
+ * same line in its own `uploadRawWithSignature`.
+ */
+const RESOURCE_TYPE: Record<UploadPurpose, 'image' | 'auto'> = {
+  portfolio: 'image',
+  flash: 'image',
+  chat: 'image',
+  inquiry: 'image',
+  noteAttachment: 'auto',
+};
 
 export type UploadStatus =
   | { state: 'idle' }
@@ -75,10 +104,18 @@ export async function ensureLibraryPermission(): Promise<boolean> {
   return asked.granted;
 }
 
-export interface PickedImage {
+/**
+ * Anything pickable and postable: an image from the library or camera, or
+ * a document from the Files app. `uploadToCloudinary` only ever reads
+ * these three fields, which is why one uploader serves both.
+ */
+export interface PickedFile {
   uri: string;
   mimeType: string;
   fileName: string;
+}
+
+export interface PickedImage extends PickedFile {
   /** Present only when `base64` was requested. */
   base64?: string;
 }
@@ -212,7 +249,7 @@ export function uploadToCloudinaryWithProgress(
 export async function uploadToCloudinary(
   token: string,
   purpose: UploadPurpose,
-  image: PickedImage,
+  image: PickedFile,
 ): Promise<string> {
   const signature = await apiFetch<UploadSignature>(SIGNATURE_ENDPOINTS[purpose], { token });
 
@@ -223,10 +260,10 @@ export async function uploadToCloudinary(
   form.append('signature', signature.signature);
   form.append('folder', signature.folder);
 
-  const response = await fetch(`https://api.cloudinary.com/v1_1/${signature.cloudName}/image/upload`, {
-    method: 'POST',
-    body: form,
-  });
+  const response = await fetch(
+    `https://api.cloudinary.com/v1_1/${signature.cloudName}/${RESOURCE_TYPE[purpose]}/upload`,
+    { method: 'POST', body: form },
+  );
 
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
@@ -235,6 +272,51 @@ export async function uploadToCloudinary(
 
   const data = (await response.json()) as { secure_url: string };
   return data.secure_url;
+}
+
+/**
+ * Opens the system document browser. Any file type, matching web's note
+ * composer, whose `<input type="file" multiple>` carries no `accept`.
+ *
+ * `copyToCacheDirectory` is REQUIRED, not an optimisation: on iOS the
+ * picker hands back a security-scoped URL into another app's container,
+ * and `FormData` cannot read it once the picker has closed. Copying
+ * first gives a file this app can actually post.
+ *
+ * `mimeType` can legitimately come back undefined for an extensionless
+ * file. It is defaulted rather than rejected, because the API only
+ * requires the field to be a string and Cloudinary sniffs the content
+ * itself — dropping the person's file over a missing label would be the
+ * app inventing a rule the server does not have.
+ */
+export async function pickDocuments(): Promise<PickedFile[]> {
+  const result = await DocumentPicker.getDocumentAsync({
+    multiple: true,
+    copyToCacheDirectory: true,
+  });
+  if (result.canceled) return [];
+  return result.assets.map((asset) => ({
+    uri: asset.uri,
+    mimeType: asset.mimeType ?? 'application/octet-stream',
+    fileName: asset.name,
+  }));
+}
+
+/**
+ * One note attachment, uploaded and described.
+ *
+ * `filename` and `mimeType` come from the PICKED FILE, never from
+ * Cloudinary's response — web's own comment explains why, and it is a
+ * property of the service rather than a preference: Cloudinary's reply
+ * for a non-image asset carries no human-readable original filename. The
+ * name the person saw when they picked it is the only correct source.
+ */
+export async function uploadNoteAttachment(
+  token: string,
+  file: PickedFile,
+): Promise<{ url: string; filename: string; mimeType: string }> {
+  const url = await uploadToCloudinary(token, 'noteAttachment', file);
+  return { url, filename: file.fileName, mimeType: file.mimeType };
 }
 
 /** Source-image ceiling the API enforces on avatars. */
