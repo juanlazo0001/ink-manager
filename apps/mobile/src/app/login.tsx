@@ -14,6 +14,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import { AuthCardSurface } from '@/components/AuthCardSurface';
 import { ScreenShell } from '@/components/ScreenShell';
 import { GoldGradientButton } from '@/components/GoldGradientButton';
 import { LoginBackdrop } from '@/components/LoginBackdrop';
@@ -121,7 +122,7 @@ export default function LoginScreen() {
             // of the viewport.
             automaticallyAdjustKeyboardInsets
           >
-            <View style={styles.card}>
+            <AuthCardSurface>
               {/* Inside the card, as its first child -- same as web,
                   where the wordmark is the first element of
                   .login-panel-surface rather than floating above it. */}
@@ -211,7 +212,7 @@ export default function LoginScreen() {
               >
                 <Text style={styles.forgotLabel}>CREATE AN ACCOUNT</Text>
               </Pressable>
-            </View>
+            </AuthCardSurface>
 
             {/* Which API this build talks to is otherwise invisible on a
                 phone, and getting it wrong is the most likely reason a
@@ -243,22 +244,6 @@ const styles = StyleSheet.create({
   wordmark: { width: '100%', height: 96, marginBottom: space.sm },
   wordmarkCompact: { width: '100%', height: 72, marginBottom: space.xs },
 
-  // .login-panel-surface. The blur is deliberately NOT reproduced with a
-  // BlurView: the repo's design rules warn that backdrop-filter on a
-  // phone is a real performance risk, and --color-card-glass is already
-  // ~84% opaque (#100f0e at d6), so very little of the photograph reads
-  // through it on web either. A translucent fill over the photo gets the
-  // same result at no cost.
-  card: {
-    width: '100%',
-    // max-w-sm on web.
-    maxWidth: 384,
-    backgroundColor: loginTokens.cardGlass,
-    borderWidth: hairline,
-    borderColor: loginTokens.cardBorder,
-    borderRadius: radius.card,
-    padding: space.xxl,
-  },
 
   // .login-input — note the 5px radius, which is web's own literal, not
   // the card's --radius-card.

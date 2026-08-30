@@ -15,6 +15,7 @@ import {
 
 import { GoldGradientButton } from '@/components/GoldGradientButton';
 import { LoginBackdrop } from '@/components/LoginBackdrop';
+import { AuthCardSurface } from '@/components/AuthCardSurface';
 import { ScreenShell } from '@/components/ScreenShell';
 import {
   emptySignupDraft,
@@ -166,7 +167,7 @@ export default function SignupScreen() {
             contentContainerStyle={[styles.content, compact && styles.contentCompact]}
             keyboardShouldPersistTaps="handled"
           >
-            <View style={styles.card}>
+            <AuthCardSurface>
               {/* INSIDE the card, as the first child -- web's
                   Signup.tsx renders the logo as the first child of
                   .login-panel-surface, and mobile's own login screen
@@ -289,7 +290,7 @@ export default function SignupScreen() {
                   </Pressable>
                 </>
               ) : null}
-            </View>
+            </AuthCardSurface>
           </ScrollView>
         </KeyboardAvoidingView>
       </ScreenShell>
@@ -310,15 +311,6 @@ const styles = StyleSheet.create({
   contentCompact: { paddingVertical: space.lg },
   wordmark: { width: '100%', height: 96, marginBottom: space.sm },
   wordmarkCompact: { width: '100%', height: 72, marginBottom: space.xs },
-  card: {
-    width: '100%',
-    maxWidth: 384,
-    backgroundColor: loginTokens.cardGlass,
-    borderWidth: hairline,
-    borderColor: loginTokens.cardBorder,
-    borderRadius: radius.card,
-    padding: space.xxl,
-  },
   prompt: { ...type.body, color: colors.fg, marginBottom: space.lg, textAlign: 'center' },
   strong: { color: colors.accent },
 

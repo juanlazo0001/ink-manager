@@ -36930,3 +36930,104 @@ verbatim.
 
 Nothing ran on a device. Login was left untouched — checked against web
 and it already matches.
+
+# Session AU (sign-up), part 3 — the frosted surface is real now
+
+Same branch, `session/au-signup`. Login and signup now share one
+`AuthCardSurface` that renders an actual blur, where both previously used
+a flat translucent fill.
+
+## The decision this reverses, and why
+
+Login's own comment recorded the blur as deliberately NOT reproduced: the
+surface is `#100f0ed6` — 84% opaque — so "very little of the photograph
+reads through it on web either", and CLAUDE.md warns about
+`backdrop-filter` on a phone.
+
+The magnitude was right; the conclusion was not. Toggling
+`backdrop-filter` off on web's own login card and sampling a glyph-free
+strip of surface:
+
+    mean brightness   23.08  ->  23.09     unchanged
+    local stdev        4.91  ->   3.38     31% less texture
+
+The blur does not lighten the panel at all. It removes 31% of the
+photograph's texture, which is the entire difference between making out
+the shapes behind the glass and reading it as a soft wash — the frosted
+look itself.
+
+**The standing warning is about the PAIRING**, not the blur: "never
+combine `backdrop-filter` with animation without testing on a real phone
+first". These two cards are static — no animation, translation or fade —
+so the expensive case does not arise. And on iOS this is not a CSS filter
+at all but a native `UIVisualEffectView`. `expo-blur` was already a
+dependency at SDK 54's own bundled version (`~15.0.8`), so Expo Go
+carries it with no new native module.
+
+Per `apps/mobile/AGENTS.md`, checked against the SDK 54 docs rather than
+memory: `intensity` 1-100, `tint: 'dark'` valid, `experimentalBlurMethod`
+is Android-only and defaults to a semi-transparent fallback, and
+`borderRadius` needs `overflow: 'hidden'` — which the component does.
+
+## Two bugs the harness caught, both invisible in source review
+
+**1. The fill was being replaced, not composited.** The first version put
+`backgroundColor: cardGlass` on the `BlurView` itself. `expo-blur`
+supplies its OWN background from `tint`/`intensity`
+(`rgba(25,25,25,0.19)` on web) and it wins — so the card rendered at ~19%
+opacity instead of 84%, the photograph read straight through it, and the
+text contrast the login screen was tuned for was gone.
+
+Fixed by making the fill its own layer over the blur: blur → 84% fill →
+content, which is web's stack exactly.
+
+**2. That fix hid the form.** With two absolutely-positioned backdrop
+layers as siblings, the email and password inputs disappeared entirely —
+a positioned sibling paints above static in-flow content, so the fill
+covered them. The wordmark and the gradient button survived because they
+carry their own positioning, which made it look like a styling quirk
+rather than a stacking bug. Fixed by giving the content its own
+`zIndex: 1` wrapper.
+
+A card with no visible email or password field would have shipped on a
+source read.
+
+## Choosing the intensity
+
+Matched on the texture the blur exists to remove, not by eye:
+
+    web, blur off      4.91     the unblurred photograph
+    web, blur on       3.38     the target
+    iOS, intensity 40  2.38     over-blurred
+    iOS, intensity 20  3.22     shipped
+
+The two cards' mean brightness differs by ~5 levels at ANY intensity, so
+that offset is not the blur — they sit at different heights and therefore
+over different parts of the same photograph. Not chased, because matching
+it would mean tuning a fill token to a sampling artifact.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 2.26s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+`design-refs/session-au-signup/frosted.png` — web blurred, web unblurred
+(what mobile had), and mobile now.
+
+### Not verified, and this one matters
+
+**Every number here is the WEB rendering of `BlurView`**, where it
+degrades to `backdrop-filter`. iOS runs a native `UIVisualEffectView`
+with entirely different internals, so `BLUR_INTENSITY = 20` is a starting
+point the device gate confirms or corrects. It is deliberately a single
+named constant for exactly that reason.
+
+Android is excluded and falls back to the flat fill — its blur is a
+different, heavier implementation and this app is iPhone-targeted.
+
+Performance on a real phone is likewise unmeasured. The cards are static,
+which is the case CLAUDE.md's warning exempts, but "static" is an
+argument and not a frame counter.
