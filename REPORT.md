@@ -35753,3 +35753,199 @@ this session did not touch — the card still shows what AR-1 left.
 ## Database
 
 No schema change, no migration, no backfill. No production contact.
+
+# Session AR-4 — note attachments, any file type
+
+Branch `session/ar4-note-attachments` in its own worktree, cut from `main`
+(`7528d9e`). Mobile-only, plus the one dependency named below.
+
+## What was already there
+
+`lib/inquiryNotes.ts` has carried `attachments: NoteAttachment[] | null`
+and `NoteInput.attachments` since AR-2. Nothing rendered them and nothing
+sent them. So this session is display, pick, upload, send and remove — not
+a new data path.
+
+## The premise that was wrong, and the measurement that corrected it
+
+Web's own comment says `auto/upload` is needed because attachments "can be
+any file type (PDFs, docs, etc.)". I repeated that reasoning and then
+tested it against real Cloudinary with a real signature:
+
+| file | `image/upload` | `auto/upload` |
+| --- | --- | --- |
+| PDF | **ok** — `resource_type: image` | ok — `resource_type: image` |
+| `.txt` | **ERROR: Invalid image file** | ok — `resource_type: raw` |
+| `.docx` | **ERROR: Unsupported ZIP file** | ok — `resource_type: raw` |
+
+**A PDF is not the reason.** Cloudinary rasterises PDFs and accepts them
+on the image endpoint quite happily. The endpoint change is load-bearing
+for text and Office documents, which is a different and narrower claim
+than the one on record. Worth correcting because the stated rationale is
+what a future reader would rely on.
+
+Probe assets were deleted afterwards; the folder holds only the two
+pre-existing 2026-07-24 files it started with.
+
+## The gate is a ROLE, and that is not a style choice
+
+`GET /uploads/note-attachment-signature` is
+`requireRole(Role.OWNER, Role.FRONT_DESK)` with no permission key behind
+it. Verified against the live dev API rather than read off the source:
+
+    OWNER       -> 200  (signature)
+    FRONT_DESK  -> 200  (signature)
+    ARTIST      -> 403  {"error":"Forbidden"}
+
+Every other control on this screen gates on a permission, deliberately,
+because the matrix is studio-editable. This one cannot. An ARTIST holding
+`inquiries.notes.manage` can still write notes and simply cannot obtain a
+signature, so a permission-gated paperclip would 403 on tap.
+
+The falsifiable pair, driven in the harness with all note permissions
+granted in BOTH cases so only the role differs:
+
+    OWNER   editor opens, can save, attach control PRESENT
+    ARTIST  editor opens, can save, attach control ABSENT
+
+A naive `inquiries.notes.manage` gate passes the OWNER row and fails the
+ARTIST row.
+
+## The wire, captured
+
+Two files picked in one go, uploaded on pick:
+
+    POST https://api.cloudinary.com/v1_1/<cloud>/auto/upload   x2
+    GET  /uploads/note-attachment-signature                    x2
+
+Two signatures for two files — fetched fresh per upload, matching web's
+own stale-signature reasoning rather than caching one.
+
+Then the note write:
+
+    POST /inquiries/inq-fixture/notes
+    attachments: [
+      {"url":"…/probe","filename":"ar4-probe.txt",
+       "mimeType":"text/plain"},
+      {"url":"…/probe","filename":"ar4-probe.docx",
+       "mimeType":"application/vnd.openxmlformats-officedocument…"}
+    ]
+
+`filename` and `mimeType` come from the PICKED FILE, and this run proves
+it rather than asserting it: the stubbed Cloudinary response returned a
+URL ending `/probe` carrying no name at all, and the correct filenames
+still went out. Cloudinary's reply for a non-image asset has no
+human-readable original filename, so the picked file is the only source.
+
+### The accident that made a real test
+
+Both stubbed uploads returned the SAME url. That is exactly the case a
+url-keyed remove gets wrong, so it was worth running:
+
+    before  [Remove ar4-probe.txt, Remove ar4-probe.docx]
+    remove the .txt
+    after   [Remove ar4-probe.docx]
+
+Removal is by index. A url-keyed filter would have taken both. The same
+file attached twice is two legitimate entries.
+
+## Validation, and a positive sibling
+
+The route's `isValidAttachments` enforced, against the live dev API:
+
+    missing mimeType             -> 400
+    filename not a string        -> 400
+    attachments not an array     -> 400
+    valid (control)              -> 201
+
+The 201 is there on purpose: three 400s alone would also be produced by a
+route that rejected everything. Both probe notes were deleted afterwards
+and the dev inquiry is back to its original two.
+
+## One deliberate improvement on web, stated
+
+Web renders an `<img>` with no error path, so an attachment URL that
+fails to load leaves an empty box with nothing identifying the file. The
+mobile chip falls back to the document icon on `onError`, so a chip always
+shows something beside its filename. Visible in
+`design-refs/session-ar4/note-attachments.png`, where the fixture's image
+URL is deliberately dead.
+
+## The dependency
+
+`expo-document-picker@~14.0.8`, added with `expo install` so the SDK
+resolves the version rather than npm. It is in SDK 54's own
+`bundledNativeModules.json` alongside `expo-image-picker@~17.0.11`, which
+this app already uses inside Expo Go on the owner's phone — so it needs no
+custom dev client. **The device gate is what proves that, not this note.**
+
+`copyToCacheDirectory: true` is required rather than optional: on iOS the
+picker returns a security-scoped URL into another app's container that
+`FormData` cannot read once the picker closes.
+
+This necessarily touched the root `package-lock.json` — unavoidable in an
+npm workspace — alongside `apps/mobile/package.json`. Flagged because the
+standing rule is no root dependency writes; the lockfile entry is the
+mobile dependency, not a root one.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean (5.77 MB)
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 15.69s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+### Retested vs untouched
+
+**Retested:** both Cloudinary endpoints against three real file types; the
+role gate at all three roles against the live API; the upload wire; the
+note body; removal with duplicate URLs; validation with a positive
+sibling; the chip's three branches.
+
+**NOT retested:** a real device — `expo-document-picker` was driven
+through its WEB path (an `input type=file`), which is not the native iOS
+document browser. Whether the iOS picker returns a readable URI is
+device-gate-only, and it is the single most likely thing to behave
+differently. Also not driven: an upload FAILING mid-batch (the code keeps
+earlier successes and surfaces the message, but I did not force it); the
+edit path's attachment changes against the real API, as opposed to the
+fixture; 320pt.
+
+## What did not ship
+
+**A size cap.** Web has none, and inventing one on mobile would be a rule
+the server does not have. Cloudinary's own limit surfaces verbatim.
+
+**Attachments on APPOINTMENT notes.** The same routes exist
+(`/appointments/:id/notes`, same validator, same role gate on the
+signature) and the mobile appointment screen has no note editor at all
+yet, so it is a screen's worth of work rather than a follow-on.
+
+## Findings
+
+1. **The recorded reason for `auto/upload` is wrong in its specifics** —
+   PDFs work on either endpoint; text and Office files are what need it.
+   Web's comment and this one now disagree, deliberately.
+2. **`/uploads/note-attachment-signature` is the one role-gated upload.**
+   Anything that later offers note attachments to an ARTIST needs a server
+   change first, not a client one.
+3. **The save button blocks while an upload is in flight.** Saving mid-
+   upload would store a note missing the file the person just picked, with
+   nothing on screen saying so.
+4. **`npm run dev:api` starts a 15-minute real-SMS reminder ticker**
+   against the dev database, with no env guard on the scheduler. Use
+   `SMS_DRY_RUN=true`, which is purpose-built and force-disabled in
+   production. Found while setting up this session's verification; belongs
+   in CLAUDE.md's Environment section.
+5. **`scripts/new-session.ps1` fails under Windows PowerShell 5.1**
+   whenever git or npm writes to stderr — `$ErrorActionPreference = 'Stop'`
+   turns a progress line into a terminating NativeCommandError. It left a
+   half-built worktree (created, env files copied, `npm ci` not run). The
+   mandated entry point does not currently work in the default shell here.
+
+## Database
+
+No schema change, no migration, no backfill. Two probe notes were created
+and deleted on the dev inquiry; four probe assets were uploaded to and
+deleted from the dev Cloudinary account. **No production contact.**

@@ -7,6 +7,7 @@ import { AssignArtistSheet } from '@/components/AssignArtistSheet';
 import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
 import { ConsultationSheet } from '@/components/ConsultationSheet';
 import { EstimateSheet } from '@/components/EstimateSheet';
+import { AttachmentChip } from '@/components/AttachmentChip';
 import { NoteBody } from '@/components/NoteBody';
 import { NoteEditor } from '@/components/NoteEditor';
 import { CalendarIcon, PersonIcon, PlusIcon, SendIcon, TrashIcon } from '@/components/icons';
@@ -37,6 +38,7 @@ import {
   deleteInquiryNote,
   fetchInquiryNotes,
   updateInquiryNote,
+  type NoteAttachment,
   type InquiryNote,
 } from '@/lib/inquiryNotes';
 import { screenErrorMessage } from '@/lib/screenError';
@@ -121,6 +123,18 @@ export default function StaffInquiryScreen() {
   /* Same rule as assignment: the PERMISSION, at the record's studio. All
      four note routes gate on this one key. */
   const canManageNotes = (session?.profile.permissions ?? []).includes('inquiries.notes.manage');
+
+  /*
+   * Attaching is the ONE control on this screen gated on a ROLE rather
+   * than a permission, because the server gates it that way:
+   * `GET /uploads/note-attachment-signature` is
+   * `requireRole(Role.OWNER, Role.FRONT_DESK)` with no permission key
+   * behind it. An ARTIST holding `inquiries.notes.manage` can still
+   * write notes — they simply cannot obtain an upload signature, so
+   * offering them the control would produce a 403 and nothing else.
+   */
+  const canAttachToNote =
+    session?.profile.role === 'OWNER' || session?.profile.role === 'FRONT_DESK';
 
   /*
    * `inquiries.sendEstimate` — FRONT_DESK holds it by default, ARTIST
@@ -253,14 +267,14 @@ export default function StaffInquiryScreen() {
    * so the optimistic object would be a guess at its own content.
    */
   const onSaveNote = useCallback(
-    async (bodyHtml: string, visibleToArtist: boolean) => {
+    async (bodyHtml: string, visibleToArtist: boolean, attachments: NoteAttachment[]) => {
       if (!token || !id) return;
       setSavingNote(true);
       setNoteError(null);
       try {
         const saved = editing
-          ? await updateInquiryNote(token, id, editing.id, { bodyHtml, visibleToArtist })
-          : await createInquiryNote(token, id, { bodyHtml, visibleToArtist });
+          ? await updateInquiryNote(token, id, editing.id, { bodyHtml, visibleToArtist, attachments })
+          : await createInquiryNote(token, id, { bodyHtml, visibleToArtist, attachments });
         setNotes((current) => {
           const rest = (current ?? []).filter((n) => n.id !== saved.id);
           return editing ? [...rest, saved].sort(byNewest) : [saved, ...rest].sort(byNewest);
@@ -781,6 +795,16 @@ export default function StaffInquiryScreen() {
                       ) : null}
                     </View>
                     <NoteBody html={note.bodyHtml} />
+                    {/* Below the body, matching web's own order. No
+                        remove control here — a posted note's attachments
+                        change through the editor, so the chip is a link. */}
+                    {note.attachments && note.attachments.length > 0 ? (
+                      <View style={styles.noteAttachments}>
+                        {note.attachments.map((attachment, i) => (
+                          <AttachmentChip key={`${attachment.url}-${i}`} attachment={attachment} />
+                        ))}
+                      </View>
+                    ) : null}
                   </View>
                 );
               })
@@ -823,6 +847,9 @@ export default function StaffInquiryScreen() {
             }}
             initialHtml={editing?.bodyHtml ?? ''}
             initialVisibleToArtist={editing?.visibleToArtist ?? false}
+            initialAttachments={editing?.attachments ?? []}
+            token={token!}
+            canAttach={canAttachToNote}
             saving={savingNote}
             error={noteError}
             onSave={onSaveNote}
@@ -878,6 +905,7 @@ const styles = StyleSheet.create({
   lineMeta: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
   revert: { ...type.small, color: colors.danger, paddingTop: space.sm },
+  noteAttachments: { gap: space.xs, alignItems: 'flex-start', paddingTop: space.sm },
   /* Accent, not danger: a buffer breach is information the studio asked
      to be told, not a failure. */
   bufferWarning: { ...type.small, color: colors.accent, paddingBottom: space.sm },

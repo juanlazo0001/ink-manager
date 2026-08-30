@@ -2,11 +2,13 @@ import Feather from '@expo/vector-icons/Feather';
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { AttachmentChip } from '@/components/AttachmentChip';
 import { GoldGradientButton } from '@/components/GoldGradientButton';
 import { Sheet } from '@/components/Sheet';
 import { SwitchField, TextField } from '@/components/form/Fields';
 import { QuietButton } from '@/components/ui';
-import { isBlankNoteHtml } from '@/lib/inquiryNotes';
+import { isBlankNoteHtml, type NoteAttachment } from '@/lib/inquiryNotes';
+import { pickDocuments, pickerErrorMessage, uploadNoteAttachment } from '@/lib/upload';
 import {
   parseNoteHtml,
   serialiseNoteHtml,
@@ -125,6 +127,9 @@ export function NoteEditor({
   onClose,
   initialHtml,
   initialVisibleToArtist,
+  initialAttachments,
+  token,
+  canAttach,
   saving,
   error,
   onSave,
@@ -134,10 +139,22 @@ export function NoteEditor({
   /** Empty for a new note; the stored HTML when editing one. */
   initialHtml: string;
   initialVisibleToArtist: boolean;
+  /** What the note already carries; empty for a new one. */
+  initialAttachments: NoteAttachment[];
+  token: string;
+  /*
+   * OWNER or FRONT_DESK only — and this is a ROLE check, deliberately,
+   * against this screen's own rule of gating on permissions. The
+   * signature route (`GET /uploads/note-attachment-signature`) is
+   * `requireRole(Role.OWNER, Role.FRONT_DESK)`, with no permission key
+   * behind it, so an ARTIST cannot obtain a signature at all. Gating
+   * this on a permission would show them a control that 403s.
+   */
+  canAttach: boolean;
   saving: boolean;
   /** The route's own message on failure, surfaced verbatim. */
   error: string | null;
-  onSave: (bodyHtml: string, visibleToArtist: boolean) => void;
+  onSave: (bodyHtml: string, visibleToArtist: boolean, attachments: NoteAttachment[]) => void;
 }) {
   const parsed = useMemo(() => blocksToLines(parseNoteHtml(initialHtml)), [initialHtml]);
   const [lines, setLines] = useState<Line[]>(parsed.lines);
@@ -145,6 +162,9 @@ export function NoteEditor({
   const [focused, setFocused] = useState(0);
   const [linkFor, setLinkFor] = useState<number | null>(null);
   const [linkDraft, setLinkDraft] = useState('');
+  const [attachments, setAttachments] = useState<NoteAttachment[]>(initialAttachments);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   // Re-seed whenever the sheet opens on a different note.
   const [seed, setSeed] = useState(initialHtml);
@@ -152,8 +172,44 @@ export function NoteEditor({
     setSeed(initialHtml);
     setLines(parsed.lines);
     setShare(initialVisibleToArtist);
+    setAttachments(initialAttachments);
+    setUploadError(null);
     setFocused(0);
   }
+
+  /*
+   * Uploads happen ON PICK, not on save — web's own composer does the
+   * same, and its comment gives the reason: the chip appears as each
+   * result resolves. It also means the save request carries URLs that
+   * already exist, so a slow upload can never make a note look saved
+   * when its file has not landed.
+   *
+   * Each file is uploaded in turn and appended as it resolves, so
+   * picking five and having the third fail still keeps the first two.
+   */
+  const onAttach = async () => {
+    setUploadError(null);
+    let picked;
+    try {
+      picked = await pickDocuments();
+    } catch (err) {
+      setUploadError(pickerErrorMessage(err));
+      return;
+    }
+    if (picked.length === 0) return;
+
+    setUploading(true);
+    try {
+      for (const file of picked) {
+        const uploaded = await uploadNoteAttachment(token, file);
+        setAttachments((current) => [...current, uploaded]);
+      }
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'File upload failed.');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const html = useMemo(() => serialiseNoteHtml(linesToBlocks(lines)), [lines]);
   const blank = isBlankNoteHtml(html);
@@ -292,6 +348,46 @@ export function NoteEditor({
         ) : null}
 
         {/*
+          Attachments. Any file type, matching web — a note attachment
+          goes through Cloudinary's auto/upload, so it can be a PDF or
+          anything else, and the chip identifies it by name.
+        */}
+        {canAttach ? (
+          <View style={styles.attachBlock}>
+            <Pressable
+              onPress={() => void onAttach()}
+              disabled={uploading}
+              accessibilityRole="button"
+              accessibilityLabel="Attach a file"
+              accessibilityState={{ disabled: uploading }}
+              style={[styles.attachButton, uploading && styles.disabled]}
+            >
+              <Feather name="paperclip" size={16} color={colors.fgMuted} />
+              <Text style={styles.attachLabel}>
+                {uploading ? 'Uploading…' : 'Attach a file'}
+              </Text>
+            </Pressable>
+
+            {attachments.length > 0 ? (
+              <View style={styles.chips}>
+                {attachments.map((attachment, i) => (
+                  <AttachmentChip
+                    /* Index, not url: the same file attached twice is
+                       two legitimate entries, and removing one must not
+                       take both. */
+                    key={`${attachment.url}-${i}`}
+                    attachment={attachment}
+                    onRemove={() => setAttachments((c) => c.filter((_, j) => j !== i))}
+                  />
+                ))}
+              </View>
+            ) : null}
+
+            {uploadError ? <Text style={styles.error}>{uploadError}</Text> : null}
+          </View>
+        ) : null}
+
+        {/*
           `visibleToArtist`. Defaults FALSE, which is the column's own
           default and the original design intent recorded on the schema —
           a note is "never shown to the client or shared with an artist"
@@ -311,8 +407,11 @@ export function NoteEditor({
           <QuietButton label="Cancel" onPress={onClose} style={styles.action} />
           <GoldGradientButton
             label={saving ? 'Saving…' : 'Save note'}
-            onPress={() => !blank && !saving && onSave(html, share)}
-            style={[styles.action, (blank || saving) && styles.disabled]}
+            /* Blocked while an upload is in flight: saving now would
+               store a note missing the file the person just picked, with
+               nothing on screen to say so. */
+            onPress={() => !blank && !saving && !uploading && onSave(html, share, attachments)}
+            style={[styles.action, (blank || saving || uploading) && styles.disabled]}
           />
         </View>
       </View>
@@ -406,6 +505,20 @@ const styles = StyleSheet.create({
   linkActions: { flexDirection: 'row', gap: space.sm },
 
   error: { ...type.small, color: colors.danger },
+  attachBlock: { gap: space.sm },
+  attachButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: space.xs,
+    paddingVertical: space.xs,
+    paddingHorizontal: space.sm,
+    borderRadius: radius.input,
+    borderWidth: hairline,
+    borderColor: colors.border,
+  },
+  attachLabel: { ...type.small, color: colors.fgMuted },
+  chips: { gap: space.xs, alignItems: 'flex-start' },
   actions: { flexDirection: 'row', gap: space.md },
   action: { flex: 1 },
   disabled: { opacity: 0.5 },
