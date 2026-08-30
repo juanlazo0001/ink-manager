@@ -34458,3 +34458,178 @@ Also untouched, as instructed: the Inquiries/Projects toggle,
 ## Database
 
 No schema change, no migration, no backfill, no database contact.
+
+# Session AQ — photo card fine-tune
+
+Branch `session/aq-card-finetune` in its own worktree, cut from `main`
+(`4511a0b`, AP merged and tip-verified). Mobile-only: one component file.
+
+Four owner calibrations. All four are **deliberate divergences from the
+values AP measured off `intended-target.jpg`**, so AP's measurements are
+left standing in the code and each change is recorded on top of them as a
+review decision rather than a correction. That is the whole of this
+session's bookkeeping instruction and it is worth saying plainly: nothing
+below means AP measured wrong.
+
+## A note on item 1's lever, because the mechanism changed under it
+
+The brief asks to "reduce the base scrim by a few percent". **There is no
+base scrim.** AP built one, measured it, and removed it: a black scrim
+MULTIPLIES, so it scales every source by one transmission and can darken
+a bright photo but never lift a dark one — it cannot converge them at any
+value. What shipped instead is the photo composited at low opacity over
+the card's own `surfaceInset` ground.
+
+So the equivalent control is that opacity, where scrim-equivalent is
+`1 - PHOTO_OPACITY`:
+
+    scrim-equivalent   0.82  ->  0.79     a 3.7% relative reduction
+    photo opacity      0.18  ->  0.21
+
+Lighter is therefore MORE photo, not less scrim.
+
+## 1. Wash one step lighter — and what it costs uniformity
+
+Re-sampled with AP's own method (photo band 0.06–0.50 of card height,
+0.06–0.45 of width; the AP render on disk is the baseline, same fixture,
+same cases):
+
+| card | AP | AQ | delta |
+| --- | --- | --- | --- |
+| bright (source ~202) | 44.7 | **49.8** | +5.1 |
+| dark (source ~46) | 18.8 | **19.7** | +0.8 |
+| no-photo fallback | 14.0 | **14.0** | 0.0 |
+| pure white (source 255) | 53.6 | **60.6** | +7.0 |
+
+**Convergence still holds, and it loosened by exactly the arithmetic.**
+The bright–dark gap goes 25.8 → 30.1, +16.7%, which is the opacity change
+(0.18 → 0.21) to the digit. That is not a defect and it is not avoidable:
+in a linear composite the gap between two sources IS the opacity times
+their difference, so any lighter wash converges less tightly. The brief
+required that bright and dark "must still converge" — they do, at a
+compression factor of 0.21 against a 155-level source difference. For
+realistic photo variety (the device's own photos spanned ~42 levels of
+source) that is now **8.8 levels apart, against AP's 7.6 and the
+target's 8.3** — still inside the target's own band.
+
+The no-photo fallback is unmoved at 14.0, as expected: it has no photo to
+show more of.
+
+## 2. Card a step taller
+
+`CARD_RATIO` 3.77 → **3.60**.
+
+    361pt card    95.8pt  ->  100.3pt     +4.7%
+
+Measured on the render: 361 × 100.3 border box, ratio **3.60**. Internal
+proportions untouched — same `space-between`, same padding
+relationships — so the card gains height without redistributing its
+contents.
+
+## 3. Description one step greyer — the tension resolved, no trade needed
+
+`fgSecondary` (#c7bea9) → **`fgMuted`** (#9b927f).
+
+This is the change that fights item 1: greyer text on a lighter wash cuts
+contrast from both ends. The instruction was to prioritise legibility and
+report the tension if the floor were threatened. It was not:
+
+| element | AP | AQ | |
+| --- | --- | --- | --- |
+| client name | 10.50:1 | **10.27:1** | PASS |
+| **description** | 8.91:1 | **5.22:1** | PASS |
+| date | 10.20:1 | **9.63:1** | PASS |
+| status chip (neutral) | 5.27:1 | **5.33:1** | PASS |
+| status chip (purple) | 6.92:1 | **7.01:1** | PASS |
+
+Worst element on any card: **5.22:1** against a 4.5 floor — the
+description, which was not the worst element before (the neutral chip
+was). It clears with about 16% of headroom.
+
+**Both adjustments landed, but the margin is now thin and it is worth
+knowing where it went.** AP had roughly 2× of headroom on this line; AQ
+has 0.16×. Another step down the muted scale, or another lightening of
+the wash, would not fit — the next greyer token would fail. If a future
+session wants either, the description's colour is the constraint to
+solve first.
+
+**The chips were checked rather than assumed.** A lighter wash thins
+their ground too, and the neutral chip was AP's worst element at 5.27:1.
+It is unchanged (5.33:1) because the chip's own 0.72 backing dominates
+what sits under it — the photo barely reaches it.
+
+## 4. Internal padding, a uniform step up
+
+    top         4 -> 8      bottom  8 -> 12      horizontal  12 -> 16
+
+The brief offers two paths: match the target's breathing room "if AP's
+measurement suggests it was under-applied; otherwise a uniform step up".
+**AP's measurements say it was not under-applied** — against the target
+the insets already met or exceeded it, so this takes the second path as
+an owner calibration, knowingly moving further from the target's
+proportions:
+
+| metric | target | AP | **AQ** |
+| --- | --- | --- | --- |
+| ratio | 3.77 | 3.76 | **3.60** |
+| chip row from top | 0.108 | 0.135 | **0.170** |
+| name row starts | 0.578 | 0.531 | **0.510** |
+| description to bottom | 0.138 | 0.135 | **0.170** |
+| left inset | 0.035 | 0.039 | **0.050** |
+
+**The name block is not squeezed** — this was the risk flagged before
+starting, since a taller card and bigger insets pull opposite ways. Its
+glyph span went 0.333 → **0.320** of card height, so it gained room
+proportionally; item 2's extra 4.5pt more than covered item 4's extra
+8pt of vertical inset.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            ✓ built in 19.25s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+    worktree      npm ci (by scripts/new-session.ps1)
+
+**390/393pt** (`after-393.png`) and **320pt** (`after-320.png`):
+`bodyScrollsHorizontally: false`, no non-scrollable overflow, ratio holds
+at 3.60 on both, longest chip and longest name intact.
+
+`design-refs/session-aq/strip-ap-vs-aq.png` is the before/after strip
+across bright photo, dark photo and no-photo fallback.
+
+`expo export --platform web` still fails on `main` and here, identically
+and for the pre-existing reason recorded in AP's report
+(`Cannot find module 'expo-router/build/utils/url'` from `@expo/cli`'s
+static-render step, after bundling succeeds). Unchanged by this session.
+
+### Retested vs untouched
+
+**Retested:** every number in every table, measured on the actual render
+rather than derived; the AP column is re-measured from AP's committed
+render with the same script, not copied from AP's report.
+
+**NOT retested:** scroll performance. Same standing device-gate item as
+AO and AP — the harness renders a handful of cards in a `ScrollView`, not
+a recycling `FlatList` under a finger. This session makes cards ~5%
+taller, which means marginally fewer on screen at once; no reason to
+expect a change, but it is not measured here.
+
+Untouched, as instructed: the Inquiries/Projects toggle, `ScreenTitle`,
+the filters, navigation, and the no-photo fallback's behaviour.
+
+## Findings
+
+1. **The description's contrast margin is now the binding constraint on
+   this card**, at 5.22:1. It was 8.91:1 and was not the worst element;
+   it is now both. Any further lightening of the wash or greying of the
+   text needs it solved first.
+2. **Convergence and wash lightness trade linearly and cannot both be
+   maximised.** The bright–dark gap is exactly `opacity x source
+   difference`. Recorded so a future "lighter still" request is
+   understood to be a convergence request in the opposite direction.
+
+## Database
+
+No schema change, no migration, no backfill, no database contact.
