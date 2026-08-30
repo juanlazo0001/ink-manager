@@ -35275,3 +35275,159 @@ real time per path.
 
 No schema change, no migration, no backfill. No production contact; all
 write testing against the scratchpad fixture.
+
+# Session AR-2b — the note editor, and note CRUD
+
+Branch `session/ar2b-note-editor` in its own worktree, cut from `main`
+(`9be6ff8`). Mobile-only. Three of the four items AR-2 left open now
+ship; attachments do not — see the closing section.
+
+## The editor, and the deviation stated plainly
+
+Web composes notes with TipTap (ProseMirror): a true WYSIWYG surface
+where marks apply to an arbitrary character range. **This is not that**,
+and the brief sanctions the difference — "if a full rich-text editor is
+disproportionate on mobile, implement the same formatting set with a
+lighter native approach and state the deviation; the STORED format must
+match web's exactly".
+
+**Same:** the formatting set — bold, italic, underline, h2, h3, bullet
+list, ordered list, link — and, exactly, the stored HTML.
+
+**Different:** formatting applies PER LINE rather than to a selection. A
+line is a paragraph, a heading, or a list item, and a mark applies to the
+whole line.
+
+### Why per line, rather than per selection
+
+React Native exposes a `TextInput`'s `selection` but gives no way to
+render mixed styling INSIDE an editable input — styled spans are
+display-only. So a selection-based editor on RN means owning a rich
+document model and reimplementing text layout, caret and selection on
+top of it. That is precisely the "disproportionate" the brief
+anticipated.
+
+Per line is honest rather than pretending: what you can express, you can
+see. And it makes the format guarantee structural — **the editor never
+manipulates HTML at all.** It edits `Block[]` and hands them to
+`serialiseNoteHtml`, so it cannot emit a tag outside the allowed set even
+in principle.
+
+### What that costs, said on screen rather than hidden
+
+Opening a note web wrote parses it to blocks. A block whose text carries
+MIXED marks — bold on half a sentence — collapses to its first span's
+marks, because that is the most this model holds. The editor **detects
+that case and says so above the fields** before you save, rather than
+quietly rewriting someone's note.
+
+## The evidence that matters: what actually goes on the wire
+
+Composed a note in the editor — line one styled as a heading, line two
+bolded — pressed save, and captured the outgoing request body:
+
+    POST /inquiries/inq-fixture/notes
+    {"bodyHtml":"<h2>Session plan</h2><p><strong>Deposit taken</strong></p>",
+     "visibleToArtist":false}
+
+`<h2>`, `<p>`, `<strong>` — inside `ALLOWED_TAGS`, `<strong>` not `<b>`,
+no stray attributes. That is web's format exactly. The note then rendered
+back through `NoteBody` as a heading and a bold line, so the full round
+trip is closed: composed on mobile, serialised, stored, parsed, rendered.
+
+## Write paths, all four, against labelled fixtures
+
+Fixture clients are `QA FIXTURE …`; no real numbers. Notes are
+studio-internal and dispatch nothing.
+
+| path | observed |
+| --- | --- |
+| **GET** notes | seeded note renders with bold + a two-item bullet list, marked SHARED WITH ARTIST |
+| **POST** | body above; note appears, newest first |
+| **DELETE**, failing (403) | note removed optimistically, then **restored in place**, with `Your role does not have access to that note.` |
+| blank body | save disabled — the client mirrors the route's own `isBlankHtml`, so an empty editor cannot fire a doomed request |
+
+`design-refs/session-ar2b/notes-card-crud.png` shows all of it at once:
+the revert notice, the note this session composed, the seeded note with
+its SHARED badge, and the other author's note restored.
+
+**An OWNER sees edit/delete on another author's note, and that is
+correct** — `canModifyNote` is "the note's own author, or any OWNER",
+which `lib/notes.ts` states is the same "OWNER can always act" precedent
+every other author-scoped permission here follows. FRONT_DESK would see
+controls only on their own.
+
+**Not verified:** that the optimistic delete's row visibly disappears
+before the failure returns. The probe checked 400ms after the tap and the
+row was already back — the fixture answers in well under that locally.
+The state update is synchronous before the await, so the sequence is
+right by construction, but the intermediate frame was not caught.
+
+## A bug this session found in its own AR-2 work
+
+The delete failure first read:
+
+    "Your role does not have access to that note could not be deleted."
+
+`screenErrorMessage(err, subject)` substitutes its second argument into
+its own sentences — `Your role does not have access to ${subject}.` — so
+`subject` must be a NOUN. I had passed clauses.
+
+**The same mistake is in AR-2's assignment path, already merged**
+(`'that artist could not be assigned'`). It escaped AR-2's evidence table
+only because that fixture returned 400, which takes the `err.message`
+branch; a real 403 would have produced the same mangled sentence. All
+three call sites are corrected here, with the reason recorded at the
+first one.
+
+Re-verified: `Your role does not have access to that note.`
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            ✓ built in 14.72s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+    noteHtml      round-trip harness              16/16, all idempotent
+
+320pt: `bodyScrollsHorizontally: false`, no non-scrollable overflow.
+
+### Retested vs untouched
+
+**Retested:** all four note paths; the corrected error copy; the
+round-trip harness after the day's edits.
+
+**NOT retested:** assignment (unchanged this session apart from the error
+string), and the artist-facing `inquiry/[id]` notes card.
+
+## What did NOT ship
+
+**Attachments.** `InquiryNote.attachments` is
+`Array<{url, filename, mimeType}>` uploaded through Cloudinary's
+`auto/upload` — deliberately a DIFFERENT endpoint from
+`Message.attachments`' image-only `image/upload` path, because a note may
+carry any file type and needs the original filename and MIME for a
+file-icon display. The API layer here already types and passes
+`attachments`, so the wiring point exists; the picker, the signed upload
+and the file-chip rendering do not. That is its own increment.
+
+Also still open from the AR set: AR-3 (estimate + booking), and AR-1's
+items 2a/2b/2f, which remain blocked on
+`design-refs/session-ar/web-inquiry-detail.jpeg`.
+
+## Findings
+
+1. **`screenErrorMessage` takes a noun, and nothing enforces it.** Two
+   sessions passed clauses and produced ungrammatical errors that only
+   appear on a 403. Worth a doc comment on the function, or a rename of
+   the parameter, rather than relying on call sites reading the template.
+2. **A fresh worktree's first `expo start` is very slow**, and a stalled
+   instance still claims its port — the retry then dies with
+   "Port N is being used" and `Skipping dev server` in non-interactive
+   mode. Kill the holder and move ports rather than waiting.
+
+## Database
+
+No schema change, no migration, no backfill. No production contact; all
+write testing against the scratchpad fixture.
