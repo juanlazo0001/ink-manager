@@ -3,6 +3,9 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { AssignArtistSheet } from '@/components/AssignArtistSheet';
+import { CardActionRow, CardIconButton } from '@/components/CardIconButton';
+import { PersonIcon } from '@/components/icons';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { Banner } from '@/components/Banner';
 import { Card, CardEmpty, Fact } from '@/components/editorial';
@@ -19,6 +22,7 @@ import { channelLabel } from '@/lib/inquiryDisplay';
 import { screenErrorMessage } from '@/lib/screenError';
 import {
   artistName,
+  assignInquiryArtist,
   fetchStaffInquiryDetail,
   pipelineStages,
   type StaffInquiryDetail,
@@ -71,6 +75,25 @@ export default function StaffInquiryScreen() {
   const [inquiry, setInquiry] = useState<StaffInquiryDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
+  /* Shown on the card itself after a failed write, not only inside the
+     sheet — the sheet closes on the optimistic update, so a failure that
+     spoke only there would be invisible. */
+  const [revertNotice, setRevertNotice] = useState<string | null>(null);
+
+  /*
+   * Whether this caller may assign at all.
+   *
+   * The PERMISSION, never the role: `PATCH /:id/assign` has no
+   * requireRole and gates on hasPermissionAt(..., 'inquiries.assignArtist')
+   * at the record's studio. By default FRONT_DESK has it and ARTIST does
+   * not, but the matrix is studio-editable, so reading the role here
+   * would be a second source of truth that can disagree with the server.
+   */
+  const canAssign = (session?.profile.permissions ?? []).includes('inquiries.assignArtist');
+
   /* Nine sections would be a lot to scroll past; these are seven and the
      top three are the ones an owner opens this screen for. The rest stay
      one tap away, which is the client page's own balance. */
@@ -80,6 +103,50 @@ export default function StaffInquiryScreen() {
     estimate: true,
   });
   const toggle = (key: string) => setOpen((o) => ({ ...o, [key]: !o[key] }));
+
+  /*
+   * OPTIMISTIC, with a visible revert.
+   *
+   * The card shows the new artist immediately, because the common case
+   * is success and a spinner on a name is worse than the name. On
+   * failure the previous inquiry is put back verbatim — not re-fetched,
+   * which could race with whatever else changed — and a notice appears
+   * ON THE CARD saying so, because by then the sheet has closed.
+   *
+   * The success path settles on the route's OWN response rather than the
+   * guess: a first assignment also moves status NEW -> ARTIST_ASSIGNED
+   * server-side, and the optimistic object cannot know that.
+   */
+  const onAssign = useCallback(
+    async (artist: { id: string; user: { name: string | null; email: string } }) => {
+      if (!token || !id || !inquiry) return;
+      const previous = inquiry;
+
+      setAssigning(true);
+      setAssignError(null);
+      setRevertNotice(null);
+      setInquiry({
+        ...inquiry,
+        assignedArtistId: artist.id,
+        assignedAt: new Date().toISOString(),
+        assignedArtist: { id: artist.id, user: { name: artist.user.name, email: artist.user.email } },
+      });
+      setAssignOpen(false);
+
+      try {
+        const updated = await assignInquiryArtist(token, id, artist.id);
+        setInquiry(updated);
+      } catch (err) {
+        setInquiry(previous);
+        const message = screenErrorMessage(err, 'that artist could not be assigned');
+        setAssignError(message);
+        setRevertNotice(message);
+      } finally {
+        setAssigning(false);
+      }
+    },
+    [token, id, inquiry],
+  );
 
   const load = useCallback(async () => {
     if (!token || !id) return;
@@ -206,9 +273,27 @@ export default function StaffInquiryScreen() {
             ))}
           </CollapsibleSection>
 
-          <CollapsibleSection title="Assignment" open={!!open.assignment} onToggle={() => toggle('assignment')}>
+          <CollapsibleSection
+            title="Assignment"
+            open={!!open.assignment}
+            onToggle={() => toggle('assignment')}
+            headerActions={
+              canAssign ? (
+                <CardActionRow>
+                  <CardIconButton
+                    Icon={PersonIcon}
+                    label={inquiry.assignedArtistId ? 'Reassign artist' : 'Assign an artist'}
+                    onPress={() => setAssignOpen(true)}
+                    busy={assigning}
+                  />
+                </CardActionRow>
+              ) : undefined
+            }
+          >
             <Fact label="Artist" value={artistName(inquiry) ?? 'Unassigned'} last={!inquiry.assignedAt} />
             {inquiry.assignedAt ? <Fact label="Assigned" value={stamp(inquiry.assignedAt)} last /> : null}
+            {/* The revert's own voice. See onAssign. */}
+            {revertNotice ? <Text style={styles.revert}>{revertNotice}</Text> : null}
           </CollapsibleSection>
 
           <CollapsibleSection title="Estimate" open={!!open.estimate} onToggle={() => toggle('estimate')}>
@@ -335,6 +420,16 @@ export default function StaffInquiryScreen() {
             </CollapsibleSection>
           ) : null}
 
+          <AssignArtistSheet
+            visible={assignOpen}
+            onClose={() => setAssignOpen(false)}
+            token={token!}
+            currentArtistId={inquiry.assignedArtistId}
+            assigning={assigning}
+            error={assignError}
+            onAssign={onAssign}
+          />
+
           <Banner
             icon="info"
             align="top"
@@ -384,5 +479,6 @@ const styles = StyleSheet.create({
   lineTitle: { ...type.body, color: colors.fg },
   lineMeta: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
+  revert: { ...type.small, color: colors.danger, paddingTop: space.sm },
   pressed: { opacity: 0.6 },
 });

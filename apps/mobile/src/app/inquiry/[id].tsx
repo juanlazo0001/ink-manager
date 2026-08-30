@@ -7,6 +7,7 @@ import { Avatar, initialsOf } from '@/components/Avatar';
 import { Banner } from '@/components/Banner';
 import { Card, Fact } from '@/components/editorial';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
+import { NoteBody } from '@/components/NoteBody';
 import { InquiryRespondSheet, type RespondMode } from '@/components/InquiryRespondSheet';
 import { PhotoStrip, PhotoViewer } from '@/components/PhotoViewer';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -356,17 +357,23 @@ export default function InquiryDetailScreen() {
 
         {notes.length > 0 ? (
           <CollapsibleSection title="Notes from the studio" open={!!open.notes} onToggle={() => toggle('notes')}>
+            {/*
+              RENDERED now, not stripped.
+
+              This used to be `bodyHtml.replace(/<[^>]*>/g, '')` with a
+              comment explaining that mobile had no sanitiser — which was
+              true and was the right call while mobile could only read
+              notes. `NoteBody` parses the stored HTML into data and
+              renders native primitives from it, so no markup is ever
+              interpreted and no sanitiser is required; see its own note.
+            */}
             {notes.map((note, i) => (
-              <Fact
-                key={note.id}
-                label={note.author?.name ?? note.author?.email ?? 'Studio'}
-                // Deliberately stripped rather than rendered: the API
-                // sends HTML, and mobile has no sanitiser. Plain text is
-                // the honest, safe reading of it.
-                value={note.bodyHtml.replace(/<[^>]*>/g, '').trim() || null}
-                multiline
-                last={i === notes.length - 1}
-              />
+              <View key={note.id} style={i > 0 ? styles.noteFollowing : undefined}>
+                <Text style={styles.noteAuthor}>
+                  {(note.author?.name ?? note.author?.email ?? 'Studio').toUpperCase()}
+                </Text>
+                <NoteBody html={note.bodyHtml} />
+              </View>
             ))}
           </CollapsibleSection>
         ) : null}
@@ -450,6 +457,12 @@ const styles = StyleSheet.create({
   dimmed: { opacity: 0.55 },
 
   footerText: { ...type.meta, color: colors.fgMuted },
+
+  /* The author line keeps `Fact`'s label treatment so a note still reads
+     as one of this card's rows, but the body below it is no longer a
+     Fact's single value — it is blocks. */
+  noteAuthor: { ...type.meta, color: colors.fgMuted, marginBottom: space.xs },
+  noteFollowing: { marginTop: space.md },
 
   actions: {
     flexDirection: 'row',
