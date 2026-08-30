@@ -36661,3 +36661,193 @@ implementation. The device gate shows them immediately.
 
 No schema change, migration or backfill. No writes of any kind — this
 session only read. No production contact.
+
+# Session AU (sign-up) — public self-serve signup on mobile
+
+Branch `session/au-signup`, cut from `main` (`a537434`). Mobile-only.
+
+Note the name collision: an earlier session in this same run was reported
+as "AU" (the photo-card gradient) and owns `design-refs/session-au/`.
+This one's previews are in `design-refs/session-au-signup/` so the two
+never overwrite each other.
+
+## PART 0 — what web's signup actually is
+
+**One flow, one endpoint.** `POST /auth/signup` creates a **studio and its
+owner together**, via `createStudioWithOwner`. There is no "join an
+existing studio" path here — that is separate and token-based
+(`/invite`, `/artist-invite`, `InviteAccept.tsx`).
+
+Web's page is a **three-step wizard**: persona → details → check-email.
+
+| field | rule |
+| --- | --- |
+| `persona` | `SOLO` or `STUDIO`, required |
+| `ownerName` | non-empty |
+| `email` | matches the route's EMAIL_PATTERN |
+| `password` | ≥ 8 characters |
+| `studioName` | required for STUDIO; for SOLO the route defaults it to `ownerName` |
+| `phone` | optional |
+
+Persona copy, verbatim: *"I run a studio" / "Multiple artists, one shared
+calendar and client list."* and *"I'm an independent artist" / "Just you
+— your own bookings, clients, and profile."*
+
+**Server-side:** creates the studio (slug generated from the studio name
+— a SOLO signup's slug therefore comes from the owner's name), the owner
+`User` with role OWNER, an audit row `self_serve_studio_created`, then
+emails a verification link and notifies a platform address.
+
+**It does not log you in.** `201 { message, email, studioSlug }`, no
+token. And login is refused until verified:
+
+    401 { error: "Check your email to verify your account before logging
+          in.", code: "email_not_verified" }
+
+So check-email is the terminal state, with a resend
+(`POST /auth/resend-verification`). Verified live:
+
+    signup                     201  studioSlug "qa-fixture-au-solo"
+    login before verifying     401  email_not_verified
+    POST /auth/verify-email/:token
+                               200  and it returns a TOKEN
+    login after verifying      200  token
+
+**Verification itself logs you in** — the verify route hands back a JWT.
+That happens in whatever browser opens the emailed link, so on mobile the
+person verifies on the web and then signs in on the phone normally. Web
+behaves identically; noted because "verify" doing a login is not obvious
+from the endpoint's name.
+
+**Duplicate email:** `409 "An account with that email already exists. Try
+logging in instead."` (from the route; see the note on 429 below for why
+this one was not observed live).
+
+### Terms and privacy: THERE ARE NONE
+
+Web's signup asks for no acceptance, sends no field, and records no
+consent. Nothing in `Signup.tsx` or the route mentions terms or privacy.
+
+The brief said to mirror this exactly *because it is a legal record*.
+Mirroring exactly therefore means **building none** — owner-confirmed
+before building. A checkbox that nothing persists would be a legal record
+that is not a record.
+
+### Anti-abuse: rate limit only, NO captcha
+
+    rateLimit({ windowMs: 15 * 60 * 1000, limit: 5 })
+
+No captcha, recaptcha, hcaptcha or turnstile anywhere in `apps/api` or
+`apps/web`. The brief's stop condition does not trigger, and there is no
+web protection for this client to route around. Observed firing at
+exactly the sixth attempt in fifteen minutes.
+
+CLAUDE.md records this limiter as in-memory **per process**, so the
+ceiling is per API instance, not global.
+
+### Entry points
+
+`/signup` is reachable from the **marketing site only** —
+`marketing/index.html` has three "Sign Up" buttons pointing at
+`web.inkmanager.app/signup`. Web's own sign-in card offers sign-in and
+forgot-password and nothing else.
+
+## PART 1 — what shipped
+
+The three steps, same fields, same validation order, same copy, same
+button labels ("Create studio account" / "Create my account"), ending on
+check-email with resend and back-to-sign-in. Styled with the login
+screen's own card, input, error and quiet-link treatments.
+
+**One deliberate addition:** a `CREATE AN ACCOUNT` link on the login
+screen, below `FORGOT PASSWORD?`. Web has no such link — but web has a
+marketing site to arrive from and the phone does not, so without it the
+signup screen would exist and be unreachable. Placement and wording are
+ours; owner-confirmed.
+
+**One deliberate omission:** no terms acceptance, per the above.
+
+The route is registered signed-out-only alongside `login`, since signup
+does not authenticate anyone and a signed-in person has no use for it.
+
+## The bug the verification found
+
+The first `signupErrorMessage` keyed "could we reach the server" on
+`ApiError.fromApi`. That is wrong, and running it proved it:
+
+**the rate limiter answers 429 with a PLAIN-TEXT body** —
+`Too many requests, please try again later.` — not the `{ error }` JSON
+every route emits. `apiFetch` sets `fromApi` from whether that JSON
+parsed, so a real, meaningful 429 arrives with `fromApi: false`, and the
+screen told me *"Couldn't reach Ink Manager. Check your connection"* while
+the server was up and answering.
+
+That is precisely the confusion the brief said never to ship, arriving
+from the opposite direction: not a network failure reported as a
+rejection, but a rejection reported as a network failure — sending
+someone to check their wifi when what they need is to wait.
+
+Fixed by keying on `status === 0`, which `apiFetch` sets in exactly one
+place: the catch branch where the request never completed. Anything with
+a status is an answer and is read as one. 429 now has its own sentence.
+
+**This trap is general.** Any error mapper in this app that treats
+`fromApi: false` as "network" will mis-report every non-JSON error
+response the same way.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 12.69s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+Against the DEV API only. Validation, driven at the route:
+
+    missing persona            400  persona must be SOLO or STUDIO
+    bad email                  400  A valid email is required
+    short password             400  password must be at least 8 characters
+    STUDIO, no studioName      400  studioName is required for a studio account
+    SOLO success               201  slug "qa-fixture-au-solo"
+
+Then the whole flow driven through the mobile UI: persona → details →
+validation error in place → submit → check-email showing the address.
+`design-refs/session-au-signup/`.
+
+### Fixtures
+
+Everything created was named `QA FIXTURE AU`. Two studios (one via curl,
+one via the UI) and their owners, memberships, artists, settings,
+services, role permissions and audit rows were deleted afterwards; the
+final count of `QA FIXTURE AU` studios in dev is **0**. **No production
+contact.**
+
+### Not verified
+
+**The 409 duplicate-email path.** The rate limiter fired on the attempt
+that would have produced it, so the mapping for it is read from the
+route's source rather than observed. Everything about it is a
+pass-through of the server's own sentence, so the risk is low, but it is
+unobserved and should not be reported otherwise.
+
+The resend action was not driven to a real mailbox — dev has no inbox to
+check. `logVerificationUrlInDev` writes the link server-side, which is how
+the verify step above was completed.
+
+On-device: none of this ran on a phone.
+
+## Findings
+
+1. **`fromApi` is not a network test.** It means "the body was the API's
+   JSON error shape". The rate limiter's plain-text 429 is the live
+   counter-example. Use `status === 0`.
+2. **Verification logs you in** — `POST /auth/verify-email/:token` returns
+   a JWT. On mobile that login lands in the browser, not the app.
+3. **The signup rate limit is 5 per 15 minutes per API process**, which is
+   easy to exhaust while testing and looks like a network failure unless
+   the mapper is right.
+
+## Database
+
+No schema change, migration or backfill. Dev writes only, all removed.

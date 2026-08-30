@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useState } from 'react';
 import {
@@ -32,6 +33,7 @@ const WORDMARK = require('../../assets/login/wordmark.png');
 const COMPACT_HEIGHT = 700;
 
 export default function LoginScreen() {
+  const router = useRouter();
   const { login } = useAuth();
   const { height } = useWindowDimensions();
   const [email, setEmail] = useState('');
@@ -186,6 +188,29 @@ export default function LoginScreen() {
               >
                 <Text style={styles.forgotLabel}>FORGOT PASSWORD?</Text>
               </Pressable>
+
+              {/*
+                AN ADDITION, NOT A MIRROR, and deliberate.
+
+                Web's sign-in card has no link to signup at all -- its
+                only entry points are the marketing site's "Sign Up"
+                buttons, which point at web.inkmanager.app/signup. There
+                is no marketing site on a phone, so without this the
+                mobile signup screen would exist and be unreachable.
+
+                Placement and wording are therefore ours: below forgot-
+                password, in the same quiet treatment, so it reads as the
+                secondary door it is rather than competing with Sign in.
+                Owner-confirmed.
+              */}
+              <Pressable
+                onPress={() => router.push('/signup')}
+                accessibilityRole="link"
+                hitSlop={8}
+                style={({ pressed }) => [styles.createAccount, pressed && styles.forgotPressed]}
+              >
+                <Text style={styles.forgotLabel}>CREATE AN ACCOUNT</Text>
+              </Pressable>
             </View>
 
             {/* Which API this build talks to is otherwise invisible on a
@@ -262,6 +287,7 @@ const styles = StyleSheet.create({
   // Jura, 11px, bold, uppercase, tracking 0.14em, --login-smoke, centred,
   // mt-4 — the web link's exact treatment.
   forgot: { marginTop: space.lg, alignSelf: 'center' },
+  createAccount: { marginTop: space.md, alignSelf: 'center' },
   forgotPressed: { opacity: 0.6 },
   forgotLabel: { ...type.label, fontSize: 11, letterSpacing: 1.54, color: colors.fgMuted },
 
