@@ -5,12 +5,14 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenShell, SCREEN_TOP_INSET } from '@/components/ScreenShell';
 import { Appear } from '@/components/Appear';
+import { ArtistCard } from '@/components/ArtistCard';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { TopBar } from '@/components/TopBar';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { SkeletonList } from '@/components/Skeleton';
 import { Eyebrow, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
+import { fetchArtists, type ArtistOption } from '@/lib/artists';
 import { PERMISSION_GROUPS } from '@/lib/permissionGroups';
 import { screenErrorMessage } from '@/lib/screenError';
 import {
@@ -53,6 +55,13 @@ export default function TeamScreen() {
   const [tab, setTab] = useState<Tab>('staff');
   const [users, setUsers] = useState<TeamUser[] | null>(null);
   const [permissions, setPermissions] = useState<PermissionsResponse | null>(null);
+  /*
+   * The ARTIST profile, which `GET /users` does not carry — bio,
+   * specialties, handles, portfolio and the studio membership all live
+   * on `Artist`, and only `GET /artists` returns them. The roster needs
+   * both: users for staff, artists for artists.
+   */
+  const [artistProfiles, setArtistProfiles] = useState<ArtistOption[] | null>(null);
   const [role, setRole] = useState<ConfigurableRole>('FRONT_DESK');
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,12 +70,14 @@ export default function TeamScreen() {
     if (!token || !studioId) return;
     setError(null);
     try {
-      const [u, p] = await Promise.all([
+      const [u, p, a] = await Promise.all([
         fetchTeamUsers(token, studioId),
         fetchPermissions(token, studioId),
+        fetchArtists(token),
       ]);
       setUsers(u);
       setPermissions(p);
+      setArtistProfiles(a);
     } catch (err) {
       setError(screenErrorMessage(err, "The team didn't load."));
     }
@@ -78,7 +89,17 @@ export default function TeamScreen() {
 
   // Web splits the roster the same way: staff are the non-artist roles.
   const staff = (users ?? []).filter((u) => u.role !== 'ARTIST');
-  const artists = (users ?? []).filter((u) => u.role === 'ARTIST');
+
+  /*
+   * Studio vs Guest, from the CURRENT StudioMembership and nothing else —
+   * web's own split, and its own warning: `Artist.isGuest` is a legacy
+   * availability-window flag, not a membership, and deriving guest status
+   * from it showed two real artists a stale "Guest (ended)" badge while
+   * their actual membership was HOME.
+   */
+  const profiles = artistProfiles ?? [];
+  const studioArtists = profiles.filter((a) => a.memberships?.[0]?.type !== 'GUEST');
+  const guestArtists = profiles.filter((a) => a.memberships?.[0]?.type === 'GUEST');
 
   return (
     <ScreenShell edges={['top']}>
@@ -99,7 +120,19 @@ export default function TeamScreen() {
       <SegmentedControl
         segments={[
           { key: 'staff', label: 'Staff', count: staff.length },
-          { key: 'artists', label: 'Artists', count: artists.length },
+          {
+            key: 'artists',
+            label: 'Artists',
+            /*
+             * Counted from the ARTIST LIST, not from users-with-role-
+             * ARTIST, because the two genuinely differ and the badge must
+             * agree with what the tab shows. `GET /artists` excludes an
+             * artist whose membership at this studio has ENDED; the user
+             * row survives. On this dev studio that is 23 users against 21
+             * artists -- a badge saying 23 over a list of 21.
+             */
+            count: artistProfiles?.length ?? 0,
+          },
           { key: 'permissions', label: 'Permissions' },
         ]}
         value={tab}
@@ -187,16 +220,38 @@ export default function TeamScreen() {
         <ScrollView contentContainerStyle={styles.content}>
           {/* ITEM 4: gone — the selected segment already names the list, and
               repeating it underneath said the same thing twice. */}
-          <View style={styles.roster}>
-            {(tab === 'staff' ? staff : artists).map((u, i) => (
-              <Appear key={u.id} index={i}>
-                <MemberRow user={u} />
-              </Appear>
-            ))}
-            {(tab === 'staff' ? staff : artists).length === 0 ? (
-              <Text style={styles.empty}>Nobody here yet.</Text>
-            ) : null}
-          </View>
+          {tab === 'staff' ? (
+            <View style={styles.roster}>
+              {staff.map((u, i) => (
+                <Appear key={u.id} index={i}>
+                  <MemberRow user={u} />
+                </Appear>
+              ))}
+              {staff.length === 0 ? <Text style={styles.empty}>Nobody here yet.</Text> : null}
+            </View>
+          ) : (
+            /* Web groups the artist roster under two headings and drops a
+               heading entirely when its group is empty. Same here — a
+               "Guest Artists" label over nothing reads as a fault. */
+            <View style={styles.artistGroups}>
+              {[
+                { label: 'Studio Artists', items: studioArtists },
+                { label: 'Guest Artists', items: guestArtists },
+              ]
+                .filter((group) => group.items.length > 0)
+                .map((group) => (
+                  <View key={group.label} style={styles.artistGroup}>
+                    <Text style={styles.groupHeading}>{group.label}</Text>
+                    {group.items.map((a, i) => (
+                      <Appear key={a.id} index={i}>
+                        <ArtistCard artist={a} />
+                      </Appear>
+                    ))}
+                  </View>
+                ))}
+              {profiles.length === 0 ? <Text style={styles.empty}>No artists yet.</Text> : null}
+            </View>
+          )}
 
           <View style={styles.note}>
             <Feather name="info" size={13} color={colors.fgMuted} />
@@ -285,6 +340,9 @@ const styles = StyleSheet.create({
   permLabel: { ...type.small, color: colors.fg },
   permDescription: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
+  artistGroups: { gap: space.xl },
+  artistGroup: { gap: space.md },
+  groupHeading: { ...type.label, color: colors.fgMuted },
   roster: {
     borderWidth: hairline,
     borderColor: colors.border,
