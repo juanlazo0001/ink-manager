@@ -199,25 +199,36 @@ export default function LoginScreen() {
                 is no marketing site on a phone, so without this the
                 mobile signup screen would exist and be unreachable.
 
-                Placement and wording are therefore ours: below forgot-
-                password, in the same quiet treatment, so it reads as the
-                secondary door it is rather than competing with Sign in.
-                Owner-confirmed.
+                Owner-confirmed, and it sits BELOW the card rather than
+                inside it: this is the way out of sign-in, not one of
+                sign-in's own controls.
               */}
-              <Pressable
-                onPress={() => router.push('/signup')}
-                accessibilityRole="link"
-                hitSlop={8}
-                style={({ pressed }) => [styles.createAccount, pressed && styles.forgotPressed]}
-              >
-                <Text style={styles.forgotLabel}>CREATE AN ACCOUNT</Text>
-              </Pressable>
             </AuthCardSurface>
 
-            {/* Which API this build talks to is otherwise invisible on a
-                phone, and getting it wrong is the most likely reason a
-                login "mysteriously" fails during testing. */}
-            <Text style={styles.apiHint}>{API_URL.replace(/^https?:\/\//, '')}</Text>
+            <Pressable
+              onPress={() => router.push('/signup')}
+              accessibilityRole="link"
+              hitSlop={8}
+              style={({ pressed }) => [styles.createAccount, pressed && styles.forgotPressed]}
+            >
+              <Text style={styles.createAccountLabel}>CREATE AN ACCOUNT</Text>
+            </Pressable>
+
+            {/*
+              The API host used to print here unconditionally, which meant
+              a real person on a real phone read "api.inkmanager.app"
+              under the sign-in card -- infrastructure, shown to someone
+              who has no use for it.
+
+              It exists for a genuine reason (which API a build talks to
+              is otherwise invisible on a phone, and getting it wrong is
+              the likeliest cause of a login that "mysteriously" fails),
+              so it is kept for development and hidden in a release build
+              rather than deleted outright.
+            */}
+            {__DEV__ ? (
+              <Text style={styles.apiHint}>{API_URL.replace(/^https?:\/\//, '')}</Text>
+            ) : null}
           </ScrollView>
         </KeyboardAvoidingView>
       </ScreenShell>
@@ -272,9 +283,10 @@ const styles = StyleSheet.create({
   // Jura, 11px, bold, uppercase, tracking 0.14em, --login-smoke, centred,
   // mt-4 — the web link's exact treatment.
   forgot: { marginTop: space.lg, alignSelf: 'center' },
-  createAccount: { marginTop: space.md, alignSelf: 'center' },
+  createAccount: { marginTop: space.xl, alignSelf: 'center' },
+  createAccountLabel: { ...type.label, fontSize: 11, letterSpacing: 1.54, color: colors.fgMuted },
   forgotPressed: { opacity: 0.6 },
   forgotLabel: { ...type.label, fontSize: 11, letterSpacing: 1.54, color: colors.fgMuted },
 
-  apiHint: { ...type.meta, color: colors.fgMuted, marginTop: space.xl, textAlign: 'center' },
+  apiHint: { ...type.meta, color: colors.fgMuted, marginTop: space.lg, textAlign: 'center' },
 });

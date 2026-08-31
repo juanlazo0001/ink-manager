@@ -37031,3 +37031,32 @@ different, heavier implementation and this app is iPhone-targeted.
 Performance on a real phone is likewise unmeasured. The cards are static,
 which is the case CLAUDE.md's warning exempts, but "static" is an
 argument and not a frame counter.
+
+# Session AU (sign-up), part 4 — the API host is no longer shown to users
+
+Same branch. The login screen printed the API host under the card
+unconditionally, which on a real build reads **`api.inkmanager.app`** to
+someone who has no use for it.
+
+CREATE AN ACCOUNT now occupies that slot, below the card rather than
+inside it — it is the way OUT of sign-in, not one of sign-in's own
+controls, and web has no equivalent to copy placement from.
+
+The host line is kept for development and hidden in release
+(`__DEV__`) rather than deleted. It exists for a real reason, recorded in
+its own comment: which API a build talks to is otherwise invisible on a
+phone, and getting it wrong is the likeliest cause of a login that
+"mysteriously" fails. Losing that entirely would cost more than it saves.
+
+    dev      CREATE AN ACCOUNT  +  localhost:4000
+    release  CREATE AN ACCOUNT
+
+Verified in the harness (`design-refs/session-au-signup/login-entry.png`)
+for the dev case. The release case is a language-level guarantee rather
+than a measurement — Metro defines `__DEV__` false in a production
+bundle, and the `<Text>` is inside that conditional.
+
+    apps/mobile   tsc --noEmit / expo export ios    clean
+    apps/api      tsc                               clean
+    apps/web      tsc -b && vite build              built in 15.93s
+    shared-types  generate-enums --check + tsc      enums match schema
