@@ -74,6 +74,10 @@ function RootNavigator() {
       </Stack.Protected>
       <Stack.Protected guard={status === 'signedOut'}>
         <Stack.Screen name="login" />
+        {/* Signed-OUT only, like login: signup creates an account and
+            does not log anyone in, so a signed-in person has no use for
+            it and reaching it would be a dead end. */}
+        <Stack.Screen name="signup" />
       </Stack.Protected>
     </Stack>
   );

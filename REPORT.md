@@ -36661,3 +36661,402 @@ implementation. The device gate shows them immediately.
 
 No schema change, migration or backfill. No writes of any kind — this
 session only read. No production contact.
+
+# Session AU (sign-up) — public self-serve signup on mobile
+
+Branch `session/au-signup`, cut from `main` (`a537434`). Mobile-only.
+
+Note the name collision: an earlier session in this same run was reported
+as "AU" (the photo-card gradient) and owns `design-refs/session-au/`.
+This one's previews are in `design-refs/session-au-signup/` so the two
+never overwrite each other.
+
+## PART 0 — what web's signup actually is
+
+**One flow, one endpoint.** `POST /auth/signup` creates a **studio and its
+owner together**, via `createStudioWithOwner`. There is no "join an
+existing studio" path here — that is separate and token-based
+(`/invite`, `/artist-invite`, `InviteAccept.tsx`).
+
+Web's page is a **three-step wizard**: persona → details → check-email.
+
+| field | rule |
+| --- | --- |
+| `persona` | `SOLO` or `STUDIO`, required |
+| `ownerName` | non-empty |
+| `email` | matches the route's EMAIL_PATTERN |
+| `password` | ≥ 8 characters |
+| `studioName` | required for STUDIO; for SOLO the route defaults it to `ownerName` |
+| `phone` | optional |
+
+Persona copy, verbatim: *"I run a studio" / "Multiple artists, one shared
+calendar and client list."* and *"I'm an independent artist" / "Just you
+— your own bookings, clients, and profile."*
+
+**Server-side:** creates the studio (slug generated from the studio name
+— a SOLO signup's slug therefore comes from the owner's name), the owner
+`User` with role OWNER, an audit row `self_serve_studio_created`, then
+emails a verification link and notifies a platform address.
+
+**It does not log you in.** `201 { message, email, studioSlug }`, no
+token. And login is refused until verified:
+
+    401 { error: "Check your email to verify your account before logging
+          in.", code: "email_not_verified" }
+
+So check-email is the terminal state, with a resend
+(`POST /auth/resend-verification`). Verified live:
+
+    signup                     201  studioSlug "qa-fixture-au-solo"
+    login before verifying     401  email_not_verified
+    POST /auth/verify-email/:token
+                               200  and it returns a TOKEN
+    login after verifying      200  token
+
+**Verification itself logs you in** — the verify route hands back a JWT.
+That happens in whatever browser opens the emailed link, so on mobile the
+person verifies on the web and then signs in on the phone normally. Web
+behaves identically; noted because "verify" doing a login is not obvious
+from the endpoint's name.
+
+**Duplicate email:** `409 "An account with that email already exists. Try
+logging in instead."` (from the route; see the note on 429 below for why
+this one was not observed live).
+
+### Terms and privacy: THERE ARE NONE
+
+Web's signup asks for no acceptance, sends no field, and records no
+consent. Nothing in `Signup.tsx` or the route mentions terms or privacy.
+
+The brief said to mirror this exactly *because it is a legal record*.
+Mirroring exactly therefore means **building none** — owner-confirmed
+before building. A checkbox that nothing persists would be a legal record
+that is not a record.
+
+### Anti-abuse: rate limit only, NO captcha
+
+    rateLimit({ windowMs: 15 * 60 * 1000, limit: 5 })
+
+No captcha, recaptcha, hcaptcha or turnstile anywhere in `apps/api` or
+`apps/web`. The brief's stop condition does not trigger, and there is no
+web protection for this client to route around. Observed firing at
+exactly the sixth attempt in fifteen minutes.
+
+CLAUDE.md records this limiter as in-memory **per process**, so the
+ceiling is per API instance, not global.
+
+### Entry points
+
+`/signup` is reachable from the **marketing site only** —
+`marketing/index.html` has three "Sign Up" buttons pointing at
+`web.inkmanager.app/signup`. Web's own sign-in card offers sign-in and
+forgot-password and nothing else.
+
+## PART 1 — what shipped
+
+The three steps, same fields, same validation order, same copy, same
+button labels ("Create studio account" / "Create my account"), ending on
+check-email with resend and back-to-sign-in. Styled with the login
+screen's own card, input, error and quiet-link treatments.
+
+**One deliberate addition:** a `CREATE AN ACCOUNT` link on the login
+screen, below `FORGOT PASSWORD?`. Web has no such link — but web has a
+marketing site to arrive from and the phone does not, so without it the
+signup screen would exist and be unreachable. Placement and wording are
+ours; owner-confirmed.
+
+**One deliberate omission:** no terms acceptance, per the above.
+
+The route is registered signed-out-only alongside `login`, since signup
+does not authenticate anyone and a signed-in person has no use for it.
+
+## The bug the verification found
+
+The first `signupErrorMessage` keyed "could we reach the server" on
+`ApiError.fromApi`. That is wrong, and running it proved it:
+
+**the rate limiter answers 429 with a PLAIN-TEXT body** —
+`Too many requests, please try again later.` — not the `{ error }` JSON
+every route emits. `apiFetch` sets `fromApi` from whether that JSON
+parsed, so a real, meaningful 429 arrives with `fromApi: false`, and the
+screen told me *"Couldn't reach Ink Manager. Check your connection"* while
+the server was up and answering.
+
+That is precisely the confusion the brief said never to ship, arriving
+from the opposite direction: not a network failure reported as a
+rejection, but a rejection reported as a network failure — sending
+someone to check their wifi when what they need is to wait.
+
+Fixed by keying on `status === 0`, which `apiFetch` sets in exactly one
+place: the catch branch where the request never completed. Anything with
+a status is an answer and is read as one. 429 now has its own sentence.
+
+**This trap is general.** Any error mapper in this app that treats
+`fromApi: false` as "network" will mis-report every non-JSON error
+response the same way.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 12.69s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+Against the DEV API only. Validation, driven at the route:
+
+    missing persona            400  persona must be SOLO or STUDIO
+    bad email                  400  A valid email is required
+    short password             400  password must be at least 8 characters
+    STUDIO, no studioName      400  studioName is required for a studio account
+    SOLO success               201  slug "qa-fixture-au-solo"
+
+Then the whole flow driven through the mobile UI: persona → details →
+validation error in place → submit → check-email showing the address.
+`design-refs/session-au-signup/`.
+
+### Fixtures
+
+Everything created was named `QA FIXTURE AU`. Two studios (one via curl,
+one via the UI) and their owners, memberships, artists, settings,
+services, role permissions and audit rows were deleted afterwards; the
+final count of `QA FIXTURE AU` studios in dev is **0**. **No production
+contact.**
+
+### Not verified
+
+**The 409 duplicate-email path.** The rate limiter fired on the attempt
+that would have produced it, so the mapping for it is read from the
+route's source rather than observed. Everything about it is a
+pass-through of the server's own sentence, so the risk is low, but it is
+unobserved and should not be reported otherwise.
+
+The resend action was not driven to a real mailbox — dev has no inbox to
+check. `logVerificationUrlInDev` writes the link server-side, which is how
+the verify step above was completed.
+
+On-device: none of this ran on a phone.
+
+## Findings
+
+1. **`fromApi` is not a network test.** It means "the body was the API's
+   JSON error shape". The rate limiter's plain-text 429 is the live
+   counter-example. Use `status === 0`.
+2. **Verification logs you in** — `POST /auth/verify-email/:token` returns
+   a JWT. On mobile that login lands in the browser, not the app.
+3. **The signup rate limit is 5 per 15 minutes per API process**, which is
+   easy to exhaust while testing and looks like a network failure unless
+   the mapper is right.
+
+## Database
+
+No schema change, migration or backfill. Dev writes only, all removed.
+
+# Session AU (sign-up), part 2 — mirroring web's signup screen properly
+
+Same branch, `session/au-signup`. The first pass built the right flow with
+the wrong screen: correct steps, fields, copy and endpoints, but a layout
+that did not match web. Compared side by side in Playwright, both at
+393pt, and fixed.
+
+## What was different
+
+The owner named the first two; the rest came out of the comparison.
+
+| # | web | iOS, first pass |
+| --- | --- | --- |
+| 1 | logo INSIDE the frosted card | floating above it |
+| 2 | "Already have an account? Sign in" on the persona step | absent |
+| 3 | persona titles UPPERCASE, letterspaced | sentence case |
+| 4 | prompt centred | left-aligned |
+| 5 | field pitch 58px (`mb-3`, `mb-6` before the button) | 63px (uniform 16) |
+
+**1 was mine alone.** Web puts the logo as the first child of
+`.login-panel-surface` in BOTH `Signup.tsx` and `SignInOrForgotCard.tsx`,
+and mobile's own login screen already does the same — its `<Image>` sits
+inside `styles.card`. This screen was the only one of the three that had
+it outside, which is what made the two look unrelated rather than merely
+different.
+
+**2** is `Signup.tsx:120-125`, in the persona block only; the check-email
+step has its own "Back to sign in", which mobile already had. It is the
+counterpart to the CREATE AN ACCOUNT link added to login in the first
+pass — without both, the two screens are a one-way door.
+
+**5** was measured, not eyeballed: web's inputs carry `mb-3` with `mb-6`
+on the last before the button. After the fix the pitch is **59px against
+web's 58**, down from 63.
+
+## One thing I got wrong while checking
+
+I read the persona titles as gold on iOS and cream on web, and was about
+to "fix" a colour that was already right. Sampling the brightest glyph
+pixel in each:
+
+    WEB  (156, 147, 129)
+    iOS  (155, 146, 127)
+
+The same colour. What I was seeing was the weight and antialiasing of a
+different font at a different size, not a different token. Recorded
+because the eye is not a measurement and this nearly cost a wrong change.
+
+## A copy difference left in place, deliberately
+
+Web's solo blurb reads "Just you **--** your own bookings…", a literal
+double hyphen. The first pass rendered an em dash, which is better
+typography and a difference between the clients. Now matched to web, and
+flagged as a candidate for a copy pass on BOTH rather than silently
+diverging on one.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 2.34s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+Three-up strips, web / iOS-before / iOS-after, at 393pt:
+`design-refs/session-au-signup/mirror-persona.png` and
+`mirror-details.png`.
+
+### Not verified
+
+The check-email step was not compared against web's, because reaching
+web's requires a successful signup and the signup rate limiter (5 per 15
+minutes) was already spent. Mobile's own check-email render is in
+`checkemail.png` from the first pass; its copy is taken from web's source
+verbatim.
+
+Nothing ran on a device. Login was left untouched — checked against web
+and it already matches.
+
+# Session AU (sign-up), part 3 — the frosted surface is real now
+
+Same branch, `session/au-signup`. Login and signup now share one
+`AuthCardSurface` that renders an actual blur, where both previously used
+a flat translucent fill.
+
+## The decision this reverses, and why
+
+Login's own comment recorded the blur as deliberately NOT reproduced: the
+surface is `#100f0ed6` — 84% opaque — so "very little of the photograph
+reads through it on web either", and CLAUDE.md warns about
+`backdrop-filter` on a phone.
+
+The magnitude was right; the conclusion was not. Toggling
+`backdrop-filter` off on web's own login card and sampling a glyph-free
+strip of surface:
+
+    mean brightness   23.08  ->  23.09     unchanged
+    local stdev        4.91  ->   3.38     31% less texture
+
+The blur does not lighten the panel at all. It removes 31% of the
+photograph's texture, which is the entire difference between making out
+the shapes behind the glass and reading it as a soft wash — the frosted
+look itself.
+
+**The standing warning is about the PAIRING**, not the blur: "never
+combine `backdrop-filter` with animation without testing on a real phone
+first". These two cards are static — no animation, translation or fade —
+so the expensive case does not arise. And on iOS this is not a CSS filter
+at all but a native `UIVisualEffectView`. `expo-blur` was already a
+dependency at SDK 54's own bundled version (`~15.0.8`), so Expo Go
+carries it with no new native module.
+
+Per `apps/mobile/AGENTS.md`, checked against the SDK 54 docs rather than
+memory: `intensity` 1-100, `tint: 'dark'` valid, `experimentalBlurMethod`
+is Android-only and defaults to a semi-transparent fallback, and
+`borderRadius` needs `overflow: 'hidden'` — which the component does.
+
+## Two bugs the harness caught, both invisible in source review
+
+**1. The fill was being replaced, not composited.** The first version put
+`backgroundColor: cardGlass` on the `BlurView` itself. `expo-blur`
+supplies its OWN background from `tint`/`intensity`
+(`rgba(25,25,25,0.19)` on web) and it wins — so the card rendered at ~19%
+opacity instead of 84%, the photograph read straight through it, and the
+text contrast the login screen was tuned for was gone.
+
+Fixed by making the fill its own layer over the blur: blur → 84% fill →
+content, which is web's stack exactly.
+
+**2. That fix hid the form.** With two absolutely-positioned backdrop
+layers as siblings, the email and password inputs disappeared entirely —
+a positioned sibling paints above static in-flow content, so the fill
+covered them. The wordmark and the gradient button survived because they
+carry their own positioning, which made it look like a styling quirk
+rather than a stacking bug. Fixed by giving the content its own
+`zIndex: 1` wrapper.
+
+A card with no visible email or password field would have shipped on a
+source read.
+
+## Choosing the intensity
+
+Matched on the texture the blur exists to remove, not by eye:
+
+    web, blur off      4.91     the unblurred photograph
+    web, blur on       3.38     the target
+    iOS, intensity 40  2.38     over-blurred
+    iOS, intensity 20  3.22     shipped
+
+The two cards' mean brightness differs by ~5 levels at ANY intensity, so
+that offset is not the blur — they sit at different heights and therefore
+over different parts of the same photograph. Not chased, because matching
+it would mean tuning a fill token to a sampling artifact.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 2.26s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+`design-refs/session-au-signup/frosted.png` — web blurred, web unblurred
+(what mobile had), and mobile now.
+
+### Not verified, and this one matters
+
+**Every number here is the WEB rendering of `BlurView`**, where it
+degrades to `backdrop-filter`. iOS runs a native `UIVisualEffectView`
+with entirely different internals, so `BLUR_INTENSITY = 20` is a starting
+point the device gate confirms or corrects. It is deliberately a single
+named constant for exactly that reason.
+
+Android is excluded and falls back to the flat fill — its blur is a
+different, heavier implementation and this app is iPhone-targeted.
+
+Performance on a real phone is likewise unmeasured. The cards are static,
+which is the case CLAUDE.md's warning exempts, but "static" is an
+argument and not a frame counter.
+
+# Session AU (sign-up), part 4 — the API host is no longer shown to users
+
+Same branch. The login screen printed the API host under the card
+unconditionally, which on a real build reads **`api.inkmanager.app`** to
+someone who has no use for it.
+
+CREATE AN ACCOUNT now occupies that slot, below the card rather than
+inside it — it is the way OUT of sign-in, not one of sign-in's own
+controls, and web has no equivalent to copy placement from.
+
+The host line is kept for development and hidden in release
+(`__DEV__`) rather than deleted. It exists for a real reason, recorded in
+its own comment: which API a build talks to is otherwise invisible on a
+phone, and getting it wrong is the likeliest cause of a login that
+"mysteriously" fails. Losing that entirely would cost more than it saves.
+
+    dev      CREATE AN ACCOUNT  +  localhost:4000
+    release  CREATE AN ACCOUNT
+
+Verified in the harness (`design-refs/session-au-signup/login-entry.png`)
+for the dev case. The release case is a language-level guarantee rather
+than a measurement — Metro defines `__DEV__` false in a production
+bundle, and the `<Text>` is inside that conditional.
+
+    apps/mobile   tsc --noEmit / expo export ios    clean
+    apps/api      tsc                               clean
+    apps/web      tsc -b && vite build              built in 15.93s
+    shared-types  generate-enums --check + tsc      enums match schema

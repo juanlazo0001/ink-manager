@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useState } from 'react';
 import {
@@ -13,6 +14,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import { AuthCardSurface } from '@/components/AuthCardSurface';
 import { ScreenShell } from '@/components/ScreenShell';
 import { GoldGradientButton } from '@/components/GoldGradientButton';
 import { LoginBackdrop } from '@/components/LoginBackdrop';
@@ -32,6 +34,7 @@ const WORDMARK = require('../../assets/login/wordmark.png');
 const COMPACT_HEIGHT = 700;
 
 export default function LoginScreen() {
+  const router = useRouter();
   const { login } = useAuth();
   const { height } = useWindowDimensions();
   const [email, setEmail] = useState('');
@@ -119,7 +122,7 @@ export default function LoginScreen() {
             // of the viewport.
             automaticallyAdjustKeyboardInsets
           >
-            <View style={styles.card}>
+            <AuthCardSurface>
               {/* Inside the card, as its first child -- same as web,
                   where the wordmark is the first element of
                   .login-panel-surface rather than floating above it. */}
@@ -186,12 +189,46 @@ export default function LoginScreen() {
               >
                 <Text style={styles.forgotLabel}>FORGOT PASSWORD?</Text>
               </Pressable>
-            </View>
 
-            {/* Which API this build talks to is otherwise invisible on a
-                phone, and getting it wrong is the most likely reason a
-                login "mysteriously" fails during testing. */}
-            <Text style={styles.apiHint}>{API_URL.replace(/^https?:\/\//, '')}</Text>
+              {/*
+                AN ADDITION, NOT A MIRROR, and deliberate.
+
+                Web's sign-in card has no link to signup at all -- its
+                only entry points are the marketing site's "Sign Up"
+                buttons, which point at web.inkmanager.app/signup. There
+                is no marketing site on a phone, so without this the
+                mobile signup screen would exist and be unreachable.
+
+                Owner-confirmed, and it sits BELOW the card rather than
+                inside it: this is the way out of sign-in, not one of
+                sign-in's own controls.
+              */}
+            </AuthCardSurface>
+
+            <Pressable
+              onPress={() => router.push('/signup')}
+              accessibilityRole="link"
+              hitSlop={8}
+              style={({ pressed }) => [styles.createAccount, pressed && styles.forgotPressed]}
+            >
+              <Text style={styles.createAccountLabel}>CREATE AN ACCOUNT</Text>
+            </Pressable>
+
+            {/*
+              The API host used to print here unconditionally, which meant
+              a real person on a real phone read "api.inkmanager.app"
+              under the sign-in card -- infrastructure, shown to someone
+              who has no use for it.
+
+              It exists for a genuine reason (which API a build talks to
+              is otherwise invisible on a phone, and getting it wrong is
+              the likeliest cause of a login that "mysteriously" fails),
+              so it is kept for development and hidden in a release build
+              rather than deleted outright.
+            */}
+            {__DEV__ ? (
+              <Text style={styles.apiHint}>{API_URL.replace(/^https?:\/\//, '')}</Text>
+            ) : null}
           </ScrollView>
         </KeyboardAvoidingView>
       </ScreenShell>
@@ -218,22 +255,6 @@ const styles = StyleSheet.create({
   wordmark: { width: '100%', height: 96, marginBottom: space.sm },
   wordmarkCompact: { width: '100%', height: 72, marginBottom: space.xs },
 
-  // .login-panel-surface. The blur is deliberately NOT reproduced with a
-  // BlurView: the repo's design rules warn that backdrop-filter on a
-  // phone is a real performance risk, and --color-card-glass is already
-  // ~84% opaque (#100f0e at d6), so very little of the photograph reads
-  // through it on web either. A translucent fill over the photo gets the
-  // same result at no cost.
-  card: {
-    width: '100%',
-    // max-w-sm on web.
-    maxWidth: 384,
-    backgroundColor: loginTokens.cardGlass,
-    borderWidth: hairline,
-    borderColor: loginTokens.cardBorder,
-    borderRadius: radius.card,
-    padding: space.xxl,
-  },
 
   // .login-input — note the 5px radius, which is web's own literal, not
   // the card's --radius-card.
@@ -262,8 +283,10 @@ const styles = StyleSheet.create({
   // Jura, 11px, bold, uppercase, tracking 0.14em, --login-smoke, centred,
   // mt-4 — the web link's exact treatment.
   forgot: { marginTop: space.lg, alignSelf: 'center' },
+  createAccount: { marginTop: space.xl, alignSelf: 'center' },
+  createAccountLabel: { ...type.label, fontSize: 11, letterSpacing: 1.54, color: colors.fgMuted },
   forgotPressed: { opacity: 0.6 },
   forgotLabel: { ...type.label, fontSize: 11, letterSpacing: 1.54, color: colors.fgMuted },
 
-  apiHint: { ...type.meta, color: colors.fgMuted, marginTop: space.xl, textAlign: 'center' },
+  apiHint: { ...type.meta, color: colors.fgMuted, marginTop: space.lg, textAlign: 'center' },
 });
