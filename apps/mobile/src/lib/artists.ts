@@ -60,6 +60,30 @@ export interface ArtistOption {
    * `ArtistOption` has to change.
    */
   portfolioImages?: string[];
+
+  /*
+   * The rest of what `GET /artists` has always returned and this type
+   * never declared — `artistListSelect` in routes/artists.ts selects
+   * every one of these. Same shape of omission as `user.id` and
+   * `portfolioImages` before it: the data was on the wire, the type just
+   * did not say so, and nothing on mobile had needed it yet.
+   *
+   * Optional rather than required so that nothing already constructing an
+   * `ArtistOption` (fixtures, the consultation sheet's picker) has to
+   * change.
+   */
+  bio?: string | null;
+  specialties?: string[];
+  instagramHandle?: string | null;
+  facebookProfileUrl?: string | null;
+  /**
+   * The artist's CURRENT membership at the viewing studio, which is the
+   * only thing that may be used to decide "is this person a guest here".
+   * `Artist.isGuest` is a legacy availability-window flag and is NOT the
+   * same question — web renamed its section precisely because two real
+   * artists were shown a stale "Guest (ended)" badge derived from it.
+   */
+  memberships?: { id: string; allowsStudioProfileEdits: boolean; type: string }[];
 }
 
 export function fetchArtists(token: string, signal?: AbortSignal): Promise<ArtistOption[]> {

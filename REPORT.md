@@ -37172,3 +37172,105 @@ never carry SMS.
 ## Database
 
 No schema change, migration or backfill. Read-only against dev.
+
+# Session AY — artist cards on the Team tab
+
+Branch `session/ay-artist-cards`, cut from `main` (`1061a4e`).
+Mobile-only.
+
+## What was there before
+
+Mobile's Team screen already had the three tabs, but its Artists tab
+rendered the same `MemberRow` as Staff — name, email, role. None of the
+artist profile existed on it: no bio, specialties, handles or portfolio.
+
+The reason is that `GET /users` does not carry any of that. Bio,
+specialties, portfolio, handles and the studio membership all live on
+`Artist`, and only `GET /artists` returns them. The tab now fetches both:
+users for staff, artists for artists.
+
+## The card, mirrored section for section
+
+From web's `Team.tsx`, in its order, because the order is the hierarchy:
+
+    avatar + name + email
+    bio             two lines, clamped
+    handles         Instagram, Facebook
+    specialties     up to 4, then "+N more"
+    portfolio       up to 4 thumbnails, square
+
+Both caps are web's own `slice(0, 4)`, not a mobile concession.
+
+Grouped **Studio Artists** / **Guest Artists** on the CURRENT
+`StudioMembership.type`, with a heading dropped entirely when its group is
+empty — web's behaviour, and web's warning honoured: `Artist.isGuest` is a
+legacy availability-window flag, not a membership, and deriving guest
+status from it once showed two real artists a stale "Guest (ended)" badge
+while their actual membership was HOME.
+
+### Deliberately not ported
+
+Web's card ends in an OWNER-only action row — View as, Edit account,
+Delete. Those are portal actions and this screen already says so in its
+own footer. Buttons without the flows behind them would be worse than
+their absence.
+
+Web's card is also a link to `/artists/:id`, a full profile page this app
+does not have. The card is therefore **not pressable**, rather than
+pressable and going nowhere. That page is the obvious follow-up.
+
+## A real bug found on the way
+
+The tab badge read **23** over a list of **21**.
+
+`GET /users` returns every ARTIST-role user; `GET /artists` excludes an
+artist whose membership at this studio has ENDED. The badge was counting
+the first and the list was showing the second. Fixed by counting from the
+artist list — the same source the tab renders — and the now-unused
+users-derived artist array is gone.
+
+## A rendering artifact that is NOT a bug
+
+The cards overlap in the web harness — one card's text bleeding through
+the next. It persists across frames, so it is not a mid-animation catch.
+
+It is `Appear`, and that component's own comment already names it:
+Reanimated implements `entering` on web by briefly absolutely-positioning
+the list. Uniform-height rows hide it; variable-height cards do not.
+
+Isolated rather than assumed: re-rendered the same cards with
+`enabled={false}` and the layout is exact — clean stacking, correct
+spacing, nothing clipped. The animation was then restored, and the design
+refs are captured from the un-animated render because that is the one
+that shows the layout truthfully.
+
+**On iOS `entering` uses the native layout**, so this should not occur on
+the device — but that is reasoning, not measurement, and the device gate
+is what settles it.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 13.38s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+Against the real dev API: 21 artists, 8 with profile content.
+"Comprehensive Artist" exercises every branch at once — bio, both handles,
+two specialties, one portfolio image, HOME membership — and renders
+identically to web's card for the same artist. Side by side at 393pt in
+`design-refs/session-ay/web-vs-ios.png`.
+
+### Not verified
+
+On-device, including the overlap question above.
+
+The "+N more" specialties overflow and the Guest Artists group were not
+seen with real data: no dev artist has more than three specialties, and
+the grouping code ran but every artist in this studio is HOME. Both are
+straight ports of web's own predicates; neither was exercised.
+
+## Database
+
+No schema change, migration or backfill. Read-only against dev.
