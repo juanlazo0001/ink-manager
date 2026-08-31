@@ -11,43 +11,44 @@ import type { ConversationListItem } from '@ink-manager/shared-types';
  */
 
 /**
- * WHO a thread is with, which is a different axis from the filter below.
+ * One list, both axes — OWNER DECISION, and it costs something worth
+ * naming.
  *
- * Web models this as TABS rather than a filter — `type Tab = 'CLIENT' |
- * 'STAFF'` on ConversationsPanel — and keeps its own filters separate,
- * so that "unread" can be asked WITHIN a tab. Same separation here: a
- * scope and a filter compose, and folding scope into the filter dropdown
- * would have made "unread client threads" unaskable.
+ * The first version made scope its own segmented control precisely so the
+ * two axes could compose: "unread" WITHIN "Clients". Folding them into a
+ * single dropdown makes them mutually exclusive, so that combination is
+ * no longer askable. That is the owner's call and it is the shape web's
+ * own users are used to asking one question at a time.
  *
- * It is a SERVER parameter (`GET /conversations?type=`), not a local
- * predicate, and that is load-bearing rather than a preference: the route
- * maps `STAFF` to `{ type: { in: [STAFF, GROUP] } }`, because a group
- * thread is a staff 1:1 that grew a third member via @mention and there
- * is no separate group tab. Filtering locally on `type === 'STAFF'` would
- * silently drop every group conversation.
+ * `all` therefore means no filter of either kind, which is why it reads
+ * unambiguously at the top of one list.
  *
- * `all` is a deliberate ADDITION to web, which has no such option: this
- * screen has always shown one combined list, and removing that to match
- * web's tabs would take away a view the app already has. It stays the
- * default, so the filter is additive.
+ * CLIENT and STAFF are SERVER parameters (`GET /conversations?type=`),
+ * not local predicates, and that is load-bearing: the route maps `STAFF`
+ * to `{ type: { in: [STAFF, GROUP] } }`, because a group thread is a
+ * staff 1:1 that grew a third member via @mention and has no option of
+ * its own. Filtering locally on `type === 'STAFF'` would look right and
+ * silently drop every group.
  */
-export type ThreadScope = 'all' | 'CLIENT' | 'STAFF';
+export type ThreadFilter = 'all' | 'unread' | 'needsAction' | 'CLIENT' | 'STAFF';
 
-export type ThreadFilter = 'all' | 'unread' | 'needsAction';
+/** The two that go to the server rather than filtering in place. */
+export const SCOPE_FILTERS = ['CLIENT', 'STAFF'] as const;
+
+export function filterScope(filter: ThreadFilter): 'CLIENT' | 'STAFF' | undefined {
+  return filter === 'CLIENT' || filter === 'STAFF' ? filter : undefined;
+}
+
 export type ThreadSort = 'recent' | 'oldest' | 'unread' | 'name';
-
-export const THREAD_SCOPES: { key: ThreadScope; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'CLIENT', label: 'Clients' },
-  /* Web's own label for the STAFF tab. "Team" is what the studio calls
-     these people everywhere else in the app, including the nav. */
-  { key: 'STAFF', label: 'Team' },
-];
 
 export const THREAD_FILTERS: { key: ThreadFilter; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'unread', label: 'Unread' },
   { key: 'needsAction', label: 'Needs action' },
+  { key: 'CLIENT', label: 'Clients' },
+  /* Web's own label for the STAFF tab, and what the studio calls these
+     people everywhere else in the app. */
+  { key: 'STAFF', label: 'Team' },
 ];
 
 export const THREAD_SORTS: { key: ThreadSort; label: string }[] = [
@@ -73,6 +74,10 @@ export const THREAD_SORTS: { key: ThreadSort; label: string }[] = [
 const NEEDS_ACTION_STATUSES = ['NEW', 'BUDGET_NEGOTIATION'];
 
 export function applyFilter(threads: ConversationListItem[], filter: ThreadFilter): ConversationListItem[] {
+  /* CLIENT and STAFF are already applied by the server, which is the only
+     place that knows STAFF also means GROUP. Re-filtering here would
+     either duplicate that rule or contradict it. */
+  if (filter === 'CLIENT' || filter === 'STAFF') return threads;
   switch (filter) {
     case 'unread':
       return threads.filter((t) => t.unreadCount > 0);
