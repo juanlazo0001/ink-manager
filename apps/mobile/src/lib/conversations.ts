@@ -35,13 +35,21 @@ import { apiFetch } from './api';
  */
 export function fetchConversations(
   token: string,
-  params: { search?: string } = {},
+  /*
+   * `type` is CLIENT or STAFF and goes to the server for the same reason
+   * `search` does: the route turns STAFF into `{ type: { in: [STAFF,
+   * GROUP] } }`, because a group thread is a staff 1:1 that grew a third
+   * member and has no tab of its own. A local `type === 'STAFF'` filter
+   * would look right and silently drop every group.
+   */
+  params: { search?: string; type?: 'CLIENT' | 'STAFF' } = {},
   signal?: AbortSignal,
 ): Promise<ConversationListItem[]> {
   // No pagination parameters exist on this route -- it returns the whole
   // visible, non-archived list in one response.
   const query = new URLSearchParams();
   if (params.search) query.set('search', params.search);
+  if (params.type) query.set('type', params.type);
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return apiFetch<ConversationListItem[]>(`/conversations${suffix}`, { token, signal });
 }

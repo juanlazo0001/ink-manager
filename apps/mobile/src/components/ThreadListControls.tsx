@@ -4,8 +4,10 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
 
 import {
   THREAD_FILTERS,
+  THREAD_SCOPES,
   THREAD_SORTS,
   type ThreadFilter,
+  type ThreadScope,
   type ThreadSort,
 } from '@/lib/conversationListControls';
 import { LIST_INSET } from '@/theme/listMetrics';
@@ -36,6 +38,8 @@ export function ThreadListControls({
   search,
   onSearchChange,
   searching,
+  scope,
+  onScopeChange,
   filter,
   onFilterChange,
   sort,
@@ -45,6 +49,9 @@ export function ThreadListControls({
   onSearchChange: (next: string) => void;
   /** A search request is in flight. */
   searching?: boolean;
+  /** Who the threads are with. A server parameter, not a local predicate. */
+  scope: ThreadScope;
+  onScopeChange: (next: ThreadScope) => void;
   filter: ThreadFilter;
   onFilterChange: (next: ThreadFilter) => void;
   sort: ThreadSort;
@@ -60,6 +67,40 @@ export function ThreadListControls({
 
   return (
     <View style={styles.wrap}>
+      {/*
+        SCOPE sits above search, as its own segmented row, because it is
+        a different question from the filter below it: the filter asks
+        "which of these threads", scope asks "which threads am I looking
+        at at all". Web draws the same line -- scope is its TABS, and its
+        filters live inside a tab -- and keeping them separate is what
+        lets "unread" be asked within Clients.
+
+        A segmented row rather than a third dropdown: three short,
+        mutually exclusive options that never scroll, where seeing the
+        alternatives is the point.
+      */}
+      <View style={styles.scopeRow} accessibilityRole="tablist">
+        {THREAD_SCOPES.map((s) => {
+          const on = s.key === scope;
+          return (
+            <Pressable
+              key={s.key}
+              onPress={() => onScopeChange(s.key)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={s.label}
+              style={({ pressed }) => [
+                styles.scope,
+                on && styles.scopeOn,
+                pressed && styles.scopePressed,
+              ]}
+            >
+              <Text style={[styles.scopeLabel, on && styles.scopeLabelOn]}>{s.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       <View style={styles.searchRow}>
         <Feather name="search" size={15} color={colors.fgMuted} />
         <TextInput
@@ -208,6 +249,24 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.borderSoft,
     backgroundColor: 'transparent',
   },
+  scopeRow: {
+    flexDirection: 'row',
+    gap: space.xs,
+  },
+  scope: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: space.sm,
+    borderRadius: radius.input,
+    borderWidth: hairline,
+    borderColor: colors.border,
+  },
+  /* The same gold the filter dropdown uses for a non-default selection:
+     one active-state language across the screen's controls. */
+  scopeOn: { borderColor: colors.accent, backgroundColor: colors.surfaceInset },
+  scopePressed: { opacity: 0.7 },
+  scopeLabel: { ...type.label, fontSize: 11, letterSpacing: 1.1, color: colors.fgMuted },
+  scopeLabelOn: { color: colors.accent },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
