@@ -502,3 +502,153 @@ export function PersonIcon({ size = 20, color }: IconProps) {
     </Svg>
   );
 }
+
+/*
+ * ─── SESSION BB: FINISHING THE MIRROR ───────────────────────────────
+ *
+ * The brief asked to "make sure the icons of the web app match the iOS
+ * app", and its own note said how: use web to confirm, and mirror it.
+ *
+ * MEASURED FIRST, because the direction in that sentence and the
+ * direction in the note are opposite ones, and the code settles it. This
+ * module already carries 34 of web's icons copied coordinate-for-
+ * coordinate (see the header) — so for 34 concepts the two apps are
+ * ALREADY identical, and converting web to an icon library would have
+ * broken 34 matches to fix the rest. What is left is the concepts this
+ * module never covered, which mobile still draws with Feather while web
+ * draws its own. Those are below, from web, same paths.
+ *
+ * Feather is deliberately KEPT for two things:
+ *   · glyphs web has no counterpart for (camera, rotate, bookmark…)
+ *   · the chevrons, which are iOS navigation furniture — a back CHEVRON
+ *     is the platform's own idiom and web's back ARROW is not something
+ *     to import onto a phone.
+ */
+
+/** Web's paperclip. Mobile drew Feather's `paperclip` for this. */
+export function AttachmentIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Path
+        d="M14 6.5v7a4 4 0 0 1-8 0v-8a2.5 2.5 0 0 1 5 0v7.5a1 1 0 0 1-2 0v-7"
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
+/** Feather's `info` before this. The dot is filled, as on web. */
+export function InfoIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Circle cx="10" cy="10" r="7.5" />
+      <Line x1="10" y1="9" x2="10" y2="14" />
+      <Circle cx="10" cy="6.3" r="0.9" fill={color} stroke="none" />
+    </Svg>
+  );
+}
+
+/** Feather's `map-pin` before this. */
+export function MapPinIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Path d="M10 18s6-5.5 6-10.5a6 6 0 1 0-12 0C4 12.5 10 18 10 18Z" strokeLinejoin="round" />
+      <Circle cx="10" cy="7.5" r="2" />
+    </Svg>
+  );
+}
+
+/** Feather's `filter` before this — a funnel either way, but a different one. */
+export function FilterIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Path
+        d="M3 4.5h14l-5.5 6.2v4.3l-3 1.5v-5.8L3 4.5Z"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
+/** Feather's `edit-2` before this. Web calls it a pencil; so does this. */
+export function PencilIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Path d="M13.5 3.5 16.5 6.5 7 16H4v-3z" strokeLinejoin="round" />
+      <Line x1="12" y1="5" x2="15" y2="8" />
+    </Svg>
+  );
+}
+
+/**
+ * Feather's `share-2` before this, and this is the largest change of the
+ * set: `share-2` is the three-dots-and-two-lines network glyph, web's is
+ * the box-with-an-arrow-out-of-it. Two different pictures for one word.
+ */
+export function ShareIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Path d="M10 2.5v9.5" strokeLinecap="round" />
+      <Path d="M6.5 6 10 2.5 13.5 6" strokeLinecap="round" strokeLinejoin="round" />
+      <Path
+        d="M4 9.5v6a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+/** Feather's `shield` before this — web's carries a tick inside it. */
+export function ShieldIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Path
+        d="M10 2.5 16.5 5v5c0 4.2-2.8 6.8-6.5 7.5-3.7-.7-6.5-3.3-6.5-7.5V5L10 2.5Z"
+        strokeLinejoin="round"
+      />
+      <Path d="M7.25 9.75 9.25 11.75 12.75 8" strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+/** Feather's `archive` before this. */
+export function ArchiveIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Rect x="2.5" y="3" width="15" height="4" rx="1" strokeLinejoin="round" />
+      <Path d="M3.5 7v8a1.5 1.5 0 0 0 1.5 1.5h10A1.5 1.5 0 0 0 16.5 15V7" strokeLinejoin="round" />
+      <Line x1="8" y1="10.5" x2="12" y2="10.5" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+/** Feather's `check` before this. */
+export function CheckIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Polyline points="4.5 10.5 8 14 15.5 6" />
+    </Svg>
+  );
+}
+
+/** Feather's `x` before this — the most-drawn glyph in the app. */
+export function CloseIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Line x1="5" y1="5" x2="15" y2="15" />
+      <Line x1="15" y1="5" x2="5" y2="15" />
+    </Svg>
+  );
+}
+
+/** Feather's `external-link` before this. Web's is a bare diagonal arrow. */
+export function ArrowUpRightIcon({ size = 20, color }: IconProps) {
+  return (
+    <Svg {...box(size)} fill="none" stroke={color} strokeWidth={STROKE}>
+      <Line x1="6" y1="14" x2="14" y2="6" />
+      <Polyline points="7.5 6 14 6 14 12.5" />
+    </Svg>
+  );
+}

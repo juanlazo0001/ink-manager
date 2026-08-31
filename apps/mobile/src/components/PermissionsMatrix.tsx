@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { SkeletonList } from '@/components/Skeleton';
+import { ShieldIcon } from '@/components/icons';
 import { PERMISSION_GROUPS } from '@/lib/permissionGroups';
 import { screenErrorMessage } from '@/lib/screenError';
 import {
@@ -56,7 +57,7 @@ export function PermissionsMatrix({ token, studioId }: { token: string; studioId
   return (
     <View style={styles.root}>
       <View style={styles.ownerBanner}>
-        <Feather name="shield" size={14} color={colors.accent} />
+        <ShieldIcon size={14} color={colors.accent} />
         <Text style={styles.ownerBannerText}>
           Owner always has full access, in every category below.
         </Text>

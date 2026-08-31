@@ -14,6 +14,7 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenShell } from '@/components/ScreenShell';
 import { InquiryStatusChip } from '@/components/StatusChip';
 import { GoldButton, QuietButton, ScreenLoading, StateMessage } from '@/components/ui';
+import { ArrowUpRightIcon } from '@/components/icons';
 import { useAuth } from '@/context/auth';
 import { ApiError } from '@/lib/api';
 import { fetchArtistInquiry, respondToInquiry } from '@/lib/inquiries';
@@ -381,7 +382,7 @@ export default function InquiryDetailScreen() {
         {/* The deep flows. Named, so an artist knows they exist and where
             they live, rather than silently absent. */}
         <Banner
-          icon="external-link"
+          Icon={ArrowUpRightIcon}
           align="top"
           text="Scheduling, deposits and the full estimate builder live in the portal — this screen shows them, it doesn't change them."
         />

@@ -81,6 +81,7 @@ const BALLOON_SCREEN_CLAMP = 8;
  */
 const BALLOON_OUTBOARD_CLAMPED = Math.min(BALLOON_OUTBOARD, space.lg - BALLOON_SCREEN_CLAMP);
 import { ImageBubble } from '@/components/ImageBubble';
+import { AttachmentIcon } from '@/components/icons';
 import { chat, colors, fonts, hairline, radius, space, type } from '@/theme';
 import { timeOfDay } from '@/lib/time';
 
@@ -603,7 +604,7 @@ export function MessageBubble({
 
           {others.length > 0 ? (
             <View style={styles.attachmentNote}>
-              <Feather name="paperclip" size={12} color={own ? colors.accentFg : colors.fgMuted} />
+              <AttachmentIcon size={12} color={own ? colors.accentFg : colors.fgMuted} />
               <Text style={[styles.attachmentLabel, own ? styles.bodyOwn : styles.bodyTheirs]}>
                 {others.length} attachment{others.length === 1 ? '' : 's'}
               </Text>

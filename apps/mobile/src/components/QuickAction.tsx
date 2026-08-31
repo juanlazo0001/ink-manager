@@ -23,27 +23,42 @@ import { colors, hairline, radius, space, type } from '@/theme';
  */
 export function QuickAction({
   icon,
+  Icon,
   label,
   onPress,
   note,
+  busy,
 }: {
-  icon: React.ComponentProps<typeof Feather>['name'];
+  icon?: React.ComponentProps<typeof Feather>['name'];
+  /** See Banner's note — web's own glyph, where it differs from Feather's. */
+  Icon?: React.ComponentType<{ size?: number; color: string }>;
   label: string;
   onPress?: () => void;
   /** Why it is unavailable. Spoken as the accessibility hint. */
   note?: string;
+  /**
+   * In flight. Renders exactly like the disabled state rather than
+   * swapping in a spinner — these are 15pt icons in a four-up row, and a
+   * spinner at that size is a smudge. What it has to prevent is a second
+   * tap firing a second write, and disabling does that.
+   */
+  busy?: boolean;
 }) {
-  const enabled = !!onPress;
+  const enabled = !!onPress && !busy;
   return (
     <Pressable
-      onPress={onPress}
+      onPress={enabled ? onPress : undefined}
       disabled={!enabled}
       accessibilityRole="button"
       accessibilityState={{ disabled: !enabled }}
       accessibilityHint={note}
       style={({ pressed }) => [styles.quick, !enabled && styles.quickDisabled, pressed && enabled && styles.pressed]}
     >
-      <Feather name={icon} size={15} color={enabled ? colors.fg : colors.fgMuted} />
+      {Icon ? (
+        <Icon size={15} color={enabled ? colors.fg : colors.fgMuted} />
+      ) : icon ? (
+        <Feather name={icon} size={15} color={enabled ? colors.fg : colors.fgMuted} />
+      ) : null}
       <Text style={[styles.quickLabel, !enabled && styles.quickLabelDisabled]}>{label}</Text>
     </Pressable>
   );
