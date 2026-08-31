@@ -8,7 +8,6 @@ import { SkeletonCards } from '../components/Skeleton'
 import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatStatus, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
-import { PERMISSION_GROUPS, DISPLAYED_ROLES } from '../lib/permissions'
 import { artistsQueryKey, artistInvitesQueryKey } from '../lib/queryKeys'
 import TransfersPanel from '../components/TransfersPanel'
 import { useAuth } from '../context/useAuth'
@@ -17,11 +16,10 @@ import { useUserProfile } from '../context/useUserProfile'
 import { useViewAs } from '../context/useViewAs'
 import { useSocket } from '../context/useSocket'
 import PresenceDot from '../components/PresenceDot'
-import { PlusIcon, ViewIcon, InstagramIcon, FacebookIcon, ChevronDownIcon, PencilIcon, TrashIcon, SendIcon, CheckIcon } from '../components/icons'
+import { PlusIcon, ViewIcon, InstagramIcon, FacebookIcon, PencilIcon, TrashIcon, SendIcon, CheckIcon } from '../components/icons'
 import { useThemePreset } from '../lib/useThemePreset'
 
-type PermissionMatrix = Record<string, Record<string, boolean>>
-type TeamTab = 'staff' | 'artists' | 'permissions'
+type TeamTab = 'staff' | 'artists'
 
 interface ArtistCard {
   id: string
@@ -56,11 +54,6 @@ interface ArtistInvite {
   name: string | null
   membershipType: 'HOME' | 'GUEST'
   tokenExpiresAt: string
-}
-
-interface PermissionsResponse {
-  permissionKeys: string[]
-  matrix: PermissionMatrix
 }
 
 interface TeamUser {
@@ -456,14 +449,6 @@ export default function Team() {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
-  const [permissionsMatrix, setPermissionsMatrix] = useState<PermissionMatrix | null>(null)
-  const [permissionsError, setPermissionsError] = useState<string | null>(null)
-  const [permissionsSuccess, setPermissionsSuccess] = useState(false)
-  const [permissionsSubmitting, setPermissionsSubmitting] = useState(false)
-  // Collapsed by default -- 11 groups covering ~49 keys is a lot to show
-  // expanded all at once (Section 3's own "grouped, not a flat wall" goal).
-  const [expandedPermissionGroups, setExpandedPermissionGroups] = useState<Set<string>>(new Set())
-
   const [locations, setLocations] = useState<LocationOption[] | null>(null)
 
   // Staff tab = OWNER/FRONT_DESK only -- artists appear exclusively on the
@@ -500,28 +485,6 @@ export default function Team() {
     if (!isOwner || !user?.studioId) return
     let ignore = false
 
-    async function loadPermissions() {
-      setPermissionsError(null)
-
-      try {
-        const data = await apiFetch<PermissionsResponse>(`/studios/${user!.studioId}/permissions`)
-        if (!ignore) setPermissionsMatrix(data.matrix)
-      } catch (err) {
-        if (!ignore) setPermissionsError(err instanceof Error ? err.message : 'Failed to load permissions')
-      }
-    }
-
-    loadPermissions()
-
-    return () => {
-      ignore = true
-    }
-  }, [isOwner, user?.studioId])
-
-  useEffect(() => {
-    if (!isOwner || !user?.studioId) return
-    let ignore = false
-
     apiFetch<LocationOption[]>(`/studios/${user.studioId}/locations`)
       .then((data) => {
         if (!ignore) setLocations(data)
@@ -534,43 +497,6 @@ export default function Team() {
       ignore = true
     }
   }, [isOwner, user?.studioId])
-
-  function togglePermission(role: string, key: string) {
-    setPermissionsSuccess(false)
-    setPermissionsMatrix((current) => {
-      if (!current) return current
-      return { ...current, [role]: { ...current[role], [key]: !current[role][key] } }
-    })
-  }
-
-  async function handleSavePermissions() {
-    if (!user?.studioId || !permissionsMatrix) return
-
-    setPermissionsError(null)
-    setPermissionsSubmitting(true)
-
-    // Only the two roles this tab actually shows/edits -- CUSTOMER stays
-    // untouched by this save (still configurable via the API directly if
-    // ever needed, just not through this grouped UI).
-    const updates = DISPLAYED_ROLES.flatMap((role) =>
-      PERMISSION_GROUPS.flatMap((group) =>
-        group.keys.map(({ key }) => ({ role, permissionKey: key, allowed: permissionsMatrix[role]?.[key] ?? false })),
-      ),
-    )
-
-    try {
-      const data = await apiFetch<PermissionsResponse>(`/studios/${user.studioId}/permissions`, {
-        method: 'PATCH',
-        body: JSON.stringify({ updates }),
-      })
-      setPermissionsMatrix(data.matrix)
-      setPermissionsSuccess(true)
-    } catch (err) {
-      setPermissionsError(err instanceof Error ? err.message : 'Failed to save permissions')
-    } finally {
-      setPermissionsSubmitting(false)
-    }
-  }
 
   async function handleAvatarFileChange(
     event: ChangeEvent<HTMLInputElement>,
@@ -884,7 +810,6 @@ export default function Team() {
               [
                 ['staff', 'Staff'],
                 ['artists', 'Artists'],
-                ['permissions', 'Permissions'],
               ] as const
             )
               .filter(([tab]) => tab === 'artists' || isOwner)
@@ -1427,121 +1352,6 @@ export default function Team() {
             </div>
           )}
 
-          {activeTab === 'permissions' && isOwner && (
-          // No .card-surface here, deliberately -- the permissions matrix
-          // is dense, information-critical content (a checkbox grid), not
-          // a glass-treatment candidate. Same fix as the staff table above.
-          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-semibold text-fg">Permissions</h2>
-                <p className="mt-1 text-sm text-fg-secondary">
-                  Choose what each role can do in your studio's portal.
-                </p>
-              </div>
-
-              {permissionsMatrix && (
-                <button
-                  type="button"
-                  onClick={handleSavePermissions}
-                  disabled={permissionsSubmitting}
-                  className={
-                    isEditorial
-                      ? 'editorial-btn-primary rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
-                      : 'rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
-                  }
-                >
-                  {permissionsSubmitting ? 'Saving…' : 'Save changes'}
-                </button>
-              )}
-            </div>
-
-            {/* OWNER is never a toggleable column -- it short-circuits every
-                permission check regardless of matrix state, so showing it as
-                an editable checkbox would be misleading. */}
-            <p className="mt-3 rounded-lg bg-surface-inset px-3 py-2 text-xs text-fg-secondary">
-              Owner always has full access, in every category below.
-            </p>
-
-            {permissionsError && <p className="mt-4 text-sm text-danger">{permissionsError}</p>}
-
-            {permissionsSuccess && <p className="mt-4 text-sm text-success">Permissions updated.</p>}
-
-            {!permissionsError && !permissionsMatrix && (
-              <p className="mt-4 text-sm text-fg-secondary">Loading permissions…</p>
-            )}
-
-            {permissionsMatrix && (
-              <div className="mt-4 space-y-2">
-                {PERMISSION_GROUPS.map((group) => {
-                  const isExpanded = expandedPermissionGroups.has(group.label)
-                  const enabledCount = group.keys.filter((k) =>
-                    DISPLAYED_ROLES.some((role) => permissionsMatrix[role]?.[k.key]),
-                  ).length
-
-                  return (
-                    <div key={group.label} className="rounded-xl border border-border">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpandedPermissionGroups((current) => {
-                            const next = new Set(current)
-                            if (next.has(group.label)) next.delete(group.label)
-                            else next.add(group.label)
-                            return next
-                          })
-                        }
-                        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left"
-                      >
-                        <span className="flex items-center gap-2">
-                          <ChevronDownIcon className={`h-4 w-4 shrink-0 text-fg-muted transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
-                          <span className="text-sm font-semibold text-fg">{group.label}</span>
-                        </span>
-                        <span className="shrink-0 text-xs text-fg-muted">
-                          {enabledCount}/{group.keys.length} enabled
-                        </span>
-                      </button>
-
-                      {isExpanded && (
-                        <div className="border-t border-border">
-                          <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-1 px-4 pb-2 pt-3 text-xs font-medium text-fg-muted">
-                            <span />
-                            {DISPLAYED_ROLES.map((role) => (
-                              <span key={role} className="text-center">
-                                {formatStatus(role)}
-                              </span>
-                            ))}
-                          </div>
-                          <div className="divide-y divide-border">
-                            {group.keys.map(({ key, label, description }) => (
-                              <div key={key} className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 px-4 py-2.5">
-                                <div className="min-w-0">
-                                  <p className="text-sm font-medium text-fg">{label}</p>
-                                  <p className="mt-0.5 text-xs text-fg-secondary">{description}</p>
-                                </div>
-                                {DISPLAYED_ROLES.map((role) => (
-                                  <div key={role} className="flex justify-center">
-                                    <input
-                                      type="checkbox"
-                                      aria-label={`${label} — ${formatStatus(role)}`}
-                                      checked={permissionsMatrix[role]?.[key] ?? false}
-                                      onChange={() => togglePermission(role, key)}
-                                      className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
-                                    />
-                                  </div>
-                                ))}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-          )}
         </div>
 
       {showAddModal && (
