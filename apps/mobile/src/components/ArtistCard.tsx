@@ -41,6 +41,7 @@ export function ArtistCard({ artist }: { artist: ArtistOption }) {
   const specialties = artist.specialties ?? [];
   const portfolio = artist.portfolioImages ?? [];
   const extraSpecialties = Math.max(0, specialties.length - 4);
+  const isGuest = artist.memberships?.[0]?.type === 'GUEST';
 
   const open = async (url: string) => {
     try {
@@ -59,9 +60,28 @@ export function ArtistCard({ artist }: { artist: ArtistOption }) {
       <View style={styles.headerRow}>
         <Avatar url={artist.user.avatarUrl} initials={initialsOf(name)} size={48} />
         <View style={styles.identity}>
-          <Text style={styles.name} numberOfLines={1}>
-            {name}
-          </Text>
+          <View style={styles.nameRow}>
+            <Text style={styles.name} numberOfLines={1}>
+              {name}
+            </Text>
+            {/*
+              GUEST, from the CURRENT StudioMembership and nothing else.
+              Web's badge reads "Guest artist"; "GUEST" is the owner's
+              wording, and it sits in this app's own uppercase pill
+              language rather than web's sentence case.
+
+              `Artist.isGuest` is NOT the source and must never become it:
+              it is a scheduling-only availability window, and deriving
+              this badge from it is exactly how a real HOME artist once
+              ended up wearing a stale "Guest (ended)" badge on web while
+              correctly sitting in the Studio Artists group.
+            */}
+            {isGuest ? (
+              <View style={styles.guestPill}>
+                <Text style={styles.guestLabel}>GUEST</Text>
+              </View>
+            ) : null}
+          </View>
           {/* Web prints the email under the name. Suppressed when the name
               IS the email -- `artistLabel` falls back to it, and the same
               string twice is not an identity block. */}
@@ -151,6 +171,16 @@ const styles = StyleSheet.create({
   },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   identity: { flexShrink: 1, gap: 2 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  /* Web's own treatment: accent text on a 10%-accent fill. Not a border
+     pill like the specialties -- this is a status, not a tag. */
+  guestPill: {
+    paddingHorizontal: space.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(201, 154, 91, 0.10)',
+  },
+  guestLabel: { ...type.label, fontSize: 9, letterSpacing: 1, color: colors.accent },
   name: { ...type.heading, fontSize: 16, color: colors.fg },
   email: { ...type.small, color: colors.fgMuted },
   bio: { ...type.small, color: colors.fgMuted },

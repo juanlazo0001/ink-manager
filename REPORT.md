@@ -37274,3 +37274,121 @@ straight ports of web's own predicates; neither was exercised.
 ## Database
 
 No schema change, migration or backfill. Read-only against dev.
+
+# Session AZ — three owner corrections
+
+Branch `session/az-fixes`, cut from `main` (`3054ead`). Mobile-only.
+
+## 1. The notifications page was empty because a comment was stale
+
+I read "notifications" as push in the previous session and reported on
+that. The ask was this screen, and it was hardcoded:
+
+    <StateMessage title="No mentions yet" ... />
+
+Its comment explained why, and the reasoning was sound when written:
+web's bell was one static sentence, and there was "no fetch, no query, no
+socket subscription, no unread state, and **no endpoint anywhere in
+`apps/api`** that would back one".
+
+**All of that has since become false.** `apps/api` has
+`routes/notifications.ts` mounted at `/notifications` with four routes, a
+`Notification` model behind them, and `apps/web`'s `NotificationBell`
+consuming every one. The screen was describing a version of web that no
+longer exists, so it rendered nothing while real rows sat on the server —
+confirmed before building: the owner's own feed already had a row.
+
+That is the part worth recording. The emptiness did not look like a gap;
+it looked like a decision, because a well-argued comment said so.
+
+Built as a real feed, mirroring the bell's behaviour rather than its
+shape (a popover is not a screen): unread-only toggle, mark-all-read, the
+unread dot, relative time, and **navigate-then-mark-read, not awaited** —
+web's own note, and it matters more on a phone, because opening a
+notification IS the read receipt and a POST in front of the navigation
+puts a stall in the one interaction that must feel instant.
+
+Routing mirrors web's `linkFor`, including the case where the destination
+depends on the viewer: an Inquiry opens the staff screen for staff and the
+artist screen for an ARTIST, because the staff route is role-gated
+server-side and sending an artist there is a guaranteed 403.
+
+## 2. Clients / Team moved into the filter dropdown
+
+They were a separate segmented row. That was my call and the owner's is
+different, so they are now four and five in the one FILTER list:
+
+    All · Unread · Needs action · Clients · Team
+
+**It costs something, stated once and not argued:** a single-select list
+makes the two axes mutually exclusive, so "unread client threads" is no
+longer askable. That was the reason for the separate control; the owner's
+preference is one question at a time, and that is the shape web's own
+users are used to.
+
+`CLIENT`/`STAFF` remain SERVER parameters, and `applyFilter` explicitly
+skips them — the route is the only place that knows `STAFF` also means
+`GROUP`, and re-filtering locally would either duplicate that rule or
+contradict it.
+
+## 3. GUEST pill on guest artists
+
+Web's badge reads "Guest artist"; the owner asked for "GUEST", so it is
+GUEST, in this app's uppercase pill language. Web's colour treatment is
+kept exactly — accent text on `bg-accent/10`, which is the literal
+`rgba(201,154,91,0.10)` rather than a new token nothing else would use.
+
+Sourced from the CURRENT `StudioMembership.type` and nothing else.
+`Artist.isGuest` is a scheduling-only availability window, and deriving
+this from it is precisely how a real HOME artist once wore a stale
+"Guest (ended)" badge on web.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 14.53s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+Against the real dev API, with two labelled unread rows seeded so the
+unread path had something to show:
+
+    GET /notifications              3 items, unreadCount 2
+    GET ?unreadOnly=true            2 items
+    GET /unread-count               2
+    tap MARK ALL READ  ->  server unread-count 0
+
+The screen rendered all three rows with the two unread carrying gold dots
+and brighter titles, the read one muted.
+
+Chat filter: selecting Team from the dropdown fired `?type=STAFF`, the
+list showed 5 rows (matching the API's 4 STAFF + 1 GROUP), and every
+subsequent poll carried the filter — the stale-closure fix from the
+previous session still holds.
+
+GUEST pill: no artist in this studio is a guest, so one membership was
+flipped to GUEST for the check and **restored to HOME afterwards**. The
+pill and the "Guest Artists" group both rendered.
+
+`design-refs/session-az/`.
+
+### Fixtures
+
+Two notifications titled `QA FIXTURE AZ …` created and deleted (0
+remain). One membership flipped and restored. The pre-existing
+notification was already read before this session, so mark-all-read
+changed nothing that was not mine.
+
+### Not verified
+
+On-device. Notification rows for `MESSAGE_CREATED` and `INQUIRY_ASSIGNED`
+were seeded rather than produced by the real flows, so their titles and
+bodies are mine, not the server's own wording for those events — the
+routing and rendering are exercised, the copy is not. Pagination
+(`nextCursor`) is implemented in the lib but the feed never exceeded one
+page, so it was never followed.
+
+## Database
+
+No schema change, migration or backfill. Dev writes only, all reverted.

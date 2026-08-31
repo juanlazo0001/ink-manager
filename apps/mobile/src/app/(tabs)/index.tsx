@@ -27,8 +27,8 @@ import { publishChatUnread } from '@/lib/chatUnread';
 import {
   applyControls,
   isSearchable,
+  filterScope,
   type ThreadFilter,
-  type ThreadScope,
   type ThreadSort,
 } from '@/lib/conversationListControls';
 import { screenErrorMessage } from '@/lib/screenError';
@@ -74,9 +74,6 @@ export default function ConversationsScreen() {
   // the spinner belongs to the gap between the two.
   const [search, setSearch] = useState('');
   const [activeSearch, setActiveSearch] = useState('');
-  /* `all` by default: this screen has always shown one combined list,
-     and the scope control is additive rather than a restructure. */
-  const [scope, setScope] = useState<ThreadScope>('all');
   const [filter, setFilter] = useState<ThreadFilter>('all');
   const [sort, setSort] = useState<ThreadSort>('recent');
 
@@ -100,7 +97,7 @@ export default function ConversationsScreen() {
       try {
         const next = await fetchConversations(token, {
           ...(activeSearch ? { search: activeSearch } : {}),
-          ...(scope === 'all' ? {} : { type: scope }),
+          ...(filterScope(filter) ? { type: filterScope(filter) } : {}),
         });
         if (seq !== requestRef.current) return;
         setItems(next);
@@ -134,9 +131,10 @@ export default function ConversationsScreen() {
     // changes identity whenever `items` does, and depending on it here
     // would refetch on every response.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    // `scope` is a SERVER parameter, so changing it has to refetch --
-    // it is not a local predicate over the list already held.
-  }, [token, activeSearch, scope]);
+    // Clients/Team are SERVER parameters, so changing the filter to one
+    // of them has to refetch -- they are not local predicates over the
+    // list already held.
+  }, [token, activeSearch, filter]);
 
   /*
    * Refetch on focus (coming back from a thread, where sending a message
@@ -349,8 +347,6 @@ export default function ConversationsScreen() {
         search={search}
         onSearchChange={setSearch}
         searching={searching}
-        scope={scope}
-        onScopeChange={setScope}
         filter={filter}
         onFilterChange={setFilter}
         sort={sort}
@@ -464,24 +460,21 @@ export default function ConversationsScreen() {
                 }
               />
             ) : filter !== 'all' ? (
+              /* Named per filter, because "No conversations yet" while a
+                 filter is hiding threads would be a lie about the rest. */
               <StateMessage
                 eyebrow="Nothing here"
-                title={filter === 'unread' ? 'Nothing unread' : 'Nothing waiting on you'}
+                title={
+                  filter === 'unread'
+                    ? 'Nothing unread'
+                    : filter === 'needsAction'
+                      ? 'Nothing waiting on you'
+                      : filter === 'CLIENT'
+                        ? 'No client threads'
+                        : 'No team threads'
+                }
                 body="Switch back to All to see every thread."
                 action={{ label: 'Show all', onPress: () => setFilter('all') }}
-              />
-            ) : scope !== 'all' ? (
-              /* Named, because "No conversations yet" under a scope that
-                 is hiding threads would be a lie about the other one. */
-              <StateMessage
-                eyebrow="Nothing here"
-                title={scope === 'CLIENT' ? 'No client threads' : 'No team threads'}
-                body={
-                  scope === 'CLIENT'
-                    ? 'Client conversations appear here as soon as someone writes in.'
-                    : 'Team conversations appear here once you message someone in the studio.'
-                }
-                action={{ label: 'Show all', onPress: () => setScope('all') }}
               />
             ) : (
               <StateMessage
