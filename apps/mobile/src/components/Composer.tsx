@@ -16,6 +16,7 @@ import { channelLabel } from '@/components/ConversationRow';
 import { Eyebrow } from '@/components/ui';
 import { useAttachments } from '@/hooks/useAttachments';
 import { PortfolioContent } from '@/components/PortfolioPicker';
+import { DocumentIcon, PhotoIcon } from '@/components/icons';
 import { resetAttachTrace, traceAttach, type AttachSurface } from '@/lib/attachTrace';
 import {
   fetchConversationContext,
@@ -775,7 +776,7 @@ export function Composer({
                   accessibilityLabel={`Insert template ${template.name}`}
                   style={({ pressed }) => [styles.option, pressed && styles.pressed]}
                 >
-                  <Feather name="file-text" size={16} color={colors.fgSecondary} />
+                  <DocumentIcon size={16} color={colors.fgSecondary} />
                   <Text style={styles.optionLabel} numberOfLines={1}>
                     {template.name}
                   </Text>
@@ -798,7 +799,7 @@ export function Composer({
                 accessibilityLabel={`Prefilled ${form.name} link`}
                 style={({ pressed }) => [styles.option, pressed && styles.pressed]}
               >
-                <Feather name="file-text" size={16} color={colors.fgSecondary} />
+                <DocumentIcon size={16} color={colors.fgSecondary} />
                 <Text style={styles.optionLabel} numberOfLines={1}>
                   {form.name}
                 </Text>
@@ -824,7 +825,7 @@ export function Composer({
             <Eyebrow style={styles.sheetEyebrow}>Attach</Eyebrow>
 
             <Pressable onPress={addFromLibrary} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
-              <Feather name="image" size={16} color={colors.fgSecondary} />
+              <PhotoIcon size={16} color={colors.fgSecondary} />
               <Text style={styles.optionLabel}>Photo library</Text>
             </Pressable>
 
@@ -846,7 +847,7 @@ export function Composer({
 
             {clientId ? (
               <Pressable onPress={openTemplates} style={({ pressed }) => [styles.option, pressed && styles.pressed]}>
-                <Feather name="file-text" size={16} color={colors.fgSecondary} />
+                <DocumentIcon size={16} color={colors.fgSecondary} />
                 <Text style={styles.optionLabel}>Insert template</Text>
               </Pressable>
             ) : null}

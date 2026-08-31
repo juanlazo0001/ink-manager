@@ -29,11 +29,23 @@ import { colors, hairline, radius, space, type } from '@/theme';
  */
 export function Banner({
   icon,
+  Icon,
   text,
   align = 'center',
   tone = 'muted',
 }: {
-  icon: React.ComponentProps<typeof Feather>['name'];
+  icon?: React.ComponentProps<typeof Feather>['name'];
+  /**
+   * A glyph from `components/icons` — the module that carries web's own
+   * paths — for the concepts where web and Feather draw genuinely
+   * different pictures. Takes precedence over `icon`.
+   *
+   * Both, rather than a migration to one: for most glyphs the two sets
+   * are the same drawing (measured — check, close, plus, filter, info,
+   * map-pin and the chevrons are indistinguishable at 13pt), so churning
+   * every call site would be motion without a change.
+   */
+  Icon?: React.ComponentType<{ size?: number; color: string }>;
   text: string;
   /**
    * `top` for a banner whose text wraps. A centred icon beside three
@@ -52,7 +64,13 @@ export function Banner({
   const ink = tone === 'accent' ? colors.accent : colors.fgMuted;
   return (
     <View style={[styles.banner, align === 'top' && styles.bannerTop]}>
-      <Feather name={icon} size={13} color={ink} style={align === 'top' ? styles.iconTop : undefined} />
+      {Icon ? (
+        <View style={align === 'top' ? styles.iconTop : undefined}>
+          <Icon size={13} color={ink} />
+        </View>
+      ) : icon ? (
+        <Feather name={icon} size={13} color={ink} style={align === 'top' ? styles.iconTop : undefined} />
+      ) : null}
       <Text style={[styles.bannerText, tone === 'accent' && styles.bannerTextAccent]}>{text}</Text>
     </View>
   );

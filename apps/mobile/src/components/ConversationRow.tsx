@@ -3,6 +3,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { THREAD_AVATAR_LIST, ThreadAvatar } from '@/components/ThreadAvatar';
+import { PhotoIcon } from '@/components/icons';
 import { LIST_AVATAR, LIST_INSET } from '@/theme/listMetrics';
 import { chat, colors, fonts, space } from '@/theme';
 import { relativeStamp } from '@/lib/time';
@@ -153,7 +154,7 @@ export function ConversationRow({
         <Text style={[styles.preview, unread && styles.previewUnread]} numberOfLines={2}>
           {previewPrefix(item, viewerUserId)}
           {hasAttachment ? (
-            <Feather name="image" size={12} color={unread ? colors.fg : colors.fgMuted} />
+            <PhotoIcon size={12} color={unread ? colors.fg : colors.fgMuted} />
           ) : null}
           {hasAttachment ? ' ' : ''}
           {previewText}

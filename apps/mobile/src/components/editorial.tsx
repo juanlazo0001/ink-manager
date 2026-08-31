@@ -338,6 +338,7 @@ export function Fact({
   value,
   multiline,
   last,
+  leading,
 }: {
   label: string;
   /** Null renders an em dash. That is deliberate — see above. */
@@ -347,14 +348,34 @@ export function Fact({
   /** Drops the rule. A trailing hairline under a card's last row is a
       stray line — the client page's own note, kept. */
   last?: boolean;
+  /**
+   * Rendered immediately before the value — an avatar, in practice.
+   *
+   * Here rather than in the caller because the value is right-aligned
+   * and shrinkable: an avatar placed as a sibling of the whole Fact
+   * would sit outside that alignment and drift away from the name as
+   * the name's width changes. Ignored under `multiline`, where the
+   * value is prose and a leading glyph would only interrupt it.
+   */
+  leading?: ReactNode;
 }) {
   const shown = value && value.trim() ? value : '—';
+  const text = (
+    <Text style={[styles.factValue, multiline && styles.factValueStacked]} selectable>
+      {shown}
+    </Text>
+  );
   return (
     <View style={[styles.fact, multiline && styles.factStacked, last && styles.factLast]}>
       <Text style={styles.factLabel}>{label.toUpperCase()}</Text>
-      <Text style={[styles.factValue, multiline && styles.factValueStacked]} selectable>
-        {shown}
-      </Text>
+      {leading && !multiline ? (
+        <View style={styles.factLeading}>
+          {leading}
+          {text}
+        </View>
+      ) : (
+        text
+      )}
     </View>
   );
 }
@@ -465,6 +486,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: hairline,
     borderBottomColor: colors.borderSoft,
   },
+  /* `flexShrink` so a long name still yields to the label rather than
+     pushing the avatar off the row. */
+  factLeading: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flexShrink: 1 },
   /* Stacked: the row becomes a column, so `justifyContent` stops applying
      and the value needs its right-alignment taken back off. */
   factStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: space.xs },

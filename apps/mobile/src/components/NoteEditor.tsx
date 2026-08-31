@@ -7,6 +7,7 @@ import { GoldGradientButton } from '@/components/GoldGradientButton';
 import { Sheet } from '@/components/Sheet';
 import { SwitchField, TextField } from '@/components/form/Fields';
 import { QuietButton } from '@/components/ui';
+import { AttachmentIcon } from '@/components/icons';
 import { isBlankNoteHtml, type NoteAttachment } from '@/lib/inquiryNotes';
 import { pickDocuments, pickerErrorMessage, uploadNoteAttachment } from '@/lib/upload';
 import {
@@ -362,7 +363,7 @@ export function NoteEditor({
               accessibilityState={{ disabled: uploading }}
               style={[styles.attachButton, uploading && styles.disabled]}
             >
-              <Feather name="paperclip" size={16} color={colors.fgMuted} />
+              <AttachmentIcon size={16} color={colors.fgMuted} />
               <Text style={styles.attachLabel}>
                 {uploading ? 'Uploading…' : 'Attach a file'}
               </Text>

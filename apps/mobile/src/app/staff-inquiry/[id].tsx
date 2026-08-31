@@ -1,6 +1,7 @@
 import Feather from '@expo/vector-icons/Feather';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Image } from 'expo-image';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { AssignArtistSheet } from '@/components/AssignArtistSheet';
@@ -12,11 +13,12 @@ import { InquiryActionsSheet, type ActionsMode } from '@/components/InquiryActio
 import { ShareToArtistSheet } from '@/components/ShareToArtistSheet';
 import { NoteBody } from '@/components/NoteBody';
 import { NoteEditor } from '@/components/NoteEditor';
-import { CalendarIcon, PersonIcon, PlusIcon, SendIcon, TrashIcon } from '@/components/icons';
+import { CalendarIcon, PersonIcon, PlusIcon, SendIcon, ShareIcon, TrashIcon } from '@/components/icons';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { Banner } from '@/components/Banner';
 import { Card, CardEmpty, Fact } from '@/components/editorial';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
+import { PhotoViewer, type ViewerImage } from '@/components/PhotoViewer';
 import { QuickAction, QuickActionRow } from '@/components/QuickAction';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenShell } from '@/components/ScreenShell';
@@ -33,6 +35,7 @@ import {
   type EstimateDraft,
 } from '@/lib/estimate';
 import { buildBookingBody, createConsultation, type BookingDraft } from '@/lib/booking';
+import { startConversation } from '@/lib/conversations';
 import { fetchArtists, type ArtistOption } from '@/lib/artists';
 import {
   archiveInquiry,
@@ -57,6 +60,7 @@ import {
 } from '@/lib/inquiryNotes';
 import { screenErrorMessage } from '@/lib/screenError';
 import {
+  artistAvatarUrl,
   artistName,
   assignInquiryArtist,
   fetchStaffInquiryDetail,
@@ -132,6 +136,57 @@ const SECTION_KEYS = [
   'notes',
 ] as const;
 
+/**
+ * A labelled row of square thumbnails inside a card section.
+ *
+ * Four across with `flex: 1` and a gap rather than a computed width —
+ * ArtistCard's portfolio row does the same and for the same reason: the
+ * card's width is not knowable here, and arithmetic against its padding
+ * drifts the moment the padding changes. Spacers keep a short row
+ * left-aligned instead of stretching two photos across the card.
+ *
+ * Capped at four with a "+N" on the label. Web wraps instead and shows
+ * every one — but web gives these two whole cards of their own, and this
+ * is a strip inside a section that already has seven rows above it. The
+ * viewer opens on all of them regardless of the cap.
+ */
+function ImageStrip({
+  label,
+  urls,
+  onOpen,
+}: {
+  label: string;
+  urls: string[];
+  onOpen: (index: number) => void;
+}) {
+  if (urls.length === 0) return null;
+  const shown = urls.slice(0, 4);
+  return (
+    <View style={styles.strip}>
+      <Text style={styles.stripLabel}>
+        {label.toUpperCase()}
+        {urls.length > shown.length ? `  +${urls.length - shown.length}` : ''}
+      </Text>
+      <View style={styles.stripRow}>
+        {shown.map((url, i) => (
+          <Pressable
+            key={url}
+            onPress={() => onOpen(i)}
+            accessibilityRole="imagebutton"
+            accessibilityLabel={`${label}, image ${i + 1} of ${urls.length}`}
+            style={({ pressed }) => [styles.thumbWrap, pressed && styles.thumbPressed]}
+          >
+            <Image source={{ uri: url }} style={styles.thumb} contentFit="cover" />
+          </Pressable>
+        ))}
+        {Array.from({ length: Math.max(0, 4 - shown.length) }).map((_, i) => (
+          <View key={`spacer-${i}`} style={styles.thumbSpacer} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 export default function StaffInquiryScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -140,6 +195,18 @@ export default function StaffInquiryScreen() {
 
   const [inquiry, setInquiry] = useState<StaffInquiryDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  /*
+   * The photo viewer, opened from either strip in "The request".
+   *
+   * One piece of state holding BOTH lists rather than one per strip: the
+   * viewer pages horizontally, and the useful gesture from a reference
+   * photo is a swipe to the placement photo beside it. Two separate
+   * viewers would make that swipe do nothing.
+   */
+  const [viewer, setViewer] = useState<{ images: ViewerImage[]; index: number } | null>(null);
+
+  const [messaging, setMessaging] = useState(false);
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [assigning, setAssigning] = useState(false);
@@ -580,9 +647,58 @@ export default function StaffInquiryScreen() {
     void loadNotes();
   }, [loadNotes]);
 
+  /*
+   * Web's Message button, which mobile did not have.
+   *
+   * `POST /conversations` is find-or-create, so this opens the existing
+   * client thread when there is one and makes it when there isn't —
+   * identical to web's `handleMessage`, minus the docked panel: this
+   * navigates to the thread screen, because a phone has nowhere to dock.
+   *
+   * OWNER/FRONT_DESK only, which is web's own `canMessage` and also the
+   * route's: an ARTIST posting a `clientId` gets a 404 by design
+   * (`startConversation`'s header records both role limits). A button
+   * that 404s is worse than no button.
+   */
+  const canMessageClient =
+    (session?.profile.role === 'OWNER' || session?.profile.role === 'FRONT_DESK') &&
+    !!inquiry?.clientId;
+
+  async function onMessage() {
+    if (!token || !inquiry?.clientId) return;
+    setMessaging(true);
+    try {
+      const conversation = await startConversation(token, { clientId: inquiry.clientId });
+      router.push({ pathname: '/conversation/[id]', params: { id: conversation.id } });
+    } catch (err) {
+      /* Surfaced rather than swallowed. Web can afford to ignore this —
+         its floating chat button is still there behind the panel — and
+         its own comment says so. On a phone this action is the only door,
+         so a silent failure would read as a dead button. */
+      setActionsError(screenErrorMessage(err, 'this conversation'));
+    } finally {
+      setMessaging(false);
+    }
+  }
+
   const clientLabel = inquiry?.client
     ? `${inquiry.client.firstName} ${inquiry.client.lastName}`
     : 'Inquiry';
+
+  /*
+   * Both image lists, and the single flat list the viewer pages through.
+   *
+   * The captions are what make one list workable: with reference art and
+   * a placement photo adjacent in the same pager, the caption is the only
+   * thing telling you which kind you are looking at. `ViewerImage` was
+   * written with exactly this distinction in its own comment.
+   */
+  const reference = inquiry?.referenceImages ?? [];
+  const placement = inquiry?.placementImages ?? [];
+  const viewerImages: ViewerImage[] = [
+    ...reference.map((url) => ({ url, caption: 'Reference' })),
+    ...placement.map((url) => ({ url, caption: 'Placement photo' })),
+  ];
 
   return (
     <ScreenShell edges={['top']}>
@@ -680,20 +796,30 @@ export default function StaffInquiryScreen() {
                 }
                 note={inquiry.client?.id ? undefined : 'This inquiry has no client record yet.'}
               />
-              <QuickAction
-                icon="calendar"
-                label="Appointment"
-                onPress={
-                  inquiry.appointmentId
-                    ? () => router.push({ pathname: '/appointment/[id]', params: { id: inquiry.appointmentId! } })
-                    : undefined
-                }
-                note={inquiry.appointmentId ? undefined : 'No appointment booked yet.'}
-              />
+              {/*
+                NO APPOINTMENT ACTION HERE. Web's header carries exactly
+                four controls -- View Client, Message, Share with Artist,
+                and the overflow -- and this row now matches it.
+
+                Nothing is lost by the removal: the Appointment section
+                further down already routes to the booked appointment
+                (`router.push('/appointment/[id]')` on its own row), which
+                is where web puts that link too. This was a second door to
+                the same room, and the only one of the four that pointed
+                at a section of this same screen rather than away from it.
+              */}
+              {canMessageClient ? (
+                <QuickAction
+                  icon="message-circle"
+                  label="Message"
+                  onPress={() => void onMessage()}
+                  busy={messaging}
+                />
+              ) : null}
               {/* Web's own label. It reads like a link but it is not one --
                   see ShareToArtistSheet's header comment. */}
               {canShareWithArtist ? (
-                <QuickAction icon="share-2" label="Share" onPress={() => void onOpenShare()} />
+                <QuickAction Icon={ShareIcon} label="Share" onPress={() => void onOpenShare()} />
               ) : null}
               {/* Web hides the whole overflow unless at least one of its
                   three gates passes; same condition, not an inference. */}
@@ -750,7 +876,31 @@ export default function StaffInquiryScreen() {
               ) : undefined
             }
           >
-            <Fact label="Artist" value={artistName(inquiry) ?? 'Unassigned'} last={!inquiry.assignedAt} />
+            {/*
+              Web's Assignment widget renders `ArtistDetailField`, which is
+              a 24px avatar and the name on one line. Same here, with the
+              app's own `Avatar` -- so a missing photo falls back to
+              initials rather than a broken image, which matters more here
+              than on web: most artists in dev have no avatar at all.
+
+              The avatar is suppressed when nobody is assigned. An initials
+              circle next to the word "Unassigned" would draw a person who
+              does not exist.
+            */}
+            <Fact
+              label="Artist"
+              value={artistName(inquiry) ?? 'Unassigned'}
+              last={!inquiry.assignedAt}
+              leading={
+                inquiry.assignedArtist ? (
+                  <Avatar
+                    url={artistAvatarUrl(inquiry)}
+                    initials={initialsOf(artistName(inquiry) ?? '')}
+                    size={24}
+                  />
+                ) : undefined
+              }
+            />
             {inquiry.assignedAt ? <Fact label="Assigned" value={stamp(inquiry.assignedAt)} last /> : null}
             {/* The revert's own voice. See onAssign. */}
             {revertNotice ? <Text style={styles.revert}>{revertNotice}</Text> : null}
@@ -915,6 +1065,40 @@ export default function StaffInquiryScreen() {
             {inquiry.hasBeenTattooedBefore != null ? (
               <Fact label="Tattooed before" value={inquiry.hasBeenTattooedBefore ? 'Yes' : 'No'} last />
             ) : null}
+
+            {/*
+              THE PICTURES, HERE RATHER THAN IN TWO CARDS OF THEIR OWN.
+              A DELIBERATE DIVERGENCE FROM WEB, at the owner's direction.
+
+              Web gives these two separate collapsible widgets, REFERENCE
+              IMAGES and PLACEMENT PHOTOS, each with its own Edit control.
+              That is a reasonable shape on a page where a card costs a
+              scroll of nothing; on a phone it is two more headers to walk
+              past, and both answer the same question the rest of this
+              section answers -- what is being asked for, and where it
+              goes. Web's own labels are kept ("Placement photos", not
+              "Placement images") so the two apps read the same even where
+              they are arranged differently.
+
+              Tapping opens the full-screen viewer rather than a browser
+              tab, which is what web's grid does. `PhotoViewer` already
+              names this exact case in its own type: a caption that is
+              "reference art vs a photo of the placement".
+            */}
+            {reference.length || placement.length ? (
+              <View style={styles.strips}>
+                <ImageStrip
+                  label="Reference"
+                  urls={reference}
+                  onOpen={(i) => setViewer({ images: viewerImages, index: i })}
+                />
+                <ImageStrip
+                  label="Placement photos"
+                  urls={placement}
+                  onOpen={(i) => setViewer({ images: viewerImages, index: reference.length + i })}
+                />
+              </View>
+            ) : null}
           </CollapsibleSection>
 
           {inquiry.closedReason || inquiry.declineNote || inquiry.archivedAt ? (
@@ -924,6 +1108,13 @@ export default function StaffInquiryScreen() {
               {inquiry.archivedAt ? <Fact label="Archived" value={stamp(inquiry.archivedAt)} last /> : null}
             </CollapsibleSection>
           ) : null}
+
+          <PhotoViewer
+            images={viewer?.images ?? []}
+            initialIndex={viewer?.index ?? 0}
+            visible={!!viewer}
+            onClose={() => setViewer(null)}
+          />
 
           <AssignArtistSheet
             visible={assignOpen}
@@ -1138,6 +1329,24 @@ export default function StaffInquiryScreen() {
 }
 
 const styles = StyleSheet.create({
+  /* Sits below the last Fact, whose own row already drew the rule above
+     it -- so this needs top padding, not a border. */
+  strips: { paddingTop: space.md, gap: space.md },
+  strip: { gap: space.sm },
+  stripLabel: { ...type.label, color: colors.fgMuted },
+  stripRow: { flexDirection: 'row', gap: space.xs },
+  thumbWrap: {
+    flex: 1,
+    aspectRatio: 1,
+    borderRadius: radius.input,
+    borderWidth: hairline,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  },
+  thumbPressed: { opacity: 0.7 },
+  thumbSpacer: { flex: 1 },
+  thumb: { width: '100%', height: '100%' },
+
   /* The client page's scaffold: `space.xl` between cards, not `space.lg`.
      A card carries 24 of its own padding, so 16 between them read as
      cramped next to the client page's 24. */

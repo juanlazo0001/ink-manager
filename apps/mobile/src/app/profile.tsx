@@ -8,6 +8,7 @@ import { ScreenShell } from '@/components/ScreenShell';
 import { ProfileSection } from '@/components/ProfileSection';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Chip, Eyebrow, ScreenLoading, StateMessage } from '@/components/ui';
+import { ArrowUpRightIcon } from '@/components/icons';
 import { useAuth } from '@/context/auth';
 import { ARTIST_LAYOUT_PAGE_KEY, useArtistProfileData } from '@/hooks/useArtistProfileData';
 import {
@@ -284,7 +285,7 @@ function renderSection(id: ArtistSectionId, data: ReturnType<typeof useArtistPro
               <Text style={styles.linkValue} numberOfLines={1}>
                 {link.value}
               </Text>
-              <Feather name="external-link" size={14} color={colors.fgMuted} />
+              <ArrowUpRightIcon size={14} color={colors.fgMuted} />
             </Pressable>
           ))}
         </View>
@@ -406,7 +407,7 @@ function LinkOut({ label, url }: { label: string; url: string }) {
       <Text style={styles.linkValue} numberOfLines={1}>
         {url}
       </Text>
-      <Feather name="external-link" size={14} color={colors.fgMuted} />
+      <ArrowUpRightIcon size={14} color={colors.fgMuted} />
     </Pressable>
   );
 }

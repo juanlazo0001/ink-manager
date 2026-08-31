@@ -48,7 +48,18 @@ export interface StaffInquiryDetail {
 
   assignedArtistId: string | null;
   assignedAt: string | null;
-  assignedArtist: { id: string; user?: { name: string | null; email: string } | null } | null;
+  /*
+   * `avatarUrl` was absent here and present on the wire the whole time --
+   * `GET /inquiries/:id` returns it inside `assignedArtist.user`, checked
+   * against the real dev payload before it was added. Web's Assignment
+   * widget has always drawn it (`ArtistDetailField` -> `ArtistAvatar`);
+   * mobile could not, because the type it read the response through did
+   * not admit the field existed.
+   */
+  assignedArtist: {
+    id: string;
+    user?: { name: string | null; email: string; avatarUrl?: string | null } | null;
+  } | null;
 
   clientId: string | null;
   client: { id: string; firstName: string; lastName: string } | null;
@@ -65,7 +76,19 @@ export interface StaffInquiryDetail {
   }[];
 
   referenceImages?: string[];
-  placementPhotos?: string[];
+  /*
+   * `placementImages`, NOT `placementPhotos`. The old name was wrong and
+   * had never been read, so it never failed -- it would simply have been
+   * `undefined` forever the first time anything rendered it. The API's
+   * column, its Prisma field and its JSON key are all `placementImages`
+   * (schema.prisma:1815); web reads `inquiry.placementImages`. Confirmed
+   * against a live response, not inferred from the schema alone.
+   *
+   * Web's own heading for these is "Placement photos" -- the LABEL is
+   * photos, the FIELD is images. Almost certainly where the old name came
+   * from.
+   */
+  placementImages?: string[];
   closedReason: string | null;
   declineNote: string | null;
   archivedAt: string | null;
@@ -116,6 +139,12 @@ export function pipelineStages(inq: StaffInquiryDetail): PipelineStage[] {
 export function artistName(inq: StaffInquiryDetail): string | null {
   const u = inq.assignedArtist?.user;
   return u ? (u.name ?? u.email) : null;
+}
+
+/** The assigned artist's avatar, or null. Null is a legitimate answer:
+    most artists in dev have none, and the caller falls back to initials. */
+export function artistAvatarUrl(inq: StaffInquiryDetail): string | null {
+  return inq.assignedArtist?.user?.avatarUrl ?? null;
 }
 
 /**
