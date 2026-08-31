@@ -216,7 +216,49 @@ const CARD_RATIO = 3.6;
  * the opacity -- and the no-photo card stays at 14.1 throughout, which
  * is the control that proves the harness is measuring compositing.
  */
-const PHOTO_OPACITY = 0.27;
+/*
+ * ─── BA: THE STEP RAN OUT OF ROOM. 0.27 -> 0.28, AND THAT IS THE ───
+ *
+ * The brief asked for "another step lighter", meaning the +0.03 that AQ,
+ * AS and AT each took. A third of that is all there is.
+ *
+ * MEASURED, flat white, description band, floor 4.5:
+ *
+ *     0.27   4.59      shipped before this
+ *     0.28   4.53      shipped here -- the lightest value that holds
+ *     0.29   4.45      FAILS
+ *     0.30   4.38      FAILS -- the step actually asked for
+ *
+ * So the ceiling is between 0.28 and 0.29, and 0.30 is past it. The
+ * failing probes were run deliberately: a contrast check that has never
+ * failed is not evidence that it can.
+ *
+ * AT PREDICTED ~0.32 AND THAT NUMBER IS NOW WRONG, for a reason worth
+ * recording. AT extrapolated from a two-point slope taken BEFORE AU
+ * reworked the gradient itself (524c3d7). AU's smoothstep is lighter
+ * through the description band by design, so the whole ladder shifted
+ * down: AU re-measured 0.27 at 4.71 against AT's 4.90 and published it.
+ * The remaining headroom AT described as "roughly one more step" was
+ * spent by that change, not by this one.
+ *
+ * (This harness reads flat-white description ~0.12 lower than AU's did
+ * -- 4.59 where AU published 4.71 -- while reproducing every other
+ * figure AU published to the digit: photo bands 63.4/77.3, thermostat
+ * name 10.40, and all three kink numbers. The residual is in the
+ * description band alone and is not explained; it is stated because it
+ * is the direction that matters, being the conservative one. On AU's
+ * calibration 0.29 would read ~4.57 and pass. If a future session wants
+ * that ninth hundredth, resolve the 0.12 first -- do not assume it away
+ * in whichever direction is convenient.)
+ *
+ * The thermostat is nowhere near binding: 5.02 at 0.27, 4.97 at 0.28.
+ * Flat white is the constraint, exactly as AT said it would be.
+ *
+ * GOING FURTHER IS AN OWNER CALL, not an implementation one: it means
+ * deciding that a photograph of white paper or a bright stencil is not a
+ * case worth protecting. Nothing here forecloses it.
+ */
+const PHOTO_OPACITY = 0.28;
 
 /*
  * ─── THE WASH ───────────────────────────────────────────────────────

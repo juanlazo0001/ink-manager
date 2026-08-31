@@ -8,26 +8,17 @@ import { Appear } from '@/components/Appear';
 import { ArtistCard } from '@/components/ArtistCard';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { TopBar } from '@/components/TopBar';
-import { SegmentedControl } from '@/components/SegmentedControl';
+import { countLine, ScreenTitle } from '@/components/ScreenTitle';
 import { SkeletonList } from '@/components/Skeleton';
-import { Eyebrow, StateMessage } from '@/components/ui';
+import { UnderlineTabs } from '@/components/UnderlineTabs';
+import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { fetchArtists, type ArtistOption } from '@/lib/artists';
-import { PERMISSION_GROUPS } from '@/lib/permissionGroups';
 import { screenErrorMessage } from '@/lib/screenError';
-import {
-  CONFIGURABLE_ROLES,
-  ROLE_LABELS,
-  enabledCount,
-  fetchPermissions,
-  fetchTeamUsers,
-  type ConfigurableRole,
-  type PermissionsResponse,
-  type TeamUser,
-} from '@/lib/team';
+import { ROLE_LABELS, fetchTeamUsers, type TeamUser } from '@/lib/team';
 import { colors, hairline, radius, space, type } from '@/theme';
 
-type Tab = 'staff' | 'artists' | 'permissions';
+type Tab = 'staff' | 'artists';
 
 /**
  * Team — staff, artists, and the permission matrix.
@@ -54,7 +45,6 @@ export default function TeamScreen() {
 
   const [tab, setTab] = useState<Tab>('staff');
   const [users, setUsers] = useState<TeamUser[] | null>(null);
-  const [permissions, setPermissions] = useState<PermissionsResponse | null>(null);
   /*
    * The ARTIST profile, which `GET /users` does not carry — bio,
    * specialties, handles, portfolio and the studio membership all live
@@ -62,21 +52,14 @@ export default function TeamScreen() {
    * both: users for staff, artists for artists.
    */
   const [artistProfiles, setArtistProfiles] = useState<ArtistOption[] | null>(null);
-  const [role, setRole] = useState<ConfigurableRole>('FRONT_DESK');
-  const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!token || !studioId) return;
     setError(null);
     try {
-      const [u, p, a] = await Promise.all([
-        fetchTeamUsers(token, studioId),
-        fetchPermissions(token, studioId),
-        fetchArtists(token),
-      ]);
+      const [u, a] = await Promise.all([fetchTeamUsers(token, studioId), fetchArtists(token)]);
       setUsers(u);
-      setPermissions(p);
       setArtistProfiles(a);
     } catch (err) {
       setError(screenErrorMessage(err, "The team didn't load."));
@@ -113,30 +96,23 @@ export default function TeamScreen() {
       <TopBar />
 
       <View style={styles.pageHead}>
-        <Eyebrow>The Roster</Eyebrow>
-        <Text style={styles.pageTitle}>Team</Text>
+        <ScreenTitle title="Team" counts={countLine([staff.length, 'person', 'people'], [profiles.length, 'artist'])} />
       </View>
 
-      <SegmentedControl
-        segments={[
-          { key: 'staff', label: 'Staff', count: staff.length },
-          {
-            key: 'artists',
-            label: 'Artists',
-            /*
-             * Counted from the ARTIST LIST, not from users-with-role-
-             * ARTIST, because the two genuinely differ and the badge must
-             * agree with what the tab shows. `GET /artists` excludes an
-             * artist whose membership at this studio has ENDED; the user
-             * row survives. On this dev studio that is 23 users against 21
-             * artists -- a badge saying 23 over a list of 21.
-             */
-            count: artistProfiles?.length ?? 0,
-          },
-          { key: 'permissions', label: 'Permissions' },
+      {/*
+        Underline tabs, matching Pipeline. The segmented control this
+        replaces is still the right shape for a short in-card choice (the
+        role picker inside the permission matrix still uses it) -- it was
+        the wrong shape for a PAGE's primary navigation, which is what
+        these two are.
+      */}
+      <UnderlineTabs
+        tabs={[
+          { key: 'staff', label: 'Staff' },
+          { key: 'artists', label: 'Artists' },
         ]}
         value={tab}
-        onChange={(v) => setTab(v as Tab)}
+        onChange={setTab}
       />
 
       {error ? (
@@ -148,74 +124,6 @@ export default function TeamScreen() {
         />
       ) : users === null ? (
         <SkeletonList rows={6} />
-      ) : tab === 'permissions' ? (
-        <ScrollView contentContainerStyle={styles.content}>
-          <View style={styles.ownerBanner}>
-            <Feather name="shield" size={14} color={colors.accent} />
-            <Text style={styles.ownerBannerText}>
-              Owner always has full access, in every category below.
-            </Text>
-          </View>
-
-          <SegmentedControl
-            segments={CONFIGURABLE_ROLES.map((r) => ({ key: r, label: ROLE_LABELS[r] ?? r }))}
-            value={role}
-            onChange={(v) => setRole(v as ConfigurableRole)}
-          />
-
-          {PERMISSION_GROUPS.map((group) => {
-            const keys = group.keys.map((k) => k.key);
-            const on = permissions ? enabledCount(permissions.matrix, role, keys) : 0;
-            const isOpen = openGroup === group.label;
-            return (
-              <View key={group.label} style={styles.group}>
-                <Pressable
-                  onPress={() => setOpenGroup(isOpen ? null : group.label)}
-                  accessibilityRole="button"
-                  accessibilityState={{ expanded: isOpen }}
-                  style={({ pressed }) => [styles.groupHead, pressed && styles.pressed]}
-                >
-                  <Feather
-                    name={isOpen ? 'chevron-down' : 'chevron-right'}
-                    size={15}
-                    color={colors.fgMuted}
-                  />
-                  <Text style={styles.groupLabel}>{group.label}</Text>
-                  <Text style={styles.groupCount}>
-                    {on}/{keys.length} enabled
-                  </Text>
-                </Pressable>
-
-                {isOpen
-                  ? group.keys.map((entry) => {
-                      const allowed = permissions?.matrix[role]?.[entry.key] ?? false;
-                      return (
-                        <View key={entry.key} style={styles.permRow}>
-                          <Feather
-                            name={allowed ? 'check' : 'x'}
-                            size={14}
-                            color={allowed ? colors.accent : colors.fgMuted}
-                          />
-                          <View style={styles.permText}>
-                            <Text style={styles.permLabel}>{entry.label}</Text>
-                            <Text style={styles.permDescription}>{entry.description}</Text>
-                          </View>
-                        </View>
-                      );
-                    })
-                  : null}
-              </View>
-            );
-          })}
-
-          <View style={styles.note}>
-            <Feather name="info" size={13} color={colors.fgMuted} />
-            <Text style={styles.noteText}>
-              Changing permissions is done in the portal. This screen shows them; it doesn&apos;t
-              change them.
-            </Text>
-          </View>
-        </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
           {/* ITEM 4: gone — the selected segment already names the list, and
@@ -304,41 +212,10 @@ const styles = StyleSheet.create({
     paddingBottom: space.md,
     gap: space.xs,
   },
-  pageTitle: { ...type.welcome, color: colors.fg },
   content: { padding: space.lg, gap: space.md, paddingBottom: space.xxl },
 
-  ownerBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    borderWidth: hairline,
-    borderColor: colors.accent,
-    borderRadius: radius.input,
-    backgroundColor: 'rgba(201, 154, 91, 0.08)',
-    padding: space.md,
-  },
-  ownerBannerText: { ...type.small, color: colors.fg, flex: 1 },
 
-  group: {
-    borderWidth: hairline,
-    borderColor: colors.border,
-    borderRadius: radius.card,
-    overflow: 'hidden',
-  },
-  groupHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md },
-  groupLabel: { ...type.body, color: colors.fg, flex: 1 },
-  groupCount: { ...type.meta, color: colors.fgMuted },
 
-  permRow: {
-    flexDirection: 'row',
-    gap: space.sm,
-    alignItems: 'flex-start',
-    paddingHorizontal: space.md,
-    paddingBottom: space.md,
-  },
-  permText: { flex: 1 },
-  permLabel: { ...type.small, color: colors.fg },
-  permDescription: { ...type.meta, color: colors.fgMuted, marginTop: 2 },
 
   artistGroups: { gap: space.xl },
   artistGroup: { gap: space.md },

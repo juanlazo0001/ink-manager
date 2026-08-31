@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { PermissionsMatrix } from '@/components/PermissionsMatrix';
 import { ScreenShell } from '@/components/ScreenShell';
 import { EditorialCard } from '@/components/editorial';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -13,7 +14,9 @@ import { screenErrorMessage } from '@/lib/screenError';
 import { colors, hairline, radius, space, type } from '@/theme';
 
 /**
- * Settings, as an artist sees it: entirely read-only.
+ * Settings. Read-only for everyone who can open it — an OWNER sees one
+ * more section than an artist does, but cannot change anything here
+ * either.
  *
  * Web's Settings has six tabs and shows an ARTIST exactly one — General —
  * because every other tab is gated on a permission an artist does not
@@ -30,6 +33,12 @@ import { colors, hairline, radius, space, type } from '@/theme';
  * Studio name/logo/website come from the session, which already holds
  * them. Locations are the one fetch, and `GET /studios/:id/locations` is
  * open to any authenticated studio member — the API's own comment says so.
+ *
+ * PERMISSIONS live here now, moved off the Team screen's third tab at the
+ * owner's direction. OWNER-gated, and that gate is not cosmetic:
+ * `GET /studios/:id/permissions` is `requireRole(Role.OWNER)`, so for
+ * anyone else the section could only ever render a 403. Web gates its own
+ * copy the same way (`activeTab === 'permissions' && isOwner`).
  */
 interface StudioLocation {
   id: string;
@@ -114,6 +123,16 @@ export default function SettingsScreen() {
             </View>
           )}
         </EditorialCard>
+
+        {/*
+          OWNER only — see the note above. `profile.role` is the session's
+          own role at this studio, the same value web's `isOwner` reads.
+        */}
+        {session?.profile.role === 'OWNER' && session.token && studio ? (
+          <EditorialCard title="Permissions" style={styles.card}>
+            <PermissionsMatrix token={session.token} studioId={studio.id} />
+          </EditorialCard>
+        ) : null}
 
         <Text style={styles.footer}>
           Everything else in Settings — policies, services, integrations, defaults — is managed from the web app by

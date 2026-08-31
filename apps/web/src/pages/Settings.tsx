@@ -5,6 +5,7 @@ import Modal from '../components/Modal'
 import RichTextEditor from '../components/RichTextEditor'
 import PhoneInput from '../components/PhoneInput'
 import IntakeFormsManager from '../components/IntakeFormsManager'
+import PermissionsSection from '../components/PermissionsSection'
 import ServicesManager from '../components/ServicesManager'
 import { CheckIcon, ChevronDownIcon, ClockIcon, CloseIcon, CopyIcon, PencilIcon, SpinnerIcon } from '../components/icons'
 import { apiFetch } from '../lib/api'
@@ -577,9 +578,13 @@ export default function Settings() {
     { key: 'services' as const, label: 'Services', visible: canViewServices },
     { key: 'integrations' as const, label: 'Integrations', visible: canViewIntegrations },
     { key: 'system' as const, label: 'System', visible: canViewSystem },
+    // Moved here from the Team page's third tab. OWNER-only, matching
+    // the `requireRole(Role.OWNER)` on both permission routes -- the
+    // same gate Team used, just on the tab that now owns it.
+    { key: 'permissions' as const, label: 'Permissions', visible: isOwner },
   ]
   const [activeTab, setActiveTab] = useState<
-    'general' | 'policies' | 'defaults' | 'services' | 'integrations' | 'system'
+    'general' | 'policies' | 'defaults' | 'services' | 'integrations' | 'system' | 'permissions'
   >('general')
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -4291,6 +4296,10 @@ export default function Settings() {
                 </button>
               </div>
             </Modal>
+          )}
+
+          {activeTab === 'permissions' && isOwner && studio && (
+            <PermissionsSection studioId={studio.id} />
           )}
 
           {activeTab === 'system' && canViewSystem && (
