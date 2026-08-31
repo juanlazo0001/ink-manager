@@ -10,8 +10,39 @@ import type { ConversationListItem } from '@ink-manager/shared-types';
  * the messages — worse than not offering it.
  */
 
+/**
+ * WHO a thread is with, which is a different axis from the filter below.
+ *
+ * Web models this as TABS rather than a filter — `type Tab = 'CLIENT' |
+ * 'STAFF'` on ConversationsPanel — and keeps its own filters separate,
+ * so that "unread" can be asked WITHIN a tab. Same separation here: a
+ * scope and a filter compose, and folding scope into the filter dropdown
+ * would have made "unread client threads" unaskable.
+ *
+ * It is a SERVER parameter (`GET /conversations?type=`), not a local
+ * predicate, and that is load-bearing rather than a preference: the route
+ * maps `STAFF` to `{ type: { in: [STAFF, GROUP] } }`, because a group
+ * thread is a staff 1:1 that grew a third member via @mention and there
+ * is no separate group tab. Filtering locally on `type === 'STAFF'` would
+ * silently drop every group conversation.
+ *
+ * `all` is a deliberate ADDITION to web, which has no such option: this
+ * screen has always shown one combined list, and removing that to match
+ * web's tabs would take away a view the app already has. It stays the
+ * default, so the filter is additive.
+ */
+export type ThreadScope = 'all' | 'CLIENT' | 'STAFF';
+
 export type ThreadFilter = 'all' | 'unread' | 'needsAction';
 export type ThreadSort = 'recent' | 'oldest' | 'unread' | 'name';
+
+export const THREAD_SCOPES: { key: ThreadScope; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'CLIENT', label: 'Clients' },
+  /* Web's own label for the STAFF tab. "Team" is what the studio calls
+     these people everywhere else in the app, including the nav. */
+  { key: 'STAFF', label: 'Team' },
+];
 
 export const THREAD_FILTERS: { key: ThreadFilter; label: string }[] = [
   { key: 'all', label: 'All' },

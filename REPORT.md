@@ -37060,3 +37060,115 @@ bundle, and the `<Text>` is inside that conditional.
     apps/api      tsc                               clean
     apps/web      tsc -b && vite build              built in 15.93s
     shared-types  generate-enums --check + tsc      enums match schema
+
+# Session AX — Clients / Team scope on the chat list
+
+Branch `session/ax-chat-filter`, cut from `main` (`65d9df9`). Mobile-only.
+
+## It is a mirror, not an invention
+
+Web already models this, and as TABS rather than a filter:
+`type Tab = 'CLIENT' | 'STAFF'` in `ConversationsPanel.tsx`, with its own
+filters living *inside* a tab. The API already supports it too —
+`GET /conversations?type=` has been there all along; mobile simply never
+passed it.
+
+So the work was wiring, plus one decision about where it belongs.
+
+## Scope is a different axis from the filter
+
+The chat screen already has a FILTER dropdown (All / Unread / Needs
+action) and a SORT dropdown. Scope did **not** go into that dropdown: the
+filter asks "which of these threads", scope asks "which threads am I
+looking at at all", and folding them together would have made "unread
+client threads" unaskable. Web draws the same line.
+
+It renders as a three-up segmented row above search — three short,
+mutually exclusive options that never scroll, where seeing the
+alternatives is the point — using the same gold active-state language the
+filter dropdown already uses.
+
+**`All` is a deliberate addition to web**, which has only the two tabs.
+This screen has always shown one combined list; removing that to match
+web would take away a view the app already has. It stays the default, so
+the control is additive.
+
+## Why it had to be a server parameter
+
+`type=STAFF` maps server-side to `{ type: { in: [STAFF, GROUP] } }`,
+because a GROUP thread is a staff 1:1 that grew a third member via
+@mention and has no tab of its own. A local `type === 'STAFF'` predicate
+would look correct and silently drop every group.
+
+Measured against the live dev API, and the group thread is the
+discriminator:
+
+    no filter      84   {CLIENT: 79, STAFF: 4, GROUP: 1}
+    type=CLIENT    79   {CLIENT: 79}
+    type=STAFF      5   {STAFF: 4, GROUP: 1}   <- the group
+    type=BOGUS     400
+
+## A pre-existing bug this exposed
+
+Selecting Team fetched `?type=STAFF` — and then the list refilled with all
+84 threads a moment later. Two requests on the wire:
+
+    /conversations?type=STAFF
+    /conversations            <- overwrote it
+
+The cause is the poll, not the filter:
+
+    useFocusEffect(useCallback(() => {
+      load('poll');
+      const timer = setInterval(() => load('poll'), LIST_POLL_MS);
+      ...
+    }, [token]))          // <- deps
+
+`load` closes over the request's parameters, but the focus effect depended
+on `[token]` alone, so the interval kept the FIRST closure forever and
+every poll refetched with the parameters current at mount.
+
+**This was already live for `search`.** Type a term, wait for the poll,
+and the results were silently replaced by the full list — the same bug,
+just slower to notice because a search term stays in the box while the
+list underneath it stops matching. The scope control only made it
+immediate.
+
+Fixed by depending on `load` (a `useCallback`, so it is stable per its own
+deps, and `token` is already one of them). The `eslint-disable` for
+exhaustive-deps that was suppressing the warning is gone.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                    clean
+    apps/mobile   expo export --platform ios      clean
+    apps/api      tsc                             clean
+    apps/web      tsc -b && vite build            built in 14.24s
+    shared-types  generate-enums --check + tsc    enums match schema.prisma
+
+Driven in the harness against the real dev API, counting rendered rows
+and watching the wire:
+
+                 API    rows rendered   poll carries
+    All           84    (default)       /conversations
+    Clients       79    79              ?type=CLIENT
+    Team           5     5              ?type=STAFF
+
+Row counts match the API exactly, and after the fix every poll carries
+the filter. `design-refs/session-ax/`.
+
+### Not verified
+
+On-device. Empty-state copy for the two new scopes was not driven — this
+studio has threads in both, so neither empty state renders. The strings
+are there and typecheck; nothing exercised them.
+
+One oddity noticed and NOT chased: a thread the server returns under
+`type=STAFF` renders an SMS channel badge. The badge reflects the last
+message's channel and the server is the authority on the thread's type,
+so this filter shows what it is told. Worth a look if staff threads should
+never carry SMS.
+
+## Database
+
+No schema change, migration or backfill. Read-only against dev.

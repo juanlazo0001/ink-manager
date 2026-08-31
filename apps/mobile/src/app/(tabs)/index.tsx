@@ -28,6 +28,7 @@ import {
   applyControls,
   isSearchable,
   type ThreadFilter,
+  type ThreadScope,
   type ThreadSort,
 } from '@/lib/conversationListControls';
 import { screenErrorMessage } from '@/lib/screenError';
@@ -73,6 +74,9 @@ export default function ConversationsScreen() {
   // the spinner belongs to the gap between the two.
   const [search, setSearch] = useState('');
   const [activeSearch, setActiveSearch] = useState('');
+  /* `all` by default: this screen has always shown one combined list,
+     and the scope control is additive rather than a restructure. */
+  const [scope, setScope] = useState<ThreadScope>('all');
   const [filter, setFilter] = useState<ThreadFilter>('all');
   const [sort, setSort] = useState<ThreadSort>('recent');
 
@@ -94,7 +98,10 @@ export default function ConversationsScreen() {
       if (mode === 'refresh') setRefreshing(true);
 
       try {
-        const next = await fetchConversations(token, activeSearch ? { search: activeSearch } : {});
+        const next = await fetchConversations(token, {
+          ...(activeSearch ? { search: activeSearch } : {}),
+          ...(scope === 'all' ? {} : { type: scope }),
+        });
         if (seq !== requestRef.current) return;
         setItems(next);
         /*
@@ -127,17 +134,34 @@ export default function ConversationsScreen() {
     // changes identity whenever `items` does, and depending on it here
     // would refetch on every response.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, activeSearch]);
+    // `scope` is a SERVER parameter, so changing it has to refetch --
+    // it is not a local predicate over the list already held.
+  }, [token, activeSearch, scope]);
 
-  // Refetch on focus (coming back from a thread, where sending a message
-  // has almost certainly reordered the list) and poll while focused only.
+  /*
+   * Refetch on focus (coming back from a thread, where sending a message
+   * has almost certainly reordered the list) and poll while focused only.
+   *
+   * DEPENDS ON `load`, NOT `[token]`, and that is a real fix rather than
+   * hygiene. `load` closes over the request's parameters; with `[token]`
+   * the interval kept the FIRST closure forever, so every poll refetched
+   * with the parameters that were current at mount and overwrote whatever
+   * the list was actually showing.
+   *
+   * Caught by the scope control, where it is immediate and obvious:
+   * picking Team fetched `?type=STAFF`, then the next poll fetched
+   * `/conversations` with no type at all and put all 84 threads back.
+   * But it was ALREADY the behaviour for `search` -- type a term, wait
+   * for the poll, and the results were silently replaced by the full
+   * list. That was live before this session; the filter only made it
+   * visible.
+   */
   useFocusEffect(
     useCallback(() => {
       load('poll');
       const timer = setInterval(() => load('poll'), LIST_POLL_MS);
       return () => clearInterval(timer);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [token]),
+    }, [load]),
   );
 
   useEffect(() => () => void ++requestRef.current, []);
@@ -325,6 +349,8 @@ export default function ConversationsScreen() {
         search={search}
         onSearchChange={setSearch}
         searching={searching}
+        scope={scope}
+        onScopeChange={setScope}
         filter={filter}
         onFilterChange={setFilter}
         sort={sort}
@@ -443,6 +469,19 @@ export default function ConversationsScreen() {
                 title={filter === 'unread' ? 'Nothing unread' : 'Nothing waiting on you'}
                 body="Switch back to All to see every thread."
                 action={{ label: 'Show all', onPress: () => setFilter('all') }}
+              />
+            ) : scope !== 'all' ? (
+              /* Named, because "No conversations yet" under a scope that
+                 is hiding threads would be a lie about the other one. */
+              <StateMessage
+                eyebrow="Nothing here"
+                title={scope === 'CLIENT' ? 'No client threads' : 'No team threads'}
+                body={
+                  scope === 'CLIENT'
+                    ? 'Client conversations appear here as soon as someone writes in.'
+                    : 'Team conversations appear here once you message someone in the studio.'
+                }
+                action={{ label: 'Show all', onPress: () => setScope('all') }}
               />
             ) : (
               <StateMessage
