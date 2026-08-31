@@ -1,21 +1,22 @@
-import Feather from '@expo/vector-icons/Feather';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ScreenShell, SCREEN_TOP_INSET } from '@/components/ScreenShell';
+import { ScreenShell } from '@/components/ScreenShell';
 import { Appear } from '@/components/Appear';
 import { ArtistCard } from '@/components/ArtistCard';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { TopBar } from '@/components/TopBar';
-import { countLine, ScreenTitle } from '@/components/ScreenTitle';
+import { countLine, ScreenTitle, TitleAction } from '@/components/ScreenTitle';
+import { InfoIcon, PlusIcon } from '@/components/icons';
+import { InviteTeamMemberSheet } from '@/components/InviteTeamMemberSheet';
 import { SkeletonList } from '@/components/Skeleton';
 import { UnderlineTabs } from '@/components/UnderlineTabs';
 import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { fetchArtists, type ArtistOption } from '@/lib/artists';
 import { screenErrorMessage } from '@/lib/screenError';
-import { ROLE_LABELS, fetchTeamUsers, type TeamUser } from '@/lib/team';
+import { ROLE_LABELS, fetchTeamUsers, inviteTeamMember, type TeamUser } from '@/lib/team';
 import { colors, hairline, radius, space, type } from '@/theme';
 
 type Tab = 'staff' | 'artists';
@@ -52,6 +53,41 @@ export default function TeamScreen() {
    * both: users for staff, artists for artists.
    */
   const [artistProfiles, setArtistProfiles] = useState<ArtistOption[] | null>(null);
+
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviting, setInviting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+
+  /*
+   * OWNER only, which is web's own gate on this control
+   * (`isOwner && activeTab === 'staff'`).
+   *
+   * The ROUTE's gate is `requirePermission("team.manage")`, which is
+   * broader — so this is the stricter of the two, deliberately. Showing
+   * the button to a FRONT_DESK who happens to hold `team.manage` would
+   * give this app a capability web does not, and the Team screen is
+   * OWNER-only in practice anyway: `GET /studios/:id/users`, which this
+   * screen cannot render without, 403s for FRONT_DESK (measured).
+   */
+  const canInvite = session?.profile.role === 'OWNER';
+
+  async function onInvite(input: { email: string; name: string; phone: string; role: string }) {
+    if (!token || !studioId) return;
+    setInviting(true);
+    setInviteError(null);
+    try {
+      await inviteTeamMember(token, studioId, input);
+      setInviteOpen(false);
+      /* Re-read rather than splice the row in: an invite creates a PENDING
+         user the roster renders with an INVITED badge, and the server is
+         the only thing that knows its id and shape. */
+      await load();
+    } catch (err) {
+      setInviteError(screenErrorMessage(err, 'that invite'));
+    } finally {
+      setInviting(false);
+    }
+  }
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -95,9 +131,24 @@ export default function TeamScreen() {
       */}
       <TopBar />
 
-      <View style={styles.pageHead}>
-        <ScreenTitle title="Team" counts={countLine([staff.length, 'person', 'people'], [profiles.length, 'artist'])} />
-      </View>
+      {/*
+        NO WRAPPER. `pageHead` used to hold the eyebrow and the title, and
+        it carried `paddingTop: SCREEN_TOP_INSET` of its own. When BA
+        replaced that pair with `ScreenTitle` -- which applies the SAME
+        inset internally, as it does on Clients and Pipeline -- the
+        wrapper stayed and the inset was applied twice. That is the whole
+        of why this title sat lower than every other one. Web's Team
+        header has no extra offset either.
+      */}
+      <ScreenTitle
+        title="Team"
+        counts={countLine([staff.length, 'person', 'people'], [profiles.length, 'artist'])}
+        action={
+          canInvite ? (
+            <TitleAction Icon={PlusIcon} label="Invite team member" onPress={() => setInviteOpen(true)} />
+          ) : null
+        }
+      />
 
       {/*
         Underline tabs, matching Pipeline. The segmented control this
@@ -152,7 +203,10 @@ export default function TeamScreen() {
                     <Text style={styles.groupHeading}>{group.label}</Text>
                     {group.items.map((a, i) => (
                       <Appear key={a.id} index={i}>
-                        <ArtistCard artist={a} />
+                        <ArtistCard
+                          artist={a}
+                          onPress={() => router.push({ pathname: '/artist/[id]', params: { id: a.id } })}
+                        />
                       </Appear>
                     ))}
                   </View>
@@ -161,14 +215,30 @@ export default function TeamScreen() {
             </View>
           )}
 
+          {/*
+            THE SENTENCE HAD TO CHANGE. It read "Inviting, editing and
+            removing people is done in the portal", which stopped being
+            true the moment the Invite action above shipped — the screen
+            would have been telling the reader that the button they can
+            see does not exist. Editing and removing still are portal
+            work, so those two stay named and inviting comes out.
+          */}
           <View style={styles.note}>
-            <Feather name="info" size={13} color={colors.fgMuted} />
+            <InfoIcon size={13} color={colors.fgMuted} />
             <Text style={styles.noteText}>
-              Inviting, editing and removing people is done in the portal.
+              Editing and removing people is done in the portal.
             </Text>
           </View>
         </ScrollView>
       )}
+
+      <InviteTeamMemberSheet
+        visible={inviteOpen}
+        busy={inviting}
+        error={inviteError}
+        onClose={() => setInviteOpen(false)}
+        onSubmit={(input) => void onInvite(input)}
+      />
     </ScreenShell>
   );
 }
@@ -206,12 +276,6 @@ function Badge({ label }: { label: string }) {
 const styles = StyleSheet.create({
   /* Same head as Clients: eyebrow, then Home's own "Welcome," token. */
   /* ITEM 2: the same air Home puts above its eyebrow. */
-  pageHead: {
-    paddingHorizontal: space.lg,
-    paddingTop: SCREEN_TOP_INSET,
-    paddingBottom: space.md,
-    gap: space.xs,
-  },
   content: { padding: space.lg, gap: space.md, paddingBottom: space.xxl },
 
 

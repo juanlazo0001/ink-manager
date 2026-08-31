@@ -258,7 +258,39 @@ const CARD_RATIO = 3.6;
  * deciding that a photograph of white paper or a bright stencil is not a
  * case worth protecting. Nothing here forecloses it.
  */
-const PHOTO_OPACITY = 0.28;
+/*
+ * ─── BC: THE OWNER LIFTED THE CONSTRAINT. 0.28 -> 0.34 ──────────────
+ *
+ * BA stopped at 0.28 because a photograph of white paper lost the 4.5
+ * floor above it. Asked, the owner ruled: "No white paper not worth
+ * protecting. Make lighter."
+ *
+ * SO THE BINDING CASE IS NOW THE THERMOSTAT, and it was re-measured
+ * rather than assumed — AS's old ~0.40 ceiling predates AU's gradient
+ * rework and does not apply. Thermostat description, floor 4.5:
+ *
+ *     0.28   4.97      where BA stopped
+ *     0.31   4.83
+ *     0.34   4.64      shipped here
+ *     0.36   4.52      the ceiling — passes by two hundredths
+ *     0.37   4.45      FAILS
+ *
+ * 0.34, not 0.36. The ceiling is a cliff edge, not a target: 0.36 clears
+ * the floor by 0.02, which is inside the noise of a JPEG-textured
+ * fixture, and the next person to touch the gradient would silently push
+ * it under. 0.34 keeps 0.14 of margin and is still twice the +0.03 step
+ * the earlier sessions took, which is what "make lighter" with the
+ * constraint lifted should look like.
+ *
+ * FLAT WHITE, for the record, is now BELOW the floor by design and with
+ * the owner's agreement: 4.08 at 0.34. That is the trade he made, and it
+ * is written here so nobody later reads it as a regression and "fixes" it.
+ *
+ * The no-photo control holds at 14.7 across every value measured in this
+ * session, which is what proves the harness is reading compositing and
+ * not something else.
+ */
+const PHOTO_OPACITY = 0.34;
 
 /*
  * ─── THE WASH ───────────────────────────────────────────────────────

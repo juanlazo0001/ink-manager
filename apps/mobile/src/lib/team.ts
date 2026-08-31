@@ -53,6 +53,30 @@ export function fetchTeamUsers(
   return apiFetch<TeamUser[]>(`/studios/${encodeURIComponent(studioId)}/users`, { token, signal });
 }
 
+/**
+ * `POST /studios/:studioId/invites` — web's "Invite team member".
+ *
+ * Same body web sends (`Team.tsx`'s `handleInviteSubmit`): email, name,
+ * phone, role. The route requires `team.manage` AND that the path studio
+ * matches the caller's own token studio, so there is no cross-studio
+ * shape to get wrong here.
+ *
+ * The response is the created invite; nothing on mobile reads it — the
+ * screen re-fetches the roster instead, because the row it needs to draw
+ * is a PENDING user and that is a different shape from this.
+ */
+export function inviteTeamMember(
+  token: string,
+  studioId: string,
+  input: { email: string; name: string; phone: string; role: string },
+): Promise<unknown> {
+  return apiFetch<unknown>(`/studios/${encodeURIComponent(studioId)}/invites`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(input),
+  });
+}
+
 export function fetchPermissions(
   token: string,
   studioId: string,

@@ -36,7 +36,7 @@ import { colors, hairline, radius, space, type } from '@/theme';
  * app does not have. The card is not pressable here rather than being
  * pressable and going nowhere.
  */
-export function ArtistCard({ artist }: { artist: ArtistOption }) {
+export function ArtistCard({ artist, onPress }: { artist: ArtistOption; onPress?: () => void }) {
   const name = artistLabel(artist);
   const specialties = artist.specialties ?? [];
   const portfolio = artist.portfolioImages ?? [];
@@ -55,8 +55,24 @@ export function ArtistCard({ artist }: { artist: ArtistOption }) {
     }
   };
 
+  /*
+   * PRESSABLE NOW. Session AY left it deliberately inert — "web's card is
+   * also a link to `/artists/:id`, a full profile page this app does not
+   * have… the card is therefore NOT pressable, rather than pressable and
+   * going nowhere". The page exists as of this session, so the link does
+   * what web's has always done.
+   *
+   * Still optional: a caller with nowhere to send someone passes nothing
+   * and gets the old inert card rather than a dead tap target.
+   */
   return (
-    <View style={styles.card}>
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      accessibilityRole={onPress ? 'button' : undefined}
+      accessibilityLabel={onPress ? `Open ${name}` : undefined}
+      style={({ pressed }) => [styles.card, pressed && onPress && styles.cardPressed]}
+    >
       <View style={styles.headerRow}>
         <Avatar url={artist.user.avatarUrl} initials={initialsOf(name)} size={48} />
         <View style={styles.identity}>
@@ -156,11 +172,12 @@ export function ArtistCard({ artist }: { artist: ArtistOption }) {
           ))}
         </View>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
+  cardPressed: { opacity: 0.75 },
   card: {
     gap: space.md,
     padding: space.lg,

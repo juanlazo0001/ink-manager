@@ -10,13 +10,20 @@ import { PillRow } from '@/components/Pill';
 import { UnderlineTabs } from '@/components/UnderlineTabs';
 import { Card, SectionHeader } from '@/components/editorial';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { DeleteTaskConfirmSheet } from '@/components/DeleteTaskConfirmSheet';
 import { PersonalTaskRow, SystemTaskRow } from '@/components/TaskRow';
 import { SkeletonList } from '@/components/Skeleton';
 import { StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
 import { screenErrorMessage } from '@/lib/screenError';
 import { useStudioTimeZone } from '@/hooks/useStudioTimeZone';
-import { createPersonalTask, dismissSystemTask, fetchTasks, setPersonalTaskCompleted } from '@/lib/tasks';
+import {
+  createPersonalTask,
+  deletePersonalTask,
+  dismissSystemTask,
+  fetchTasks,
+  setPersonalTaskCompleted,
+} from '@/lib/tasks';
 import { fetchTeamUsers } from '@/lib/team';
 import {
   filterTasks,
@@ -69,6 +76,10 @@ export default function TasksScreen() {
   const [refreshing, setRefreshing] = useState(false);
   /** Ids currently mid-write, so a row shows a spinner rather than lying. */
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  /* The task awaiting confirmation, or null. Held as the row itself
+     rather than an id so the sheet can name it without a second lookup. */
+  const [pendingDelete, setPendingDelete] = useState<PersonalTask | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [sort, setSort] = useState<TaskSort>('newest');
   const [filter, setFilter] = useState<TaskFilter>('all');
   // Decides mine-vs-others on a personal task: a row this person created
@@ -190,6 +201,33 @@ export default function TasksScreen() {
     },
     [token],
   );
+
+  /*
+   * Deleting is NOT optimistic, and that is the opposite call from
+   * completing on purpose.
+   *
+   * A tick has an obvious rollback: untick it. A deleted row's rollback
+   * is to re-insert it at the right place in a sorted, filtered, grouped
+   * list — and if the write actually failed, to do that without the user
+   * having seen it vanish and believed it. The write is one request
+   * behind a confirm nobody taps twice; it can wait for its answer.
+   */
+  const confirmDelete = useCallback(async () => {
+    if (!token || !pendingDelete) return;
+    setDeleting(true);
+    try {
+      await deletePersonalTask(token, pendingDelete.id);
+      setData((current) =>
+        current ? { ...current, personal: current.personal.filter((t) => t.id !== pendingDelete.id) } : current,
+      );
+      setPendingDelete(null);
+    } catch (err) {
+      setError(screenErrorMessage(err, 'that task'));
+      setPendingDelete(null);
+    } finally {
+      setDeleting(false);
+    }
+  }, [token, pendingDelete]);
 
   /**
    * Creating is deliberately NOT optimistic, unlike completing.
@@ -464,6 +502,7 @@ export default function TasksScreen() {
                   canComplete
                   busy={busyIds.has(task.id)}
                   onToggleComplete={() => void toggleComplete(task)}
+                  onDelete={() => setPendingDelete(task)}
                   timeZone={timeZone}
                 />
               ))}
@@ -478,6 +517,7 @@ export default function TasksScreen() {
                       canComplete
                       busy={busyIds.has(task.id)}
                       onToggleComplete={() => void toggleComplete(task)}
+                      onDelete={() => setPendingDelete(task)}
                       timeZone={timeZone}
                     />
                   ))}
@@ -501,7 +541,17 @@ export default function TasksScreen() {
                     /* No checkbox: the API's PATCH is assignee-only, which
                        session 5 established and web states in the line
                        above. A tick you cannot honour is worse than none. */
-                    <PersonalTaskRow key={task.id} task={task} canComplete={false} timeZone={timeZone} />
+                    /* Delegated rows: this person cannot COMPLETE the
+                       task (only its owner can) but is its creator, and
+                       the route lets a creator delete. Same reason the
+                       checkbox is absent and the × is not. */
+                    <PersonalTaskRow
+                      key={task.id}
+                      task={task}
+                      canComplete={false}
+                      onDelete={() => setPendingDelete(task)}
+                      timeZone={timeZone}
+                    />
                   ))
                 )}
               </Card>
@@ -509,6 +559,18 @@ export default function TasksScreen() {
           </>
         )}
       </ScrollView>
+
+      <DeleteTaskConfirmSheet
+        visible={!!pendingDelete}
+        title={pendingDelete?.title ?? ''}
+        /* Delegated when the row belongs to someone else and this caller
+           is only its creator -- the case where deleting takes the task
+           off another person's list. */
+        delegated={!!pendingDelete && pendingDelete.userId !== viewerUserId}
+        busy={deleting}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={() => void confirmDelete()}
+      />
     </ScreenShell>
   );
 }

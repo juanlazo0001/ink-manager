@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Appear } from '@/components/Appear';
+import { NotificationSwipe } from '@/components/NotificationSwipe';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenShell } from '@/components/ScreenShell';
 import { SkeletonList } from '@/components/Skeleton';
@@ -42,7 +43,18 @@ export default function NotificationsScreen() {
 
   const [items, setItems] = useState<NotificationItem[] | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [unreadOnly, setUnreadOnly] = useState(false);
+  /*
+   * UNREAD-ONLY BY DEFAULT — the owner's ask: "read notifications should
+   * disappear from the notifications page to avoid an infinite list".
+   *
+   * A read row now leaves the list the moment it is read, so the feed is
+   * bounded by what is actually waiting on you rather than by everything
+   * that has ever happened. SHOW ALL is kept rather than removed: the
+   * read ones still exist on the server, and a notification you opened
+   * by accident and want to find again has to be findable. What changes
+   * is which of the two is the default, not which of the two exists.
+   */
+  const [unreadOnly, setUnreadOnly] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [marking, setMarking] = useState(false);
@@ -76,18 +88,40 @@ export default function NotificationsScreen() {
    * stall in the one interaction that has to feel instant. A failed mark
    * leaves the row unread, which is recoverable.
    */
+  /*
+   * Optimistic, and the optimism has two shapes depending on the filter.
+   *
+   * Under SHOW ALL the row stays and loses its dot. Under UNREAD ONLY the
+   * row LEAVES — because that is what the filter means, and a row sitting
+   * there read while the list claims to show only unread would be the
+   * list lying about itself.
+   *
+   * On failure the row is put back and the count restored. That matters
+   * more now than it did: with the row gone from the list, a silently
+   * failed write would look like it worked until the next load quietly
+   * brought the row back.
+   */
+  const markRead = (item: NotificationItem) => {
+    if (item.readAt || !token) return;
+    const previous = items;
+    const previousCount = unreadCount;
+    setItems((current) =>
+      unreadOnly
+        ? (current ?? []).filter((n) => n.id !== item.id)
+        : (current ?? []).map((n) => (n.id === item.id ? { ...n, readAt: new Date().toISOString() } : n)),
+    );
+    setUnreadCount((c) => Math.max(0, c - 1));
+    void markNotificationRead(token, item.id).catch(() => {
+      setItems(previous);
+      setUnreadCount(previousCount);
+      setError(screenErrorMessage(new Error('Not saved'), 'that notification'));
+    });
+  };
+
   const open = (item: NotificationItem) => {
     const route = notificationRoute(item, role);
     router.push(route as never);
-    if (!item.readAt && token) {
-      setItems((current) =>
-        (current ?? []).map((n) => (n.id === item.id ? { ...n, readAt: new Date().toISOString() } : n)),
-      );
-      setUnreadCount((c) => Math.max(0, c - 1));
-      void markNotificationRead(token, item.id).catch(() => {
-        /* Left unread on failure; the next load re-reads the truth. */
-      });
-    }
+    markRead(item);
   };
 
   const markAll = async () => {
@@ -158,6 +192,11 @@ export default function NotificationsScreen() {
         >
           {items.map((item, i) => (
             <Appear key={item.id} index={i}>
+              <NotificationSwipe
+                rowId={item.id}
+                read={!!item.readAt}
+                onMarkRead={() => markRead(item)}
+              >
               <Pressable
                 onPress={() => open(item)}
                 accessibilityRole="button"
@@ -177,6 +216,7 @@ export default function NotificationsScreen() {
                   <Text style={styles.when}>{relativeStamp(item.createdAt)}</Text>
                 </View>
               </Pressable>
+              </NotificationSwipe>
             </Appear>
           ))}
         </ScrollView>

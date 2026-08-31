@@ -2,6 +2,7 @@ import type { PersonalTask, SystemTask } from '@ink-manager/shared-types';
 import Feather from '@expo/vector-icons/Feather';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { CloseIcon } from '@/components/icons';
 import { StatusChip } from '@/components/StatusChip';
 import { dueLabel, isOverdue, systemTaskLabel } from '@/lib/taskDisplay';
 import { colors, hairline, radius, space, type } from '@/theme';
@@ -19,12 +20,19 @@ export function PersonalTaskRow({
   canComplete,
   busy,
   onToggleComplete,
+  onDelete,
   timeZone,
 }: {
   task: PersonalTask;
   canComplete: boolean;
   busy?: boolean;
   onToggleComplete?: () => void;
+  /**
+   * Omitted on rows the API would refuse — see `deletePersonalTask`.
+   * Absent, not disabled: a permanently greyed button on someone else's
+   * task teaches nothing.
+   */
+  onDelete?: () => void;
   /**
    * The studio's zone. Required, not optional with a device fallback:
    * "due today" is a question about the studio's calendar, and a silent
@@ -108,6 +116,26 @@ export function PersonalTaskRow({
           ) : null}
         </View>
       </View>
+
+      {/*
+        Web puts a small × at the end of every task row, and so does this.
+        It is deliberately quiet — `fgMuted` at 14pt — because deleting is
+        not the row's primary action and the checkbox is; the confirm is
+        what makes it safe, not the button being hard to hit. `hitSlop`
+        keeps the target at thumb size regardless.
+      */}
+      {onDelete ? (
+        <Pressable
+          onPress={onDelete}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${task.title}`}
+          hitSlop={12}
+          style={({ pressed }) => [styles.delete, pressed && styles.pressed]}
+        >
+          <CloseIcon size={14} color={colors.fgMuted} />
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -177,6 +205,7 @@ export function SystemTaskRow({
 }
 
 const styles = StyleSheet.create({
+  delete: { paddingLeft: space.sm, alignSelf: 'flex-start', paddingTop: 2 },
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
