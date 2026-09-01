@@ -201,6 +201,30 @@ Concise operating rules, not a project history — see REPORT.md for history.
   ledger keyed on `message.id` reported phantom unmounts at ack; key instruments on stable
   identity (`rowKey`-class).
 
+## Parity with the portal (`tools/parity`)
+
+- **Any session that changes a screen's visual design runs `tools/parity` for that screen and
+  attaches the composite and the value table to its report.** Not a suggestion: "it matches web"
+  has been asserted many times in this repo's history and measured almost never, and the icon
+  audit in session BB found 34 concepts that already matched and 6 that did not — a distinction
+  nobody could have made by eye.
+
+      python tools/parity/parity.py --screens team
+
+- **A new deliberate divergence is added to `tools/parity/expected-divergences.md` IN THE SAME
+  COMMIT that creates it.** A difference that is not in that manifest is reported as DRIFT, and
+  the next session spends an afternoon "fixing" a decision somebody made on purpose. This is the
+  same stale-documentation failure that produced most of this file's other rules.
+- **What the harness is valid for: layout, type, colour and spacing.** Nothing else.
+- **What it is NOT valid for, and must never be presented as covering: MOTION, GESTURES, and true
+  native rendering.** Reanimated does not advance inside app subtrees there and gesture-handler is
+  inert to synthetic input — see the section immediately below, which is where those limits were
+  established. Both sides also render in the same Chromium, so nothing that differs because iOS
+  renders differently is visible at all. **A clean parity report is not a device gate and does not
+  substitute for one.**
+- The pixel-difference percentage in the report is context, not a pass/fail. Two renderers are
+  never pixel-identical. The value tables decide.
+
 ## Verifying mobile UI on the web harness
 
 - **P3-class animation travel is device-gate-only under the web harness** — a reanimated animation
