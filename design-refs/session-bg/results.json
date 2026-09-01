@@ -1,0 +1,416 @@
+[
+  {
+    "key": "dashboard",
+    "title": "Dashboard",
+    "note": null,
+    "web": {},
+    "mobile": {},
+    "web_390": "dashboard-web-390.png",
+    "web_1440": "dashboard-web-1440.png",
+    "mobile_390": "dashboard-mobile-390.png",
+    "composite": "dashboard-composite.png",
+    "diff_pct": 16.3,
+    "diff": "dashboard-diff.png"
+  },
+  {
+    "key": "inquiries",
+    "title": "Pipeline",
+    "note": null,
+    "web": {
+      "page title \u2014 \u201cPipeline\u201d": {
+        "fontFamily": "Outfit, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "15px",
+        "fontWeight": "400",
+        "letterSpacing": "normal",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgb(23, 19, 16)",
+        "paddingTop": "10px",
+        "paddingLeft": "12px",
+        "borderRadius": "0px",
+        "borderTopWidth": "1px",
+        "borderColor": "rgba(201, 154, 91, 0.18)",
+        "gap": "12px",
+        "__rect": {
+          "w": 271,
+          "h": 45,
+          "x": -292,
+          "y": 229
+        }
+      },
+      "primary button \u2014 \u201cNew inquiry\u201d": {
+        "fontFamily": "Jura, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "11.5px",
+        "fontWeight": "400",
+        "letterSpacing": "1.61px",
+        "color": "rgb(14, 11, 8)",
+        "backgroundColor": "rgb(201, 154, 91)",
+        "paddingTop": "10px",
+        "paddingLeft": "16px",
+        "borderRadius": "3.35544e+07px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(14, 11, 8)",
+        "gap": "8px",
+        "__rect": {
+          "w": 146,
+          "h": 37,
+          "x": 24,
+          "y": 210
+        }
+      }
+    },
+    "mobile": {
+      "page title \u2014 \u201cPipeline\u201d": {
+        "fontFamily": "Fraunces_400Regular",
+        "fontSize": "32px",
+        "fontWeight": "400",
+        "letterSpacing": "-0.48px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(0, 0, 0)",
+        "gap": "normal",
+        "__rect": {
+          "w": 200,
+          "h": 34,
+          "x": 16,
+          "y": 90
+        }
+      },
+      "primary button \u2014 \u201cNew inquiry\u201d": {
+        "fontFamily": "Jura_500Medium",
+        "fontSize": "11.5px",
+        "fontWeight": "400",
+        "letterSpacing": "1.61px",
+        "color": "rgb(14, 11, 8)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(0, 0, 0)",
+        "gap": "normal",
+        "__rect": {
+          "w": 90,
+          "h": 14,
+          "x": 268,
+          "y": 99
+        }
+      }
+    },
+    "web_390": "inquiries-web-390.png",
+    "web_1440": "inquiries-web-1440.png",
+    "mobile_390": "inquiries-mobile-390.png",
+    "composite": "inquiries-composite.png",
+    "diff_pct": 17.2,
+    "diff": "inquiries-diff.png"
+  },
+  {
+    "key": "inquiry-detail",
+    "title": "Inquiry detail",
+    "note": null,
+    "web": {
+      "section header \u2014 \u201cAssignment\u201d": {
+        "fontFamily": "Fraunces, ui-serif, serif",
+        "fontSize": "19px",
+        "fontWeight": "500",
+        "letterSpacing": "1.14px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 101,
+          "h": 29,
+          "x": 113,
+          "y": 773
+        }
+      }
+    },
+    "mobile": {
+      "section header \u2014 \u201cAssignment\u201d": {
+        "fontFamily": "Fraunces_500Medium",
+        "fontSize": "17px",
+        "fontWeight": "400",
+        "letterSpacing": "0.34px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(0, 0, 0)",
+        "gap": "normal",
+        "__rect": {
+          "w": 233,
+          "h": 22,
+          "x": 64,
+          "y": 644
+        }
+      }
+    },
+    "web_390": "inquiry-detail-web-390.png",
+    "web_1440": "inquiry-detail-web-1440.png",
+    "mobile_390": "inquiry-detail-mobile-390.png",
+    "composite": "inquiry-detail-composite.png",
+    "diff_pct": 7.8,
+    "diff": "inquiry-detail-diff.png"
+  },
+  {
+    "key": "clients",
+    "title": "Clients",
+    "note": null,
+    "web": {
+      "page title \u2014 \u201cClients\u201d": null
+    },
+    "mobile": {
+      "page title \u2014 \u201cClients\u201d": null
+    },
+    "web_390": "clients-web-390.png",
+    "web_1440": "clients-web-1440.png",
+    "mobile_390": "clients-mobile-390.png",
+    "composite": "clients-composite.png",
+    "diff_pct": 19.9,
+    "diff": "clients-diff.png"
+  },
+  {
+    "key": "client-detail",
+    "title": "Client detail",
+    "note": null,
+    "web": {},
+    "mobile": {},
+    "web_390": "client-detail-web-390.png",
+    "web_1440": "client-detail-web-1440.png",
+    "mobile_390": "client-detail-mobile-390.png",
+    "composite": "client-detail-composite.png",
+    "diff_pct": 8.9,
+    "diff": "client-detail-diff.png"
+  },
+  {
+    "key": "chat-list",
+    "title": "Conversations",
+    "note": "No comparable web route: the portal opens conversations in a docked panel over whatever page you are on, so there is nothing to navigate to. Mobile-only capture.",
+    "web": {},
+    "mobile": {},
+    "web_error": "no comparable web route (see note)",
+    "mobile_390": "chat-list-mobile-390.png"
+  },
+  {
+    "key": "chat-thread",
+    "title": "Chat thread",
+    "note": null,
+    "web": {},
+    "mobile": {},
+    "web_390": "chat-thread-web-390.png",
+    "web_1440": "chat-thread-web-1440.png",
+    "mobile_390": "chat-thread-mobile-390.png",
+    "composite": "chat-thread-composite.png",
+    "diff_pct": 3.7,
+    "diff": "chat-thread-diff.png"
+  },
+  {
+    "key": "tasks",
+    "title": "Tasks",
+    "note": null,
+    "web": {
+      "page title \u2014 \u201cTasks\u201d": null
+    },
+    "mobile": {
+      "page title \u2014 \u201cTasks\u201d": null
+    },
+    "web_390": "tasks-web-390.png",
+    "web_1440": "tasks-web-1440.png",
+    "mobile_390": "tasks-mobile-390.png",
+    "composite": "tasks-composite.png",
+    "diff_pct": 11.7,
+    "diff": "tasks-diff.png"
+  },
+  {
+    "key": "schedule",
+    "title": "Schedule",
+    "note": "Known divergence: month grid on web, day + upcoming on mobile.",
+    "web": {},
+    "mobile": {},
+    "web_390": "schedule-web-390.png",
+    "web_1440": "schedule-web-1440.png",
+    "mobile_390": "schedule-mobile-390.png",
+    "composite": "schedule-composite.png",
+    "diff_pct": 15.7,
+    "diff": "schedule-diff.png"
+  },
+  {
+    "key": "flash",
+    "title": "Flash gallery",
+    "note": null,
+    "web": {},
+    "mobile": {},
+    "web_390": "flash-web-390.png",
+    "web_1440": "flash-web-1440.png",
+    "mobile_390": "flash-mobile-390.png",
+    "composite": "flash-composite.png",
+    "diff_pct": 22.2,
+    "diff": "flash-diff.png"
+  },
+  {
+    "key": "team",
+    "title": "Team",
+    "note": null,
+    "web": {
+      "page title \u2014 \u201cTeam\u201d": null,
+      "section header \u2014 \u201cBio\u201d": null,
+      "primary button \u2014 \u201cInvite team member\u201d": {
+        "fontFamily": "Jura, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "11.5px",
+        "fontWeight": "400",
+        "letterSpacing": "1.61px",
+        "color": "rgb(14, 11, 8)",
+        "backgroundColor": "rgb(201, 154, 91)",
+        "paddingTop": "10px",
+        "paddingLeft": "16px",
+        "borderRadius": "3.35544e+07px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(14, 11, 8)",
+        "gap": "8px",
+        "__rect": {
+          "w": 202,
+          "h": 37,
+          "x": 162,
+          "y": 191
+        }
+      },
+      "tab, selected \u2014 \u201cStaff\u201d": {
+        "fontFamily": "Outfit, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "letterSpacing": "normal",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "8px",
+        "paddingLeft": "16px",
+        "borderRadius": "8px 8px 0px 0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(201, 154, 91)",
+        "gap": "normal",
+        "__rect": {
+          "w": 63,
+          "h": 38,
+          "x": 24,
+          "y": 253
+        }
+      },
+      "tab, unselected \u2014 \u201cArtists\u201d": {
+        "fontFamily": "Outfit, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "letterSpacing": "normal",
+        "color": "rgb(155, 146, 127)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "8px",
+        "paddingLeft": "16px",
+        "borderRadius": "8px 8px 0px 0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(155, 146, 127)",
+        "gap": "normal",
+        "__rect": {
+          "w": 73,
+          "h": 38,
+          "x": 91,
+          "y": 253
+        }
+      }
+    },
+    "mobile": {
+      "page title \u2014 \u201cTeam\u201d": null,
+      "section header \u2014 \u201cBio\u201d": null,
+      "primary button \u2014 \u201cInvite team member\u201d": {
+        "fontFamily": "Jura_500Medium",
+        "fontSize": "11.5px",
+        "fontWeight": "400",
+        "letterSpacing": "1.61px",
+        "color": "rgb(14, 11, 8)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(0, 0, 0)",
+        "gap": "normal",
+        "__rect": {
+          "w": 146,
+          "h": 14,
+          "x": 212,
+          "y": 165
+        }
+      },
+      "tab, selected \u2014 \u201cStaff\u201d": {
+        "fontFamily": "Outfit_400Regular",
+        "fontSize": "17px",
+        "fontWeight": "400",
+        "letterSpacing": "normal",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(0, 0, 0)",
+        "gap": "normal",
+        "__rect": {
+          "w": 37,
+          "h": 21,
+          "x": 36,
+          "y": 212
+        }
+      },
+      "tab, unselected \u2014 \u201cArtists\u201d": {
+        "fontFamily": "Outfit_400Regular",
+        "fontSize": "17px",
+        "fontWeight": "400",
+        "letterSpacing": "normal",
+        "color": "rgb(155, 146, 127)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(0, 0, 0)",
+        "gap": "normal",
+        "__rect": {
+          "w": 49,
+          "h": 21,
+          "x": 117,
+          "y": 212
+        }
+      }
+    },
+    "web_390": "team-web-390.png",
+    "web_1440": "team-web-1440.png",
+    "mobile_390": "team-mobile-390.png",
+    "composite": "team-composite.png",
+    "diff_pct": 10.0,
+    "diff": "team-diff.png"
+  },
+  {
+    "key": "settings",
+    "title": "Settings",
+    "note": null,
+    "web": {
+      "page title \u2014 \u201cSettings\u201d": null
+    },
+    "mobile": {
+      "page title \u2014 \u201cSettings\u201d": null
+    },
+    "web_390": "settings-web-390.png",
+    "web_1440": "settings-web-1440.png",
+    "mobile_390": "settings-mobile-390.png",
+    "composite": "settings-composite.png",
+    "diff_pct": 10.6,
+    "diff": "settings-diff.png"
+  }
+]

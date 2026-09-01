@@ -353,13 +353,26 @@ Concise operating rules, not a project history — see REPORT.md for history.
      moving presence's in-memory Maps out of process;
   3. the **job scheduler**, which would otherwise run every cron job once per replica. Session BD
      gave it an `ENABLE_SCHEDULER` switch precisely so a second HTTP replica can turn it off.
-- **The current coverage is two endpoints.** `signupLimiter` and `resendVerificationLimiter`,
-  5 per 15 minutes per IP. **`POST /login` is not rate limited at all**, and neither is
-  `/auth/forgot-password` nor `/auth/reset-password/:token` — a gap that exists on one replica
-  today and does not need scaling to matter.
-- There is **no Redis in this project** and no `REDIS_*` variable. If a shared store is needed,
-  `rate-limit-postgresql` over the existing `DATABASE_URL` is the recommendation: no provisioning,
-  no new cost, no new failure domain, and these limits are not hot-path.
+- **CLOSED IN SESSION BG.** All six auth limiters now run on a SHARED store —
+  `@acpr/rate-limit-postgresql` over the existing `DATABASE_URL`, so no Redis and no new service.
+  It creates its own `rate_limit` SCHEMA, which is why Prisma (which manages `public`) can never
+  see or drop those tables.
+  - `/login`, `/auth/forgot-password` and `/auth/reset-password/:token` were **not limited at
+    all** before that session. They are now.
+  - Login is limited on **IP and on email**, and both count FAILURES only — a person using the
+    app normally accrues nothing, while an attacker (≈100% failures) hits the wall immediately.
+    An IP limiter alone is defeated by spreading across addresses, which is what credential
+    stuffing is; an email limiter alone is defeated by attacking many accounts.
+  - **Fail-open**: if the store is unreachable, requests are allowed. A limiter whose database
+    hiccup takes down sign-in for every studio is worse than the abuse it prevents. The trade is
+    stated in `lib/rateLimit.ts` so it can be argued with; during a store outage these endpoints
+    are unprotected.
+  - **The 429 body is JSON with an `error` string**, not express-rate-limit's plain-text default.
+    That is not cosmetic: `apps/mobile` decides whether a failure came from the API by testing
+    `typeof body.error === "string"`, so a plain-text 429 was shown to users as "Can't reach Ink
+    Manager right now" — a deliberate refusal reported as a network outage.
+- **Any new limiter goes through `makeLimiter` in `lib/rateLimit.ts`.** A bare `rateLimit({...})`
+  gets the per-process MemoryStore back and silently makes the real limit `limit × replicas`.
 
 ## Environment
 

@@ -14,6 +14,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@acpr/rate-limit-postgresql": "^1.4.1",
     "@anthropic-ai/sdk": "^0.112.1",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",

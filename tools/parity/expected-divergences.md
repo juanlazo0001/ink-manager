@@ -135,3 +135,14 @@ session BC left it — a reason living in one client's source is invisible
 to a comparison of the two.
 
 - covers: screen:team
+
+## Dashboard: a range dropdown on web, pills on mobile
+
+Web's date range is a `<select>`-style dropdown showing the current
+choice. Mobile shows the three presets as pills, always visible. A
+dropdown at 390pt costs a tap to see what the options even are, and there
+are only three.
+
+Recorded after the first full run showed the two side by side.
+
+- covers: screen:dashboard, group:shape, group:spacing
