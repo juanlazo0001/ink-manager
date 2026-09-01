@@ -2272,6 +2272,33 @@ router.post("/:id/schedule", requireAuth, async (req, res) => {
       },
     });
 
+    /*
+     * ─── THE DEPOSIT IS CONSUMED HERE, AND THAT IS INTENDED ─────────
+     *
+     * CONFIRMED INTENTIONAL BY THE OWNER, 2026-09-01. This is standard
+     * operating procedure, not a coupling to unpick: a deposit is taken
+     * FOR a session, so booking that session is exactly when it gets
+     * applied to it.
+     *
+     * Written down because it has already been read as a bug once.
+     * Session AR-3b found that `POST /inquiries/:id/schedule` is not a
+     * calendar action — it requires a non-empty `giftCardIds`, and in
+     * one transaction it creates a CONFIRMED appointment AND attaches
+     * those gift cards to it — and declined to build the mobile half on
+     * the grounds that a booking which moves money was an owner call
+     * rather than an implementer's. That was the right call to escalate,
+     * and it has now been answered: this is what it is meant to do.
+     *
+     * The AA–BC handoff identified stale documentation as this
+     * codebase's most common defect class — four of its ten findings
+     * were a comment that was true when written and never revisited. So
+     * this is recorded while it is known, rather than left for the next
+     * session to rediscover and "fix". See CLAUDE.md, "Money and
+     * deposits".
+     *
+     * A CONSULTATION is the money-free path and skips the gift-card
+     * requirement entirely; that is the one mobile books today.
+     */
     await Promise.all(
       giftCardIds.map((giftCardId: string) =>
         tx.giftCard.update({ where: { id: giftCardId }, data: { appointmentId: created.id } }),

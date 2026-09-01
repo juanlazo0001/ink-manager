@@ -282,9 +282,26 @@ const CARD_RATIO = 3.6;
  * the earlier sessions took, which is what "make lighter" with the
  * constraint lifted should look like.
  *
- * FLAT WHITE, for the record, is now BELOW the floor by design and with
- * the owner's agreement: 4.08 at 0.34. That is the trade he made, and it
- * is written here so nobody later reads it as a regression and "fixes" it.
+ * ─── THE APP'S ONE KNOWN AA EXCEPTION ───────────────────────────────
+ *
+ * FLAT WHITE IS BELOW THE 4.5 FLOOR BY DESIGN: **4.08:1** for the
+ * description line at 0.34, over a photograph that is pure white.
+ *
+ * A DELIBERATE OWNER DECISION, confirmed 2026-09-01: "the atmosphere
+ * matters more than the AA floor here." Not a regression, not an
+ * oversight, and not to be silently raised by an accessibility sweep —
+ * raising it means darkening the card, which is the thing four sessions
+ * of owner calibration were spent making lighter.
+ *
+ * WHAT WOULD CHANGE THE ANSWER, and the reason this is flagged rather
+ * than merely recorded: if AA ever becomes MANDATORY rather than a
+ * target — an App Store requirement, an enterprise customer's
+ * procurement checklist, a studio's own accessibility policy — this is
+ * the line item that fails it, and this constant is the lever. Nothing
+ * else in the app is knowingly under the floor.
+ *
+ * The thermostat, which is what a real client photograph looks like,
+ * reads 4.64 and passes. See CLAUDE.md, "Design".
  *
  * The no-photo control holds at 14.7 across every value measured in this
  * session, which is what proves the harness is reading compositing and
