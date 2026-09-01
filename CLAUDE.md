@@ -256,6 +256,30 @@ Concise operating rules, not a project history — see REPORT.md for history.
   position, clamp it into the band between the safe area and the other layer's **measured** edge,
   and remember that a content-sized sibling's height is not knowable before layout — measure it,
   don't assume it.
+- **THE APP HAS ONE KNOWN AA EXCEPTION, and it is deliberate.** The inquiry photo card's
+  description line measures **4.08:1 over a pure-white photograph** at the shipped
+  `PHOTO_OPACITY` of 0.34 (`apps/mobile/src/components/InquiryRow.tsx`). Owner decision,
+  confirmed **2026-09-01**: the atmosphere matters more than the AA floor here.
+  - **Do not silently raise it.** An accessibility sweep that "fixes" this is undoing four
+    sessions of owner calibration — the only lever is darkening the card, which is precisely
+    what those sessions were spent lightening. The realistic case (a client's photo, not a
+    sheet of paper) reads 4.64 and passes.
+  - **If AA ever becomes mandatory** — App Store, an enterprise customer's procurement, a
+    studio's own policy — this is the line item that fails, and that constant is the lever.
+    Nothing else in the app is knowingly under the floor. Raise it as a product decision, not
+    as a bug fix.
+
+## Money and deposits
+
+- **`POST /inquiries/:id/schedule` consumes the client's deposit, and that is INTENDED.** It
+  requires a non-empty `giftCardIds`, and in one transaction creates a CONFIRMED appointment and
+  attaches those gift cards to it. Owner-confirmed as standard operating procedure,
+  **2026-09-01**: a deposit is taken FOR a session, so booking that session is when it is applied.
+- It is therefore **not a calendar action**, and it is not a coupling to unpick. Session AR-3b
+  correctly escalated it rather than building on it; the answer is that it is working as designed.
+- The money-free path is a **CONSULTATION** (`POST /appointments` with
+  `appointmentType: 'CONSULTATION'`), which skips the gift-card requirement entirely. That is the
+  one mobile books today.
 
 ## Shared types
 
@@ -293,10 +317,25 @@ Concise operating rules, not a project history — see REPORT.md for history.
   reuses the established token pattern already in this codebase (random token + expiry column on
   the relevant model, verified server-side) rather than inventing a new auth mechanism.
 
-## Rate limiting
+## Rate limiting, and what else blocks a second replica
 
 - Rate limiting is in-memory per process — before scaling API replicas above one, move it to a
   shared store.
+- **It is not the only blocker, and fixing it alone would make replicas LOOK safe.** Measured in
+  session BE, three things are per-process today:
+  1. the two `express-rate-limit` limiters in `routes/auth.ts` (default MemoryStore);
+  2. **Socket.IO presence and invalidation** — `lib/realtime/io.ts` says it in its own words: a
+     client on replica A never sees an event emitted by replica B. Needs a shared adapter plus
+     moving presence's in-memory Maps out of process;
+  3. the **job scheduler**, which would otherwise run every cron job once per replica. Session BD
+     gave it an `ENABLE_SCHEDULER` switch precisely so a second HTTP replica can turn it off.
+- **The current coverage is two endpoints.** `signupLimiter` and `resendVerificationLimiter`,
+  5 per 15 minutes per IP. **`POST /login` is not rate limited at all**, and neither is
+  `/auth/forgot-password` nor `/auth/reset-password/:token` — a gap that exists on one replica
+  today and does not need scaling to matter.
+- There is **no Redis in this project** and no `REDIS_*` variable. If a shared store is needed,
+  `rate-limit-postgresql` over the existing `DATABASE_URL` is the recommendation: no provisioning,
+  no new cost, no new failure domain, and these limits are not hot-path.
 
 ## Environment
 
