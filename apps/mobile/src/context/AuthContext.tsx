@@ -1,8 +1,9 @@
 import type { LoginRequest, LoginResponse } from '@ink-manager/shared-types';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { ApiError, apiFetch } from '@/lib/api';
 import { clearStudioTimeZoneCache } from '@/hooks/useStudioTimeZone';
+import { registerPushToken, unregisterPushToken } from '@/lib/push';
 import { clearToken, getToken, saveToken } from '@/lib/tokenStorage';
 
 import { AuthContext, type AuthStatus, type Profile, type Session, type Studio } from './auth';
@@ -38,6 +39,36 @@ async function loadSession(token: string): Promise<Session> {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('restoring');
   const [session, setSession] = useState<Session | null>(null);
+  /*
+   * The Expo push token this session registered, kept so logout can
+   * unregister exactly it. A ref rather than state: nothing renders from
+   * it, and logout must read the current value rather than whatever the
+   * last render closed over.
+   */
+  const pushToken = useRef<string | null>(null);
+
+  /*
+   * Registration is fire-and-forget on purpose, and it runs on BOTH
+   * paths — a fresh login and a restored session.
+   *
+   * Restore matters as much as login: Expo rotates these tokens, and a
+   * phone that is signed in for weeks would otherwise keep a stale row
+   * forever. The route upserts on the token, so re-registering the same
+   * one is a no-op write rather than a duplicate.
+   *
+   * It never blocks and never throws into the caller. Push is an extra;
+   * a login that failed because a permission prompt was declined, or
+   * because the device is a simulator, would be an absurd trade.
+   */
+  const attachPush = useCallback((token: string) => {
+    void registerPushToken(token)
+      .then((result) => {
+        pushToken.current = result.token;
+      })
+      .catch(() => {
+        /* Left unregistered. The next launch tries again. */
+      });
+  }, []);
 
   useEffect(() => {
     // Guards against a state update after the provider unmounts (fast
@@ -57,6 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!active) return;
         setSession(restored);
         setStatus('signedIn');
+        attachPush(token);
       } catch (err) {
         if (!active) return;
 
@@ -80,7 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [attachPush]);
 
   const login = useCallback(async (email: string, password: string) => {
     // The API's only response on success is `{ token }` -- no user object
@@ -101,13 +133,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     setSession(loaded);
     setStatus('signedIn');
-  }, []);
+    attachPush(token);
+  }, [attachPush]);
 
   const applyProfile = useCallback((profile: Profile) => {
     setSession((current) => (current ? { ...current, profile } : current));
   }, []);
 
   const logout = useCallback(async () => {
+    /*
+     * BEFORE the token is cleared — the DELETE is authenticated, and the
+     * route scopes the delete to the caller's own user so an unauthorised
+     * one could not remove this row at all.
+     */
+    const current = session?.token;
+    if (current && pushToken.current) {
+      await unregisterPushToken(current, pushToken.current);
+      pushToken.current = null;
+    }
+
     await clearToken();
     // Studio-scoped caches must not survive into the next session -- the
     // next person to sign in on this phone may well be at a different
@@ -115,7 +159,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearStudioTimeZoneCache();
     setSession(null);
     setStatus('signedOut');
-  }, []);
+  }, [session?.token]);
 
   return <AuthContext value={{ status, session, login, logout, applyProfile }}>{children}</AuthContext>;
 }

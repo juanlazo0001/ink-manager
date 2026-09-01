@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -45,8 +45,23 @@ export default function LoginScreen() {
 
   const compact = height < COMPACT_HEIGHT;
 
+  /*
+   * The guard is a REF, not the `submitting` state beside it.
+   *
+   * `setSubmitting(true)` does not take effect until the next render, so
+   * `if (submitting) return` is reading a value one render behind the
+   * tap that set it. Two taps inside a frame both see `false` and both
+   * sign in. A ref is written synchronously, so the second tap sees the
+   * first one's write.
+   *
+   * `submitting` stays: it is what the button renders. The two are
+   * doing different jobs — one drives pixels, one prevents a double
+   * write — and only the second can be a ref.
+   */
+  const inFlight = useRef(false);
+
   async function onSubmit() {
-    if (submitting) return;
+    if (inFlight.current) return;
     // Deliberately NOT disabled-until-valid. Web's button is always live
     // (the form's own `required` does the validating), and a gold button
     // that sits dimmed until both fields are filled reads as muted at
@@ -57,6 +72,7 @@ export default function LoginScreen() {
       return;
     }
     setError(null);
+    inFlight.current = true;
     setSubmitting(true);
     try {
       await login(email.trim(), password);
@@ -64,6 +80,10 @@ export default function LoginScreen() {
       // exist the moment status flips to 'signedIn'.
     } catch (err) {
       setError(loginErrorMessage(err));
+      /* Released only on FAILURE, matching `submitting`. A success
+         unmounts this screen — the root layout swaps the routes — so
+         clearing it there would be a write to a gone component. */
+      inFlight.current = false;
       setSubmitting(false);
     }
   }

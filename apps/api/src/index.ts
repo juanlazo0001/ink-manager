@@ -222,4 +222,9 @@ httpServer.listen(port, () => {
   console.log(`Ink Manager API listening on port ${port}`);
 });
 
+/*
+ * Guarded since session BD. This process only runs background jobs when
+ * the environment says so — see `schedulerEnabled` for the rule and for
+ * why an unguarded call was a real hazard rather than untidiness.
+ */
 startScheduler();

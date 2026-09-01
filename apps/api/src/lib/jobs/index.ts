@@ -10,4 +10,4 @@ import "./emailPoller";
 import "./smsDeliveryStatusReconcile";
 import "./pushReceiptCheck";
 
-export { startScheduler, runJob, getJob, listJobs } from "./registry";
+export { startScheduler, schedulerEnabled, runJob, getJob, listJobs } from "./registry";

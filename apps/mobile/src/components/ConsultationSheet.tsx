@@ -41,6 +41,7 @@ export function ConsultationSheet({
   visible,
   onClose,
   token,
+  timeZone,
   clientName,
   draft,
   onDraftChange,
@@ -51,6 +52,12 @@ export function ConsultationSheet({
   visible: boolean;
   onClose: () => void;
   token: string;
+  /**
+   * The STUDIO's IANA zone, not the device's. The times typed into this
+   * sheet mean what they say on the studio's wall clock; see
+   * `lib/booking.ts` for why that had to become explicit.
+   */
+  timeZone: string;
   clientName: string;
   draft: BookingDraft;
   onDraftChange: (next: BookingDraft) => void;
@@ -75,7 +82,7 @@ export function ConsultationSheet({
     };
   }, [visible, token]);
 
-  const problem = validateBooking(draft);
+  const problem = validateBooking(draft, timeZone);
   const set = (patch: Partial<BookingDraft>) => onDraftChange({ ...draft, ...patch });
 
   return (

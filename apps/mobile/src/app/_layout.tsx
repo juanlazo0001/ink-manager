@@ -1,5 +1,6 @@
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
+import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
@@ -9,9 +10,22 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ScreenBackground } from '@/components/ScreenBackground';
+import { usePushRouting } from '@/hooks/usePushRouting';
+import { foregroundBehaviour } from '@/lib/push';
 import { AuthProvider } from '@/context/AuthContext';
 import { useAuth } from '@/context/auth';
 import { colors, useAppFonts } from '@/theme';
+
+/*
+ * How a push behaves while the app is open. Set at MODULE scope, once,
+ * before any component mounts: expo-notifications reads the handler when
+ * a notification arrives, and registering it inside an effect leaves a
+ * window at launch where one would be delivered with no handler set —
+ * which on iOS means no banner at all.
+ */
+Notifications.setNotificationHandler({
+  handleNotification: async () => foregroundBehaviour,
+});
 
 // Held open across the SecureStore read, the /users/me revalidation it
 // triggers, AND the font load, so a returning user goes splash -> app with
@@ -21,6 +35,9 @@ SplashScreen.preventAutoHideAsync();
 function RootNavigator() {
   const { status } = useAuth();
   const fontsReady = useAppFonts();
+  /* Inside the provider, so it can see the session; above the routes, so
+     it is mounted whichever screen is showing. */
+  usePushRouting();
   const ready = status !== 'restoring' && fontsReady;
 
   useEffect(() => {

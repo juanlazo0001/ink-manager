@@ -25,6 +25,7 @@ import { ScreenShell } from '@/components/ScreenShell';
 import { InquiryStatusChip } from '@/components/StatusChip';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
+import { useStudioTimeZone } from '@/hooks/useStudioTimeZone';
 import { stamp } from '@/lib/format';
 import { formatMoney } from '@/lib/giftCards';
 import {
@@ -191,6 +192,14 @@ export default function StaffInquiryScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { session } = useAuth();
+  /*
+   * The studio's zone, for the consultation booking. `ready` is not
+   * gated on here: the sheet is only reachable behind a tap, and by then
+   * the one-per-run fetch has long since resolved. `usingFallback` is
+   * surfaced INSIDE the sheet rather than blocking the screen — see
+   * ConsultationSheet.
+   */
+  const { timeZone } = useStudioTimeZone();
   const token = session?.token ?? null;
 
   const [inquiry, setInquiry] = useState<StaffInquiryDetail | null>(null);
@@ -256,6 +265,8 @@ export default function StaffInquiryScreen() {
   const [deletePreview, setDeletePreview] = useState<DeletePreview | null>(null);
   const [deletePreviewLoading, setDeletePreviewLoading] = useState(false);
   const actionInFlight = useRef(false);
+  /** The assignment write's own guard — see `onAssign`. */
+  const assignInFlight = useRef(false);
 
   const [shareOpen, setShareOpen] = useState(false);
   const [shareArtists, setShareArtists] = useState<ArtistOption[]>([]);
@@ -361,6 +372,15 @@ export default function StaffInquiryScreen() {
   const onAssign = useCallback(
     async (artist: { id: string; user: { name: string | null; email: string } }) => {
       if (!token || !id || !inquiry) return;
+      /*
+       * Session AR-2 shipped this handler with NO double-submit guard —
+       * not a state-based one, none. The sheet closing on the optimistic
+       * update hid it: by the time a second tap could land, the control
+       * was usually gone. "Usually" is not a guard, and the other four
+       * writes on this screen already use exactly this ref.
+       */
+      if (assignInFlight.current) return;
+      assignInFlight.current = true;
       const previous = inquiry;
 
       setAssigning(true);
@@ -392,6 +412,7 @@ export default function StaffInquiryScreen() {
         setAssignError(message);
         setRevertNotice(message);
       } finally {
+        assignInFlight.current = false;
         setAssigning(false);
       }
     },
@@ -524,7 +545,7 @@ export default function StaffInquiryScreen() {
     try {
       const created = await createConsultation(
         token,
-        buildBookingBody(consultDraft, { clientId: inquiry.clientId, inquiryId: id }),
+        buildBookingBody(consultDraft, { clientId: inquiry.clientId, inquiryId: id }, timeZone),
       );
       /*
        * The warning rides along with a SUCCESSFUL booking, so it is
@@ -1277,6 +1298,7 @@ export default function StaffInquiryScreen() {
             visible={consultOpen}
             onClose={() => setConsultOpen(false)}
             token={token!}
+            timeZone={timeZone}
             clientName={clientLabel}
             draft={consultDraft}
             onDraftChange={setConsultDraft}

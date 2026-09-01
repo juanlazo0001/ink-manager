@@ -37392,3 +37392,313 @@ page, so it was never followed.
 ## Database
 
 No schema change, migration or backfill. Dev writes only, all reverted.
+
+# Session BA — permissions to Settings, Team title/tabs, and the wash ceiling
+
+Branch `session/ba-perms-tabs`, cut from `main` (`1096a5d`). Web and
+mobile, at the owner's explicit direction — the standing mobile-only
+scope was overridden for the permissions move, which is a two-client
+change by definition.
+
+**Recovered into REPORT.md in session BD.** BA, BB and BC each wrote
+their report to the session scratchpad and delivered it in chat rather
+than appending here, so the permanent history ended at AZ for three
+sessions. That is a process failure, not a content one; the material is
+these three sections, appended in order.
+
+## 1. Permissions moved from Team to Settings, in both clients
+
+Extracted rather than pasted. The block carried four pieces of state, a
+load effect and two handlers, and `Settings.tsx` is already past 4,000
+lines — so web gets `components/PermissionsSection.tsx` and mobile gets
+`components/PermissionsMatrix.tsx`, each fetching its own data. Neither
+Team screen holds permission state it no longer renders.
+
+OWNER-gated on both sides, and the gate is not decoration:
+
+    OWNER       users=200  artists=200  perms=200
+    FRONT_DESK  users=403  artists=200  perms=403
+
+`GET` and `PATCH /studios/:id/permissions` are both
+`requireRole(Role.OWNER)`, so for any other role the section could only
+ever render a 403.
+
+Worth recording: `lib/permissions.ts`'s own header already described its
+groups as what "the Settings -> Permissions tab now renders". It had been
+wrong about the location since the groups were written. It is right now.
+
+## 2 & 3. Team's title and tabs
+
+The eyebrow is gone and the title is `ScreenTitle` with a live count line
+— the same component Pipeline and Clients use. The tabs are
+`UnderlineTabs`, Pipeline's control, **labels only**: that component
+carries no counts and Pipeline's do not either, so the counts moved to
+the title line where Pipeline puts them.
+
+The roster rows overlap the footer note in the web harness. That is the
+`Appear` artifact session AY documented — Reanimated absolutely-positions
+the list on RN-web — and it was isolated the same way, by re-rendering
+with `enabled={false}`, which produces an exact layout. The animation was
+then restored.
+
+## 4. The photo wash: 0.27 -> 0.28, and the ceiling is 0.28
+
+The brief asked for "another step lighter", meaning the +0.03 that AQ, AS
+and AT each took. A third of that is all there was.
+
+Measured, flat white, description band, floor 4.5:
+
+| opacity | flat-white description | |
+| --- | --- | --- |
+| 0.27 | 4.59 | shipped before this |
+| **0.28** | **4.53** | shipped here — the lightest that holds |
+| 0.29 | 4.45 | FAILS |
+| 0.30 | 4.38 | FAILS — the step actually asked for |
+
+The failing probes were run deliberately: a contrast check that has never
+failed is not evidence that it can.
+
+**AT's ~0.32 prediction is superseded, and the reason matters.** AT
+extrapolated from a two-point slope taken BEFORE session AU reworked the
+gradient itself (`524c3d7`). AU's smoothstep is lighter through the
+description band by design, so the whole ladder shifted down — AU
+re-measured 0.27 at 4.71 against AT's 4.90 and published it. The headroom
+AT described as "roughly one more step" was spent by that change, not by
+this one.
+
+One disclosure, in the direction that matters: this session's harness
+reads flat-white description ~0.12 LOWER than AU's did (4.59 where AU
+published 4.71) while reproducing every other figure AU published to the
+digit — photo bands 63.4/77.3, thermostat name 10.40, all three kink
+numbers. The residual is in the description band alone and is not
+explained. It is stated because it is the conservative direction: on AU's
+calibration 0.29 would read ~4.57 and pass.
+
+## A premise checked and dropped
+
+The plan assumed that removing the OWNER-only permissions fetch from
+Team's `Promise.all` would fix that screen for a FRONT_DESK user. It does
+not: `GET /studios/:id/users` 403s for them too, so the screen was and
+remains broken for non-owners. Reported rather than fixed — it was not in
+the brief. (Session BD fixes it.)
+
+## Verification
+
+    apps/mobile   tsc --noEmit                  clean
+    apps/mobile   expo export --platform ios    clean
+    apps/api      tsc                           clean
+    apps/web      tsc -b && vite build          built
+    shared-types  generate-enums --check        matches schema.prisma
+
+Web's permissions save round-tripped live against dev: `waivers.generate`
+for ARTIST toggled off->on, saved, confirmed `true` server-side, toggled
+back, confirmed `false`. Net zero.
+
+### Not verified
+
+On-device. The wash figures are web-harness at 393pt and this is a
+perceptual change.
+
+## Database
+
+No schema change, migration or backfill. Dev writes only, reverted.
+
+
+# Session BB — inquiry detail: the artist's face, the photos, web's button set, and the icons
+
+Branch `session/bb-inquiry-detail`, cut from `main` after BA merged.
+Mobile only — `apps/web` is untouched, and item 4 is the reason why.
+
+## 1. The assigned artist's avatar
+
+`avatarUrl` was on the wire the whole time: `GET /inquiries/:id` returns
+it inside `assignedArtist.user`, confirmed against a live response. It
+was absent from the TYPE mobile reads that response through, so the
+screen could not draw what it was already being sent. Now a 24pt avatar
+beside the name, matching web's `ArtistDetailField`, suppressed when
+nobody is assigned.
+
+## 2. Reference and placement photos in "The request"
+
+A deliberate divergence from web, at the owner's direction: web gives
+these two separate widgets, and on a phone that is two more headers over
+the same question. Both lists page through ONE viewer, so a swipe carries
+from the reference art to the placement photo.
+
+Found on the way: the type declared **`placementPhotos`**. The field is
+`placementImages` — column, Prisma field and JSON key all. Nothing had
+ever read it, so it never failed; the first thing to render it would have
+got `undefined` forever.
+
+## 3. The Appointment button removed, and Message added
+
+The Appointment section further down already routes to the booking, so
+nothing was lost by removing the quick action. But the brief's own list
+of web's four buttons surfaced a real gap: **web has Message and mobile
+did not.** `POST /conversations` is find-or-create; OWNER/FRONT_DESK
+only, because an ARTIST posting a `clientId` gets a 404 by design. The
+row now reads Client · Message · Share · More.
+
+## 4. The icons — the brief's premise was inverted
+
+`apps/mobile/src/components/icons.tsx` **already carries 34 of web's
+icons, copied coordinate-for-coordinate**, and its header records that a
+previous session did that deliberately and explicitly rejected
+substituting Feather. Converting web to an icon library would have broken
+34 matches to fix the rest.
+
+So this finishes the mirror instead, and only where it matters. The
+Feather glyphs iOS actually renders were extracted from `Feather.ttf`
+itself and placed beside web's, for 19 shared concepts
+(`design-refs/session-bb/icons-web-vs-ios.png`).
+
+**Thirteen are indistinguishable** — check, close, plus, filter, info,
+map-pin, trash, download, search, edit, archive and the chevrons.
+Converting those would have been ~50 call sites of motion without a
+change.
+
+**Six genuinely differ**, and those are converted: share (web's
+box-and-arrow versus Feather's network dots — the largest), attachment,
+document, photo, shield, external-link.
+
+Chevrons stay on Feather deliberately: a back chevron is the iOS idiom,
+and web's back arrow is not something to import onto a phone.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                  clean
+    apps/mobile   expo export --platform ios    clean
+    apps/api      tsc                           clean
+    apps/web      tsc -b && vite build          built
+    shared-types  generate-enums --check        matches schema.prisma
+
+All four items rendered at 393pt against the dev API. Two inquiries were
+temporarily reassigned to reach an artist-with-avatar plus real images,
+and both were restored to their exact original values, verified by
+re-read.
+
+### Not verified
+
+On-device. The photo viewer opens and pages correctly in the harness, but
+modal presentation and gesture behaviour are device-gate by construction.
+
+## Database
+
+No schema change, migration or backfill.
+
+
+# Session BC — the wash ceiling lifted, Team invite, notifications, task delete, artist page
+
+Branch `session/bc-artist-and-fixes`, cut from `main` after BB merged.
+Mobile only.
+
+## 1. PHOTO_OPACITY 0.28 -> 0.34
+
+The owner lifted the flat-white constraint — "No white paper not worth
+protecting. Make lighter." — so the thermostat binds, and that ladder was
+re-measured from scratch. AS's old ~0.40 ceiling predates AU's gradient
+rework and does not apply.
+
+Thermostat description, floor 4.5:
+
+    0.28   4.97      where BA stopped
+    0.31   4.83
+    0.34   4.64      shipped
+    0.36   4.52      the ceiling
+    0.37   4.45      FAILS
+
+Shipped 0.34, not 0.36. The ceiling is a cliff edge, not a target: 0.36
+clears the floor by two hundredths, which is inside the noise of a
+textured fixture, and the next person to touch the gradient would push it
+under without knowing. 0.34 keeps 0.14 of margin and is still twice the
++0.03 step the earlier sessions took.
+
+**Flat white is now 4.08 — below the AA floor, by the owner's explicit
+decision.** Recorded in `InquiryRow.tsx` so a later session does not read
+it as a regression and "fix" it back.
+
+## 2. Team's title, and an Invite action
+
+The title sat lower than every other screen's because `pageHead`
+re-applied `SCREEN_TOP_INSET` on top of the one `ScreenTitle` already
+applies — a leftover from BA, when the eyebrow+title pair became
+`ScreenTitle` and its wrapper stayed. Now level with Clients and
+Pipeline.
+
+INVITE TEAM MEMBER sits in the title action slot, posting web's own body
+to `/studios/:id/invites`, OWNER-gated as web is. The roster's footer had
+to change with it: it claimed inviting was portal-only, which the button
+had just made false.
+
+At 393pt the label is long enough that the pill wraps to its own line
+rather than sitting beside the title the way "NEW INQUIRY" does on
+Pipeline. That is `ScreenTitle`'s documented wrap, and shortening web's
+own label was not this session's call to make.
+
+## 3 & 4. Notifications
+
+The feed defaults to UNREAD ONLY, so a read row leaves the list and the
+page is bounded by what is waiting rather than everything that ever
+happened. SHOW ALL is kept: the rows still exist, and one opened by
+accident has to be findable.
+
+Swipe left reveals MARK READ — a third sibling of `ConversationSwipe` and
+`ClientSwipe`, with their numbers unchanged (PANEL 72, RUBBER 0.55,
+PROJECTION 0.12, the S3 spring, the shared open-row registry). It commits
+on a full swipe, which neither of the others does: that is
+`ConversationSwipe`'s own rule ("one action, full swipe") applied, and
+marking read is the one write here that takes nothing away.
+
+## 5. Deleting a task
+
+Mobile had no way to delete one at all. `DELETE /tasks/personal/:id` has
+existed, gated `tasks.manageOwn`, and 404s unless the caller owns or
+created the row — so the affordance appears on exactly those. Behind a
+confirm sheet rather than `Alert.alert`, which react-native-web stubs to
+a no-op and which therefore cannot be seen in the harness this app is
+verified with.
+
+## 6. The artist detail screen
+
+Closes the gap session AY recorded when it left the artist card
+deliberately un-pressable: "that page is the obvious follow-up".
+
+All TEN of web's widget boxes, confirmed against the running app rather
+than the source alone: Limited Availability Window, Bio, Rates,
+Scheduling Buffer (plus client self-scheduling and flash review), Social
+Links, Public presence, Specialties, Services Offered, Preferred
+Schedule, Portfolio.
+
+The first of those had **no mobile equivalent anywhere** —
+`ARTIST_SECTIONS` in `lib/artistProfile.ts` has never listed
+`guest-artist`, and its own `resolveSectionOrder` comment names that id
+as one "saved by web" that this client drops. Correct for the artist's
+own profile screens; not correct for the staff-facing one, so this screen
+renders that section explicitly rather than widening a constant two other
+screens read.
+
+Web's third-person copy, verbatim. Read-only, like every other staff
+surface here.
+
+## Verification
+
+    apps/mobile   tsc --noEmit                  clean
+    apps/mobile   expo export --platform ios    clean
+    apps/api      tsc                           clean
+    apps/web      tsc -b && vite build          built
+    shared-types  generate-enums --check        matches schema.prisma
+
+Mark-read and task-delete both round-tripped to the server and back: the
+API's unread count went 3 -> 2 on the swipe panel's handler, and the
+deleted task was gone from `GET /tasks`. Three seeded notifications and
+one task fixture created and all removed; unread returned to 0.
+
+### Not verified
+
+On-device, and specifically the swipe GESTURE. Gesture-handler is inert
+to synthetic input in the web harness, so the panel's handler was driven
+directly — that proves the write path, not the drag.
+
+## Database
+
+No schema change, migration or backfill. Dev writes only, all reverted.
