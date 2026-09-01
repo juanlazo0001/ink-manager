@@ -25,6 +25,7 @@ import { ScreenShell } from '@/components/ScreenShell';
 import { InquiryStatusChip } from '@/components/StatusChip';
 import { ScreenLoading, StateMessage } from '@/components/ui';
 import { useAuth } from '@/context/auth';
+import { useCollapsedSections } from '@/hooks/useCollapsedSections';
 import { useStudioTimeZone } from '@/hooks/useStudioTimeZone';
 import { stamp } from '@/lib/format';
 import { formatMoney } from '@/lib/giftCards';
@@ -60,6 +61,8 @@ import {
   type InquiryNote,
 } from '@/lib/inquiryNotes';
 import { actionLabel, actorLabel, fetchActivity, type AuditEntry } from '@/lib/activity';
+import { buildIntakeRows, fetchIntakeFields, type IntakeField } from '@/lib/intakeFields';
+import { projectStageLabel } from '@/lib/projectStage';
 import { screenErrorMessage } from '@/lib/screenError';
 import {
   artistAvatarUrl,
@@ -126,6 +129,13 @@ function byNewest(a: InquiryNote, b: InquiryNote): number {
  */
 const TERMINAL_STATUSES: string[] = ['CLOSED_LOST', 'COLD_LEAD', 'TRANSFERRED'];
 const CONVERTED_STATUSES: string[] = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'];
+
+/**
+ * Web's own page key for this screen (`useWidgetLayout('inquiry-detail',
+ * ...)` in InquiryDetail.tsx). Matching it is the point: the two clients
+ * read and write the SAME row.
+ */
+export const INQUIRY_LAYOUT_PAGE_KEY = 'inquiry-detail';
 
 const SECTION_KEYS = [
   'pipeline',
@@ -225,6 +235,10 @@ export default function StaffInquiryScreen() {
   const canViewAudit = (session?.profile.permissions ?? []).includes('audit.view');
   const [activity, setActivity] = useState<AuditEntry[] | null>(null);
   const [activityError, setActivityError] = useState<string | null>(null);
+
+  /* The studio's configured intake form. Null until it loads; the
+     section falls back to nothing rather than to a guess. */
+  const [intakeFields, setIntakeFields] = useState<IntakeField[] | null>(null);
 
   const [messaging, setMessaging] = useState(false);
 
@@ -340,12 +354,23 @@ export default function StaffInquiryScreen() {
   /* Nine sections would be a lot to scroll past; these are seven and the
      top three are the ones an owner opens this screen for. The rest stay
      one tap away, which is the client page's own balance. */
-  const [open, setOpen] = useState<Record<string, boolean>>({
-    pipeline: true,
-    assignment: true,
-    estimate: true,
-  });
-  const toggle = (key: string) => setOpen((o) => ({ ...o, [key]: !o[key] }));
+  /*
+   * COLLAPSE STATE, REMEMBERED. Same store web uses — see
+   * `useCollapsedSections`, and note the state is inverted from what this
+   * screen used to hold: the server stores what is COLLAPSED, so `open`
+   * is derived rather than stored. Storing "open" here and "collapsed"
+   * there would have meant one of the two clients reading the other's
+   * preference backwards.
+   */
+  const sections = useCollapsedSections(
+    INQUIRY_LAYOUT_PAGE_KEY,
+    // Everything except the three this screen has always opened.
+    SECTION_KEYS.filter((key) => !['pipeline', 'assignment', 'estimate'].includes(key)),
+  );
+  const open = Object.fromEntries(
+    SECTION_KEYS.map((key) => [key, !sections.isCollapsed(key)]),
+  ) as Record<string, boolean>;
+  const toggle = (key: string) => sections.toggle(key);
 
   /*
    * COLLAPSE / EXPAND ALL — an owner-directed addition, not a mirror.
@@ -364,8 +389,9 @@ export default function StaffInquiryScreen() {
    * object would silently skip the sections nobody had opened yet.
    */
   const anyOpen = SECTION_KEYS.some((key) => !!open[key]);
-  const toggleAll = () =>
-    setOpen(Object.fromEntries(SECTION_KEYS.map((key) => [key, !anyOpen])));
+  /* Persisted like any other toggle, so "collapse all" survives a
+     restart rather than being undone by the next launch. */
+  const toggleAll = () => sections.setAll([...SECTION_KEYS], anyOpen);
 
   /*
    * OPTIMISTIC, with a visible revert.
@@ -570,7 +596,13 @@ export default function StaffInquiryScreen() {
        * they cannot decide what is hidden.
        */
       setBufferWarning(created.bufferWarning ?? null);
-      if (created.bufferWarning) setOpen((o) => ({ ...o, appointment: true }));
+      /* Expanding the card so the warning is visible now also PERSISTS,
+         which is the right behaviour: the person is being shown a
+         conflict they have to act on, and it should still be open when
+         they come back to it. */
+      if (created.bufferWarning && sections.isCollapsed('appointment')) {
+        sections.toggle('appointment');
+      }
       setConsultOpen(false);
       setConsultDraft({ date: '', startTime: '', endTime: '', artistId: null, notes: '' });
       await load();
@@ -680,6 +712,20 @@ export default function StaffInquiryScreen() {
   }, [loadNotes]);
 
   useEffect(() => {
+    if (!token || !inquiry) return;
+    let active = true;
+    fetchIntakeFields(token, inquiry.intakeFormId)
+      .then((fields) => active && setIntakeFields(fields))
+      .catch(() => {
+        /* The section renders nothing rather than a wrong subset — the
+           same call web makes, and the same silence when it fails. */
+      });
+    return () => {
+      active = false;
+    };
+  }, [token, inquiry?.intakeFormId, inquiry]);
+
+  useEffect(() => {
     if (!token || !id || !canViewAudit) return;
     let active = true;
     fetchActivity(token, 'Inquiry', id)
@@ -736,6 +782,11 @@ export default function StaffInquiryScreen() {
    * thing telling you which kind you are looking at. `ViewerImage` was
    * written with exactly this distinction in its own comment.
    */
+  /* Built here rather than in the JSX so the empty/loading states above
+     can tell "the form has not loaded" from "the form has no answers". */
+  const intakeRows =
+    intakeFields && inquiry ? buildIntakeRows(intakeFields, inquiry) : null;
+
   const reference = inquiry?.referenceImages ?? [];
   const placement = inquiry?.placementImages ?? [];
   const viewerImages: ViewerImage[] = [
@@ -818,7 +869,17 @@ export default function StaffInquiryScreen() {
               client's name the width it needs.
             */}
             <View style={styles.statusRow}>
-              <InquiryStatusChip status={inquiry.status} />
+              {/*
+                THE DERIVED STAGE when this is a converted project, the
+                raw status otherwise — web's own ternary in
+                InquiryDetail.tsx. Before this the header said
+                "SCHEDULING" while the Progress stepper two inches below
+                it said "Session Complete": one screen, two answers.
+              */}
+              <InquiryStatusChip
+                status={inquiry.status}
+                label={projectStageLabel(inquiry) ?? undefined}
+              />
             </View>
 
             {/*
@@ -1095,19 +1156,60 @@ export default function StaffInquiryScreen() {
           </CollapsibleSection>
 
           <CollapsibleSection title="The request" open={!!open.request} onToggle={() => toggle('request')}>
-            {inquiry.description ? <Fact label="Wants" value={inquiry.description} multiline /> : null}
-            {inquiry.placement ? <Fact label="Placement" value={inquiry.placement} /> : null}
-            {inquiry.estimatedSize ? <Fact label="Size" value={inquiry.estimatedSize} /> : null}
-            {inquiry.colorOrBlackGrey ? (
-              <Fact label="Colour" value={inquiry.colorOrBlackGrey} />
-            ) : null}
-            {inquiry.desiredTiming ? <Fact label="Timing" value={inquiry.desiredTiming} /> : null}
-            {inquiry.clientStatedBudget || inquiry.budget ? (
-              <Fact label="Client budget" value={inquiry.clientStatedBudget ?? inquiry.budget} />
-            ) : null}
-            {inquiry.hasBeenTattooedBefore != null ? (
-              <Fact label="Tattooed before" value={inquiry.hasBeenTattooedBefore ? 'Yes' : 'No'} last />
-            ) : null}
+            {/*
+              EVERY FIELD OF THE STUDIO'S CONFIGURED FORM, in its order,
+              with its labels — web's `InquiryDetailsSection`, ported.
+
+              This replaced seven hardcoded rows ("Wants", "Placement",
+              "Size", "Colour", "Timing", "Client budget", "Tattooed
+              before"). Those were not merely incomplete: they omitted
+              "How did you hear about us?" and "Preferred artist" for
+              this studio, and were arbitrarily wrong for any studio that
+              had reordered, relabelled, disabled or added a field.
+
+              The hardcoded labels are gone with them. A studio that
+              renamed "Estimated size" now sees its own words on both
+              clients instead of mobile's invented "Size".
+            */}
+            {intakeRows === null ? (
+              <CardEmpty text="Loading the intake form…" />
+            ) : intakeRows.length === 0 ? (
+              <CardEmpty text="No intake answers on this inquiry." />
+            ) : (
+              intakeRows.map((row, i) =>
+                row.kind === 'artist' ? (
+                  <Fact
+                    key={row.key}
+                    label={row.label}
+                    value={
+                      row.artist?.user
+                        ? (row.artist.user.name ?? row.artist.user.email)
+                        : 'No preference'
+                    }
+                    last={i === intakeRows.length - 1}
+                    leading={
+                      row.artist?.user ? (
+                        <Avatar
+                          url={row.artist.user.avatarUrl ?? null}
+                          initials={initialsOf(row.artist.user.name ?? row.artist.user.email)}
+                          size={24}
+                        />
+                      ) : undefined
+                    }
+                  />
+                ) : (
+                  <Fact
+                    key={row.key}
+                    label={row.label}
+                    value={row.value}
+                    /* The description is prose and wraps; every other
+                       answer is short enough for the label/value row. */
+                    multiline={row.value.length > 40}
+                    last={i === intakeRows.length - 1}
+                  />
+                ),
+              )
+            )}
 
             {/*
               THE PICTURES, HERE RATHER THAN IN TWO CARDS OF THEIR OWN.

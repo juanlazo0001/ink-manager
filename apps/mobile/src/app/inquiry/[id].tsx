@@ -13,6 +13,7 @@ import { PhotoStrip, PhotoViewer } from '@/components/PhotoViewer';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ScreenShell } from '@/components/ScreenShell';
 import { InquiryStatusChip } from '@/components/StatusChip';
+import { projectStageLabel } from '@/lib/projectStage';
 import { GoldButton, QuietButton, ScreenLoading, StateMessage } from '@/components/ui';
 import { ArrowUpRightIcon } from '@/components/icons';
 import { useAuth } from '@/context/auth';
@@ -258,7 +259,15 @@ export default function InquiryDetailScreen() {
           </View>
 
           <View style={styles.statusRow}>
-            <InquiryStatusChip status={inquiry.status} />
+            {/* Web's artist-facing project page (`MyProjectDetail.tsx`)
+                shows the derived stage too, not the raw status — so this
+                chip follows the same rule as the staff detail header and
+                the pipeline row. `projectStageLabel` returns null for an
+                un-converted inquiry, which falls back to the status. */}
+            <InquiryStatusChip
+              status={inquiry.status}
+              label={projectStageLabel(inquiry) ?? undefined}
+            />
           </View>
 
           <Text style={styles.description}>{inquiry.description}</Text>

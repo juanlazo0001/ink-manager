@@ -74,6 +74,11 @@ function fromStaff(inquiry: StaffInquiryListItem): InquiryRowData {
      * inquiries on the dev database that do have real photos.
      */
     thumbnailUrl: inquiryThumbnail(inquiry),
+    /* The chip on this row shows the derived PROJECT stage for a
+       converted project, exactly as web's list does — these two are what
+       it derives from. */
+    projectCompletedAt: inquiry.projectCompletedAt,
+    sessions: inquiry.sessions,
   };
 }
 
@@ -90,6 +95,8 @@ function fromArtist(inquiry: ArtistInquiryListItem): InquiryRowData {
     fromGuestStudio: inquiry.fromGuestStudio,
     thumbnailUrl: inquiryThumbnail(inquiry),
     nextSessionAt: findNextSession(inquiry.sessions)?.startTime ?? null,
+    projectCompletedAt: inquiry.projectCompletedAt,
+    sessions: inquiry.sessions,
   };
 }
 

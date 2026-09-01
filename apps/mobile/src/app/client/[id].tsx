@@ -124,6 +124,19 @@ function mergeOrder(saved: string[]): string[] {
   return [...known, ...missing];
 }
 
+/** Every collapsible card on this screen, for the persisted layout. */
+const CLIENT_SECTION_KEYS = [
+  'contact',
+  'inquiries',
+  'projects',
+  'appointments',
+  'deposits',
+  'gift',
+  'waivers',
+  'notes',
+  'activity',
+] as const;
+
 export default function ClientScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();

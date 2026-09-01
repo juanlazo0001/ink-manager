@@ -92,6 +92,18 @@ export interface StaffInquiryDetail {
     createdAt: string;
   }[];
 
+  /*
+   * The intake form this inquiry came through, and the studio's own
+   * custom answers. Both on the wire already; see lib/intakeFields.ts for
+   * why "The request" is now driven by them rather than by a fixed list.
+   */
+  intakeFormId?: string | null;
+  customFieldAnswers?: Record<string, { question: string; type: string; answer: unknown }> | null;
+  preferredArtist?: {
+    id: string;
+    user?: { name: string | null; email: string; avatarUrl?: string | null } | null;
+  } | null;
+
   referenceImages?: string[];
   /*
    * `placementImages`, NOT `placementPhotos`. The old name was wrong and

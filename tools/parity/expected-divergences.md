@@ -221,3 +221,11 @@ mapping (`text-fg-secondary` and `text-fg-muted`), which session BH
 corrected.
 
 - covers: screen:inquiry-detail, group:color
+
+## Inquiry detail: "Deposits (N)" and singular "Appointment"
+
+Mobile's deposit card carries its count in the title and its appointment
+card is singular. Web titles them "Deposit" and "Appointments". Length,
+not meaning — recorded so the presence check stops reporting them.
+
+- covers: screen:inquiry-detail, group:presence, group:type
