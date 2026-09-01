@@ -59,6 +59,7 @@ import {
   type NoteAttachment,
   type InquiryNote,
 } from '@/lib/inquiryNotes';
+import { actionLabel, actorLabel, fetchActivity, type AuditEntry } from '@/lib/activity';
 import { screenErrorMessage } from '@/lib/screenError';
 import {
   artistAvatarUrl,
@@ -135,6 +136,7 @@ const SECTION_KEYS = [
   'closed',
   'request',
   'notes',
+  'activity',
 ] as const;
 
 /**
@@ -214,6 +216,15 @@ export default function StaffInquiryScreen() {
    * viewers would make that swipe do nothing.
    */
   const [viewer, setViewer] = useState<{ images: ViewerImage[]; index: number } | null>(null);
+
+  /*
+   * Activity history. `audit.view` is checked before asking: the route is
+   * gated on it, so a caller without it would get a section that renders
+   * an error where web simply has no widget.
+   */
+  const canViewAudit = (session?.profile.permissions ?? []).includes('audit.view');
+  const [activity, setActivity] = useState<AuditEntry[] | null>(null);
+  const [activityError, setActivityError] = useState<string | null>(null);
 
   const [messaging, setMessaging] = useState(false);
 
@@ -667,6 +678,17 @@ export default function StaffInquiryScreen() {
   useEffect(() => {
     void loadNotes();
   }, [loadNotes]);
+
+  useEffect(() => {
+    if (!token || !id || !canViewAudit) return;
+    let active = true;
+    fetchActivity(token, 'Inquiry', id)
+      .then((rows) => active && setActivity(rows))
+      .catch((err) => active && setActivityError(screenErrorMessage(err, 'this activity history')));
+    return () => {
+      active = false;
+    };
+  }, [token, id, canViewAudit]);
 
   /*
    * Web's Message button, which mobile did not have.
@@ -1130,6 +1152,46 @@ export default function StaffInquiryScreen() {
             </CollapsibleSection>
           ) : null}
 
+          {/*
+            ACTIVITY HISTORY — web's last widget, and the one whole
+            section mobile did not have. Measured as MISSING by session
+            BH's parity run.
+
+            Actor, what they did, and when. Web additionally renders a
+            field-level diff of `changes`; that is deliberately NOT ported
+            — it is most of `AuditTrail.tsx`'s 442 lines and a wall of
+            from/to pairs is not what a phone is for. The omission is
+            recorded in the divergence manifest rather than left to be
+            rediscovered as drift.
+          */}
+          {canViewAudit ? (
+            <CollapsibleSection
+              title="Activity History"
+              open={!!open.activity}
+              onToggle={() => toggle('activity')}
+            >
+              {activityError ? (
+                <Text style={styles.revert}>{activityError}</Text>
+              ) : activity === null ? (
+                <CardEmpty text="Loading activity…" />
+              ) : activity.length === 0 ? (
+                <CardEmpty text="Nothing has happened to this inquiry yet." />
+              ) : (
+                <View style={styles.activityList}>
+                  {activity.map((entry) => (
+                    <View key={entry.id} style={styles.activityRow}>
+                      <Text style={styles.activityText}>
+                        <Text style={styles.activityActor}>{actorLabel(entry)}</Text>{' '}
+                        {actionLabel(entry.action)}
+                      </Text>
+                      <Text style={styles.activityWhen}>{stamp(entry.createdAt)}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </CollapsibleSection>
+          ) : null}
+
           <PhotoViewer
             images={viewer?.images ?? []}
             initialIndex={viewer?.index ?? 0}
@@ -1351,6 +1413,11 @@ export default function StaffInquiryScreen() {
 }
 
 const styles = StyleSheet.create({
+  activityList: { gap: space.md },
+  activityRow: { gap: 2 },
+  activityText: { ...type.small, color: colors.fgSecondary },
+  activityActor: { color: colors.fg },
+  activityWhen: { ...type.meta, color: colors.fgMuted },
   /* Sits below the last Fact, whose own row already drew the rule above
      it -- so this needs top padding, not a border. */
   strips: { paddingTop: space.md, gap: space.md },
@@ -1383,7 +1450,12 @@ const styles = StyleSheet.create({
 
   stage: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm },
   stageLabel: { ...type.body, color: colors.fgMuted },
-  stageDone: { color: colors.fg },
+  /* `fgSecondary`, not `fg` — web's own mapping, from InquiryPipeline's
+     one-line ternary: current is `text-fg`, DONE is `text-fg-secondary`,
+     pending is `text-fg-muted`. Mobile had done at full strength, which
+     made every completed stage compete with the one being worked toward.
+     Measured in session BH's parity run. */
+  stageDone: { color: colors.fgSecondary },
   // Web draws the current step in red. Here it is gold: red is
   // punctuation in this design system (CLAUDE.md), reserved for errors
   // and destructive actions, and "the next ordinary step" is neither.

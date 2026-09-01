@@ -67,6 +67,23 @@ export interface StaffInquiryDetail {
   appointmentId: string | null;
   appointment: { id: string; startTime?: string; startAt?: string } | null;
 
+  /*
+   * The project timeline's inputs. Both were already on the wire —
+   * `GET /inquiries/:id` returns them and apps/web reads them — and were
+   * simply not declared here, which is the third time this exact shape
+   * of omission has hidden a real gap (see `avatarUrl` and
+   * `placementImages` in session BB).
+   *
+   * Optional so nothing constructing a `StaffInquiryDetail` in a fixture
+   * has to change.
+   */
+  projectCompletedAt?: string | null;
+  sessions?: {
+    id: string;
+    checkedOutAt?: string | null;
+    liabilityWaiver?: { status: string } | null;
+  }[];
+
   depositForms: {
     id: string;
     paidAt: string | null;
@@ -120,7 +137,74 @@ export interface PipelineStage {
   current: boolean;
 }
 
+/**
+ * The statuses web treats as a converted PROJECT rather than an inquiry.
+ * `isConverted` in `apps/web/src/pages/InquiryDetail.tsx`, and
+ * `PROJECT_STATUSES` in its `lib/kanban.ts`. DEPOSIT_PENDING is
+ * deliberately NOT one — web's own comment says it is still the
+ * Inquiries tab.
+ */
+const PROJECT_STATUSES = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'];
+
+/** Web's `PROJECT_STAGE_ORDER` / `PROJECT_STAGE_LABELS`, verbatim. */
+const PROJECT_STAGES = [
+  { key: 'needs-scheduling', label: 'Needs Scheduling' },
+  { key: 'scheduled', label: 'Scheduled' },
+  { key: 'waiver-verified', label: 'Waiver Verified' },
+  { key: 'session-complete', label: 'Session Complete' },
+  { key: 'project-complete', label: 'Project Complete' },
+];
+
+/**
+ * Which of the five project stages this record sits at, or -1.
+ *
+ * A port of web's `deriveProjectStage` (`lib/kanban.ts`), including its
+ * reasoning: it returns the LAST COMPLETED milestone, not the stepper's
+ * next goal, and it checks BOTH the older 1:1 `appointment` link and the
+ * newer 1:many `sessions` link so it agrees with every other
+ * "needs scheduling" definition in the app rather than being a narrower
+ * one that only happens to match today.
+ */
+function projectStageIndex(inq: StaffInquiryDetail): number {
+  if (inq.projectCompletedAt) return 4;
+  const sessions = inq.sessions ?? [];
+  if (sessions.length === 0 && !inq.appointmentId) return 0;
+  // Sessions arrive startTime-ascending; the earliest not-yet-checked-out
+  // one is the session being worked toward.
+  const current = sessions.find((session) => !session.checkedOutAt);
+  if (!current) return 3;
+  if (current.liabilityWaiver?.status === 'VERIFIED') return 2;
+  return 1;
+}
+
+/**
+ * The Progress stepper.
+ *
+ * ─── TWO MODELS, AND MOBILE ONLY HAD ONE ────────────────────────────
+ *
+ * Web switches: an INQUIRY gets the intake lifecycle, and a converted
+ * PROJECT gets the five-stage project timeline. Mobile showed the intake
+ * lifecycle unconditionally, so every scheduled or confirmed project
+ * displayed a stepper that had stopped describing it — "Deposit
+ * requested / Scheduled" where web was already tracking waiver, session
+ * and project completion. Measured in session BH's parity run: NONE of
+ * web's five project stage labels appeared on mobile.
+ *
+ * Not a styling difference. The two clients were answering different
+ * questions about the same record.
+ */
 export function pipelineStages(inq: StaffInquiryDetail): PipelineStage[] {
+  if (PROJECT_STATUSES.includes(inq.status)) {
+    const index = projectStageIndex(inq);
+    return PROJECT_STAGES.map((stage, i) => ({
+      ...stage,
+      done: i <= index,
+      // The stepper's goal is the stage AFTER the last completed one,
+      // which is what web bolds. At the end, the last stage is current.
+      current: i === Math.min(index + 1, PROJECT_STAGES.length - 1) && index < PROJECT_STAGES.length - 1,
+    }));
+  }
+
   const depositRequested = inq.depositForms.length > 0;
   const base = [
     { key: 'received', label: 'Inquiry received', done: true },

@@ -12,7 +12,10 @@ purpose.
 
 Each entry carries a `covers:` line the report parser reads. `screen:`
 limits it to one screen key from `manifest.py`; `group:` limits it to a
-property group (`type`, `color`, `spacing`, `shape`). No `covers:` line
+property group (`type`, `color`, `spacing`, `shape`, `presence`).
+`presence` is whether the landmark is on the page at all — a RENAME needs
+it, and an entry that names a screen with no group excuses everything on
+that screen, which is how the classifier got switched off once already. No `covers:` line
 means the entry documents a difference that is structural rather than one
 the value tables can see — useful to a reader, invisible to the
 classifier.
@@ -146,3 +149,75 @@ are only three.
 Recorded after the first full run showed the two side by side.
 
 - covers: screen:dashboard, group:shape, group:spacing
+
+## Inquiry detail: "The request" instead of "Inquiry Details"
+
+Web's intake answers sit in a widget titled "Inquiry Details". Mobile
+calls the same section "The request". Same fields, same order, different
+heading — mobile's phrasing predates the parity harness and is the
+owner-facing wording on the phone.
+
+- covers: screen:inquiry-detail, group:presence, group:type
+
+## Inquiry detail: reference and placement photos live inside "The request"
+
+Web gives them two widgets of their own, "Reference images" and
+"Placement photos". Mobile folds both into "The request" as labelled
+strips, an owner decision in session BC: on a phone they are two more
+headers over the same question the section already answers. Web's own
+label wording is kept ("Placement photos").
+
+Both lists page through ONE full-screen viewer, so a swipe carries from
+the reference art to the placement photo.
+
+- covers: screen:inquiry-detail, group:presence
+
+## Inquiry detail: singular "Appointment", and "Client" for "View Client"
+
+Mobile's section is "Appointment" (it shows one) where web's is
+"Appointments"; the header action reads "Client" where web's reads "View
+Client". Both are length, not meaning — a labelled pill row at 390pt is
+already close to wrapping.
+
+- covers: screen:inquiry-detail, group:presence, group:type
+
+## Inquiry detail: no field-level diff in Activity History
+
+Both clients now show the activity trail. Web additionally renders a
+from/to diff of every changed field; mobile shows actor, action and time
+only.
+
+That diff is most of `AuditTrail.tsx`'s 442 lines, and a wall of from/to
+pairs is not what a phone screen is for. Added in session BH along with
+the section itself, so the omission is a recorded decision rather than a
+gap somebody finds later.
+
+- covers: screen:inquiry-detail, group:presence
+
+## Mobile collapses most sections by default; web expands everything
+
+Web renders every widget open. Mobile opens Progress, Assignment and
+Estimate and leaves the rest collapsed — ten expanded cards do not fit on
+a 390pt screen, and the collapse/expand-all control in the header exists
+for exactly this.
+
+**This is also a measurement limit, not only a design difference.** The
+harness can only read what is in the DOM, so a landmark INSIDE a
+collapsed mobile section reports MISSING even when the content is
+present and correct. Read those rows as "not measured here", and confirm
+by expanding rather than by filing drift.
+
+- covers: screen:inquiry-detail, screen:client-detail, group:presence
+
+## Progress: the current step is gold on mobile, red on web
+
+Web draws the step being worked toward in red. Mobile uses gold, because
+red is punctuation in this design system — reserved for errors and
+destructive actions (CLAUDE.md's Design section). The decision predates
+the harness and is recorded in `staff-inquiry/[id].tsx` beside the style.
+
+Only the CURRENT step differs. Done and pending steps use web's own
+mapping (`text-fg-secondary` and `text-fg-muted`), which session BH
+corrected.
+
+- covers: screen:inquiry-detail, group:color

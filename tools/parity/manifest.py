@@ -137,7 +137,32 @@ LANDMARKS = [
     Landmark("page title", "Team", role="heading", screens=["team"]),
     Landmark("page title", "Settings", role="heading", screens=["settings"]),
     Landmark("page title", "Tasks", role="heading", screens=["tasks"]),
+    # ─── inquiry detail, session BH ─────────────────────────────────
+    # Every section header web renders, plus the type roles the brief
+    # names. Text-addressed, so a header that is absent on one side shows
+    # up as MISSING rather than as a silently skipped row.
+    Landmark("section header", "Progress", screens=["inquiry-detail"]),
     Landmark("section header", "Assignment", screens=["inquiry-detail"]),
+    Landmark("section header", "Estimate", screens=["inquiry-detail"]),
+    Landmark("section header", "Deposit", screens=["inquiry-detail"]),
+    Landmark("section header", "Appointments", screens=["inquiry-detail"]),
+    Landmark("section header", "Reference images", screens=["inquiry-detail"]),
+    Landmark("section header", "Placement photos", screens=["inquiry-detail"]),
+    Landmark("section header", "Inquiry Details", screens=["inquiry-detail"]),
+    Landmark("section header", "Notes", screens=["inquiry-detail"]),
+    Landmark("section header", "Activity History", screens=["inquiry-detail"]),
+    # Field labels and values inside Inquiry Details / "The request".
+    Landmark("field label", "Placement", screens=["inquiry-detail"]),
+    Landmark("field label", "Budget", screens=["inquiry-detail"]),
+    # Header row actions.
+    Landmark("header action", "View Client", screens=["inquiry-detail"]),
+    Landmark("header action", "Message", screens=["inquiry-detail"]),
+    # Pipeline stage labels — content parity, not styling.
+    Landmark("stage label", "Needs Scheduling", screens=["inquiry-detail"]),
+    Landmark("stage label", "Scheduled", screens=["inquiry-detail"]),
+    Landmark("stage label", "Waiver Verified", screens=["inquiry-detail"]),
+    Landmark("stage label", "Session Complete", screens=["inquiry-detail"]),
+    Landmark("stage label", "Project Complete", screens=["inquiry-detail"]),
     Landmark("section header", "Bio", screens=["team"]),
     Landmark("primary button", "New inquiry", screens=["inquiries"]),
     Landmark("primary button", "Invite team member", screens=["team"]),
