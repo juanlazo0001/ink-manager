@@ -2,7 +2,7 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import rateLimit from "express-rate-limit";
+import { emailKey, makeLimiter } from "../lib/rateLimit";
 import { prisma } from "../lib/prisma";
 import { JWT_SECRET } from "../lib/jwt";
 import { requireAuth } from "../middleware/auth";
@@ -25,17 +25,117 @@ const PASSWORD_RESET_TOKEN_TTL_HOURS = 1;
 const EMAIL_CHANGE_TOKEN_TTL_HOURS = 24;
 const EMAIL_VERIFICATION_TOKEN_TTL_HOURS = 24;
 
+const MINUTE = 60 * 1000;
+
 // Public, unauthenticated, and the whole point of each is "create real
 // state (a studio, an email send) from one request" -- exactly the shape
 // abuse targets. 5/15min per IP is deliberately tight: a real person only
 // ever needs one of each per signup attempt; genuine retries (typo'd
 // email, slow inbox) are well under that.
-const signupLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false });
-const resendVerificationLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
+//
+// Unchanged in limit; moved onto the shared Postgres store so two API
+// processes count together. See lib/rateLimit.ts.
+const signupLimiter = makeLimiter({ name: "signup-ip", windowMs: 15 * MINUTE, limit: 5 });
+const resendVerificationLimiter = makeLimiter({
+  name: "resend-verification-ip",
+  windowMs: 15 * MINUTE,
   limit: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
+});
+
+/*
+ * ─── LOGIN. PREVIOUSLY NOT RATE LIMITED AT ALL ──────────────────────
+ *
+ * Found in session BE: signup and resend-verification were guarded and
+ * `/login` was wide open, which is the wrong way round — signup costs an
+ * attacker a studio record, login costs them somebody's account.
+ *
+ * TWO LIMITERS, DELIBERATELY, because either alone is defeated by the
+ * obvious move against it:
+ *
+ *   per IP     stops one machine hammering many accounts
+ *   per EMAIL  stops many machines hammering one account, which is what
+ *              credential stuffing actually looks like — the point of a
+ *              botnet is that no single address looks busy
+ *
+ * BOTH COUNT FAILURES ONLY (`skipSuccessfulRequests`). This is the
+ * calibration that matters: a person using the app normally never
+ * accumulates anything, so no amount of ordinary traffic can lock a
+ * studio out, while an attacker — whose requests are ~100% failures —
+ * hits the wall almost immediately. Counting all requests would have
+ * forced much looser numbers to stay safe for real users, which is
+ * exactly backwards.
+ *
+ *   IP     15 failures / 15 min. A whole studio can share one NAT
+ *          address; five staff each fumbling a password twice is 10.
+ *          15 leaves room for that and still stops a script in seconds.
+ *   EMAIL   8 failures / 15 min. A human who has failed eight times in a
+ *          quarter of an hour needs the reset link, not another guess.
+ *
+ * Neither is a lockout: both windows are rolling and short.
+ */
+const loginIpLimiter = makeLimiter({
+  name: "login-ip",
+  windowMs: 15 * MINUTE,
+  limit: 15,
+  skipSuccessfulRequests: true,
+});
+const loginEmailLimiter = makeLimiter({
+  name: "login-email",
+  windowMs: 15 * MINUTE,
+  limit: 8,
+  skipSuccessfulRequests: true,
+  keyGenerator: emailKey,
+});
+
+/*
+ * ─── FORGOT PASSWORD ────────────────────────────────────────────────
+ *
+ * The abuse here is not guessing, it is SENDING: each request mails a
+ * real person. Unlimited, it is a mail-bomb aimed at any address the
+ * attacker names, and a way to burn the platform's sending reputation.
+ *
+ * Counts ALL requests, not just failures — the route deliberately answers
+ * identically whether or not the account exists, so "failure" is not a
+ * thing it can distinguish, and `skipSuccessfulRequests` would count
+ * nothing at all.
+ *
+ * NO ENUMERATION ORACLE. The limiter runs BEFORE the handler and keys on
+ * the submitted string, so an address that has no account is counted and
+ * 429s exactly like one that does. If it only limited real accounts, the
+ * 429 itself would answer "does this email exist" — which is the one
+ * thing this route is written to never reveal.
+ *
+ * An hour rather than fifteen minutes: nobody legitimately needs six
+ * reset emails in an hour, and the slower window is what makes the mail
+ * volume bounded rather than merely paced.
+ */
+const forgotPasswordEmailLimiter = makeLimiter({
+  name: "forgot-password-email",
+  windowMs: 60 * MINUTE,
+  limit: 5,
+  keyGenerator: emailKey,
+});
+const forgotPasswordIpLimiter = makeLimiter({
+  name: "forgot-password-ip",
+  windowMs: 60 * MINUTE,
+  limit: 15,
+});
+
+/*
+ * ─── RESET PASSWORD ─────────────────────────────────────────────────
+ *
+ * Guessing a token. Keyed on IP ONLY, and that is the deliberate choice:
+ * the token is in the PATH, so keying on it would give an attacker a
+ * fresh budget for every value they try — a limiter that rate-limits
+ * nothing. IP is the only stable identity a token-guesser has.
+ *
+ * 10 an hour. A real person follows the link once, occasionally twice
+ * after mistyping a new password.
+ */
+const resetPasswordIpLimiter = makeLimiter({
+  name: "reset-password-ip",
+  windowMs: 60 * MINUTE,
+  limit: 10,
 });
 
 // Fire-and-forget on purpose, everywhere in this file: the token/DB state
@@ -55,7 +155,7 @@ function sendPlatformEmailBestEffort(params: { to: string; subject: string; text
   });
 }
 
-router.post("/login", async (req, res) => {
+router.post("/login", loginIpLimiter, loginEmailLimiter, async (req, res) => {
   const { email, password } = req.body ?? {};
 
   if (!email || !password) {
@@ -115,7 +215,7 @@ router.post("/login", async (req, res) => {
 // password become an email-enumeration oracle" practice. The ONLY branch
 // that differs is invisible to the caller: a real match gets a token +
 // email, everything else is silently a no-op.
-router.post("/auth/forgot-password", async (req, res) => {
+router.post("/auth/forgot-password", forgotPasswordIpLimiter, forgotPasswordEmailLimiter, async (req, res) => {
   const { email } = req.body ?? {};
 
   if (!email || typeof email !== "string") {
@@ -157,7 +257,7 @@ router.post("/auth/forgot-password", async (req, res) => {
   res.json({ message: "If an account exists for that email, a password reset link has been sent." });
 });
 
-router.post("/auth/reset-password/:token", async (req, res) => {
+router.post("/auth/reset-password/:token", resetPasswordIpLimiter, async (req, res) => {
   const token = req.params.token as string;
   const { newPassword } = req.body ?? {};
 

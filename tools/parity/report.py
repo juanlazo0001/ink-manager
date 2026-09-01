@@ -55,11 +55,42 @@ def load_expected():
     return entries
 
 
+#: Platform naming, not design. react-native-web resolves a family to the
+#: loaded font's PostScript-ish name (`Outfit_400Regular`) where the
+#: browser reports the CSS stack (`Outfit, ui-sans-serif, ...`). Comparing
+#: those strings reports every single text element as different, which is
+#: noise that would bury real findings.
+def _normalise(prop, value):
+    if prop != "fontFamily":
+        return value
+    first = value.split(",")[0].strip().strip("\"'")
+    # Outfit_400Regular -> outfit ; "Fraunces" -> fraunces
+    return first.split("_")[0].strip().lower()
+
+
 def classify(screen_key, prop, expected):
-    """EXPECTED (with the reason) or DRIFT."""
+    """
+    EXPECTED (with the reason) or DRIFT.
+
+    ─── AN ENTRY MUST NAME ITS SCREENS ─────────────────────────────
+
+    This originally treated a missing `screen:` as "applies everywhere",
+    which quietly turned the whole classifier off: "Card titles are
+    sentence case on mobile" carries `group:type` and no screen, so it
+    excused EVERY type difference on EVERY screen. The first full run
+    reported TOTAL DRIFT: 0 while the Pipeline title measured 15px on web
+    against 32px on mobile.
+
+    A false green is the worst thing this tool can produce — it is the
+    exact confidence the rule in CLAUDE.md was written to replace. So an
+    entry now applies only where it says it applies, and `screen:*` has
+    to be written out when that is really meant.
+    """
     group = next((g for g, props in GROUPS.items() if prop in props), None)
     for e in expected:
-        screens_ok = not e["screens"] or screen_key in e["screens"] or "*" in e["screens"]
+        if not e["screens"]:
+            continue  # names no screen: documents something, excuses nothing
+        screens_ok = screen_key in e["screens"] or "*" in e["screens"]
         groups_ok = not e["groups"] or (group in e["groups"]) or "*" in e["groups"]
         if screens_ok and groups_ok:
             return "EXPECTED", e["title"]
@@ -87,7 +118,7 @@ def compare(row, expected):
             if prop.startswith("__"):
                 continue
             wv, mv = str(w.get(prop, "—")), str(m.get(prop, "—"))
-            match = wv == mv
+            match = _normalise(prop, wv) == _normalise(prop, mv)
             verdict, reason = ("MATCH", None) if match else classify(row["key"], prop, expected)
             out.append({
                 "landmark": landmark, "property": prop,

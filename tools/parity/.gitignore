@@ -2,3 +2,7 @@
 # the composite and table it needs to its report, and the rest is noise in
 # a diff. The harness itself is what's committed.
 out/
+
+# Python bytecode. Committed by accident in BF.
+__pycache__/
+*.pyc

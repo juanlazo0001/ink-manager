@@ -19,6 +19,28 @@ export function loginErrorMessage(err: unknown): string {
     // about the credentials that were typed -- telling someone their
     // password is wrong because a deploy was in flight is the worst
     // possible reading of it. See ApiError.fromApi.
+    /*
+     * 429 FIRST, ahead of the `fromApi` check, and that ordering is the
+     * whole fix.
+     *
+     * `fromApi` is decided by `typeof body.error === 'string'`
+     * (lib/api.ts). express-rate-limit's DEFAULT 429 body is plain text,
+     * so a rate-limited login fell into the branch below and told the
+     * user "Can't reach Ink Manager right now" — a deliberate refusal
+     * reported as a network outage, which sends them to check their wifi
+     * while the server is fine and waiting them out.
+     *
+     * Session BG's own limiters answer with JSON, so this branch should
+     * rarely be needed by them. It is here anyway because the thing that
+     * produced the bug — a 429 with a body this client did not expect —
+     * can just as easily come from a proxy, an edge, or the next limiter
+     * somebody adds without reading this file.
+     */
+    if (err.status === 429) {
+      return err.fromApi && err.message
+        ? err.message
+        : 'Too many attempts. Wait a few minutes and try again.';
+    }
     if (!err.fromApi) {
       return "Can't reach Ink Manager right now. Try again in a moment.";
     }
