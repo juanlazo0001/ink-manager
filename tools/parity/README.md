@@ -96,6 +96,11 @@ route, used it, and deleted it. That is what this replaces.
 - **The chat list has no web counterpart** — the portal opens
   conversations in a docked panel, so there is no route to navigate to.
   That row is mobile-only by construction, not a failure.
+- **A collapsed mobile section reads as MISSING.** The probe only sees the
+  DOM, and mobile collapses most sections by default. A landmark inside one
+  is reported missing even though the content is there — check by expanding
+  before filing it as drift. Session BH hit this on the inquiry detail's
+  intake fields.
 - **One browser, one engine.** Both sides render in the same Chromium, so
   this cannot see anything that differs because iOS Safari or a real
   device renders differently. That is what the device gate is for.

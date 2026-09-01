@@ -25,6 +25,10 @@ GROUPS = {
     "color": {"color", "backgroundColor", "borderColor"},
     "spacing": {"paddingTop", "paddingLeft", "gap"},
     "shape": {"borderRadius", "borderTopWidth"},
+    # "is this landmark on the page at all". Its own group so a manifest
+    # entry can excuse a RENAME ("Inquiry Details" -> "The request")
+    # without also excusing every colour difference on that screen.
+    "presence": {"(present)"},
 }
 
 
@@ -104,18 +108,41 @@ def compare(row, expected):
     for landmark in sorted(set(web) | set(mob)):
         w, m = web.get(landmark), mob.get(landmark)
         if w is None or m is None:
+            # A presence mismatch USED TO BE hard-coded as DRIFT, which
+            # meant a documented rename could never be marked EXPECTED —
+            # "Inquiry Details" against mobile's "The request" was filed
+            # as a defect on every run, for ever, with the reason sitting
+            # unread in the manifest. Presence goes through the same
+            # classifier as everything else now.
+            if (w is None) != (m is None):
+                verdict, reason = classify(row["key"], "(present)", expected)
+            else:
+                verdict, reason = "—", None
             out.append({
                 "landmark": landmark,
                 "property": "(present)",
                 "web": "found" if w else "MISSING",
                 "mobile": "found" if m else "MISSING",
                 "match": False,
-                "verdict": "DRIFT" if (w is None) != (m is None) else "—",
-                "reason": None,
+                "verdict": verdict,
+                "reason": reason,
             })
             continue
+        # A border's COLOUR is meaningless when there is no border, and
+        # the two engines disagree about what to report for one: the
+        # browser resolves `currentColor` (so borderColor equals the text
+        # colour) while react-native-web says black. That produced a
+        # borderColor "difference" on almost every landmark measured —
+        # noise that buried the two real colour findings underneath it.
+        no_border = (
+            str(w.get("borderTopWidth", "0px")) in ("0px", "0")
+            and str(m.get("borderTopWidth", "0px")) in ("0px", "0")
+        )
+
         for prop in sorted(set(w) | set(m)):
             if prop.startswith("__"):
+                continue
+            if prop == "borderColor" and no_border:
                 continue
             wv, mv = str(w.get(prop, "—")), str(m.get(prop, "—"))
             match = _normalise(prop, wv) == _normalise(prop, mv)

@@ -49,8 +49,25 @@ async function main() {
   });
   if (!user) throw new Error(`no active ${wanted} in studio ${studio.name}`);
 
+  /*
+   * The inquiry is PINNED, not "whichever was touched last".
+   *
+   * A parity run has to be repeatable to mean anything: a before/after
+   * comparison against two different records compares two different
+   * pages. `_fixture.ts` documents this id and what was done to make it
+   * render every section. If it is ever deleted, the fallback below
+   * keeps the harness working and the report will say the id differed.
+   */
+  const PARITY_INQUIRY_ID = "cms0vlzqi0003jci2bgphz3z9";
+  const pinned = await prisma.inquiry.findFirst({
+    where: { id: PARITY_INQUIRY_ID, studioId: studio.id },
+    select: { id: true },
+  });
+
   const [inquiry, client, conversation] = await Promise.all([
-    prisma.inquiry.findFirst({ where: { studioId: studio.id }, select: { id: true }, orderBy: { updatedAt: "desc" } }),
+    pinned
+      ? Promise.resolve(pinned)
+      : prisma.inquiry.findFirst({ where: { studioId: studio.id }, select: { id: true }, orderBy: { updatedAt: "desc" } }),
     prisma.client.findFirst({ where: { studioId: studio.id }, select: { id: true } }),
     prisma.conversation.findFirst({ where: { studioId: studio.id }, select: { id: true } }),
   ]);

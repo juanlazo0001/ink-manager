@@ -1,0 +1,530 @@
+[
+  {
+    "key": "inquiry-detail",
+    "title": "Inquiry detail",
+    "note": null,
+    "web": {
+      "section header \u2014 \u201cProgress\u201d": {
+        "fontFamily": "Fraunces, ui-serif, serif",
+        "fontSize": "19px",
+        "fontWeight": "500",
+        "letterSpacing": "1.14px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 81,
+          "h": 29,
+          "x": 113,
+          "y": 450
+        }
+      },
+      "section header \u2014 \u201cAssignment\u201d": {
+        "fontFamily": "Fraunces, ui-serif, serif",
+        "fontSize": "19px",
+        "fontWeight": "500",
+        "letterSpacing": "1.14px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 101,
+          "h": 29,
+          "x": 113,
+          "y": 826
+        }
+      },
+      "section header \u2014 \u201cEstimate\u201d": {
+        "fontFamily": "Fraunces, ui-serif, serif",
+        "fontSize": "19px",
+        "fontWeight": "500",
+        "letterSpacing": "1.14px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 77,
+          "h": 29,
+          "x": 113,
+          "y": 1068
+        }
+      },
+      "section header \u2014 \u201cDeposit\u201d": {
+        "fontFamily": "Fraunces, ui-serif, serif",
+        "fontSize": "19px",
+        "fontWeight": "500",
+        "letterSpacing": "1.14px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 68,
+          "h": 29,
+          "x": 113,
+          "y": 1538
+        }
+      },
+      "section header \u2014 \u201cAppointments\u201d": {
+        "fontFamily": "Fraunces, ui-serif, serif",
+        "fontSize": "19px",
+        "fontWeight": "500",
+        "letterSpacing": "1.14px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 122,
+          "h": 29,
+          "x": 113,
+          "y": 2831
+        }
+      },
+      "section header \u2014 \u201cReference images\u201d": {
+        "fontFamily": "Fraunces, ui-serif, serif",
+        "fontSize": "19px",
+        "fontWeight": "500",
+        "letterSpacing": "1.14px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 155,
+          "h": 29,
+          "x": 113,
+          "y": 3665
+        }
+      },
+      "section header \u2014 \u201cPlacement photos\u201d": {
+        "fontFamily": "Fraunces, ui-serif, serif",
+        "fontSize": "19px",
+        "fontWeight": "500",
+        "letterSpacing": "1.14px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 163,
+          "h": 29,
+          "x": 113,
+          "y": 3943
+        }
+      },
+      "section header \u2014 \u201cInquiry Details\u201d": {
+        "fontFamily": "Fraunces, ui-serif, serif",
+        "fontSize": "19px",
+        "fontWeight": "500",
+        "letterSpacing": "1.14px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 137,
+          "h": 29,
+          "x": 113,
+          "y": 4221
+        }
+      },
+      "section header \u2014 \u201cNotes\u201d": {
+        "fontFamily": "Fraunces, ui-serif, serif",
+        "fontSize": "19px",
+        "fontWeight": "500",
+        "letterSpacing": "1.14px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 51,
+          "h": 29,
+          "x": 113,
+          "y": 4887
+        }
+      },
+      "section header \u2014 \u201cActivity History\u201d": {
+        "fontFamily": "Fraunces, ui-serif, serif",
+        "fontSize": "19px",
+        "fontWeight": "500",
+        "letterSpacing": "1.14px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 148,
+          "h": 29,
+          "x": 113,
+          "y": 5658
+        }
+      },
+      "field label \u2014 \u201cPlacement\u201d": {
+        "fontFamily": "Outfit, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "letterSpacing": "0.6px",
+        "color": "rgb(155, 146, 127)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(155, 146, 127)",
+        "gap": "normal",
+        "__rect": {
+          "w": 292,
+          "h": 16,
+          "x": 49,
+          "y": 4493
+        }
+      },
+      "field label \u2014 \u201cBudget\u201d": {
+        "fontFamily": "Outfit, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "letterSpacing": "0.6px",
+        "color": "rgb(155, 146, 127)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(155, 146, 127)",
+        "gap": "normal",
+        "__rect": {
+          "w": 292,
+          "h": 16,
+          "x": 49,
+          "y": 4717
+        }
+      },
+      "header action \u2014 \u201cView Client\u201d": {
+        "fontFamily": "Outfit, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "letterSpacing": "normal",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        }
+      },
+      "header action \u2014 \u201cMessage\u201d": {
+        "fontFamily": "Outfit, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "letterSpacing": "normal",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(242, 236, 224)",
+        "gap": "normal",
+        "__rect": {
+          "w": 0,
+          "h": 0,
+          "x": 0,
+          "y": 0
+        }
+      },
+      "stage label \u2014 \u201cNeeds Scheduling\u201d": {
+        "fontFamily": "Outfit, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "letterSpacing": "normal",
+        "color": "rgb(199, 190, 169)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(199, 190, 169)",
+        "gap": "normal",
+        "__rect": {
+          "w": 109,
+          "h": 24,
+          "x": 81,
+          "y": 499
+        }
+      },
+      "stage label \u2014 \u201cScheduled\u201d": {
+        "fontFamily": "Outfit, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "letterSpacing": "normal",
+        "color": "rgb(199, 190, 169)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(199, 190, 169)",
+        "gap": "normal",
+        "__rect": {
+          "w": 64,
+          "h": 24,
+          "x": 81,
+          "y": 543
+        }
+      },
+      "stage label \u2014 \u201cWaiver Verified\u201d": {
+        "fontFamily": "Outfit, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "letterSpacing": "normal",
+        "color": "rgb(199, 190, 169)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(199, 190, 169)",
+        "gap": "normal",
+        "__rect": {
+          "w": 95,
+          "h": 24,
+          "x": 81,
+          "y": 587
+        }
+      },
+      "stage label \u2014 \u201cSession Complete\u201d": {
+        "fontFamily": "Jura, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "9px",
+        "fontWeight": "400",
+        "letterSpacing": "0.72px",
+        "color": "rgb(193, 166, 222)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(193, 166, 222)",
+        "gap": "normal",
+        "__rect": {
+          "w": 98,
+          "h": 11,
+          "x": 220,
+          "y": 229
+        }
+      },
+      "stage label \u2014 \u201cProject Complete\u201d": {
+        "fontFamily": "Outfit, ui-sans-serif, system-ui, sans-serif",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "letterSpacing": "normal",
+        "color": "rgb(155, 146, 127)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(155, 146, 127)",
+        "gap": "normal",
+        "__rect": {
+          "w": 108,
+          "h": 24,
+          "x": 81,
+          "y": 675
+        }
+      }
+    },
+    "mobile": {
+      "section header \u2014 \u201cProgress\u201d": {
+        "fontFamily": "Fraunces_500Medium",
+        "fontSize": "17px",
+        "fontWeight": "400",
+        "letterSpacing": "0.34px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(0, 0, 0)",
+        "gap": "normal",
+        "__rect": {
+          "w": 285,
+          "h": 22,
+          "x": 64,
+          "y": 340
+        }
+      },
+      "section header \u2014 \u201cAssignment\u201d": {
+        "fontFamily": "Fraunces_500Medium",
+        "fontSize": "17px",
+        "fontWeight": "400",
+        "letterSpacing": "0.34px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(0, 0, 0)",
+        "gap": "normal",
+        "__rect": {
+          "w": 233,
+          "h": 22,
+          "x": 64,
+          "y": 644
+        }
+      },
+      "section header \u2014 \u201cEstimate\u201d": {
+        "fontFamily": "Fraunces_500Medium",
+        "fontSize": "17px",
+        "fontWeight": "400",
+        "letterSpacing": "0.34px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(0, 0, 0)",
+        "gap": "normal",
+        "__rect": {
+          "w": 233,
+          "h": 22,
+          "x": 64,
+          "y": 860
+        }
+      },
+      "section header \u2014 \u201cDeposit\u201d": null,
+      "section header \u2014 \u201cAppointments\u201d": null,
+      "section header \u2014 \u201cReference images\u201d": null,
+      "section header \u2014 \u201cPlacement photos\u201d": null,
+      "section header \u2014 \u201cInquiry Details\u201d": null,
+      "section header \u2014 \u201cNotes\u201d": {
+        "fontFamily": "Fraunces_500Medium",
+        "fontSize": "17px",
+        "fontWeight": "400",
+        "letterSpacing": "0.34px",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(0, 0, 0)",
+        "gap": "normal",
+        "__rect": {
+          "w": 233,
+          "h": 22,
+          "x": 64,
+          "y": 1468
+        }
+      },
+      "section header \u2014 \u201cActivity History\u201d": null,
+      "field label \u2014 \u201cPlacement\u201d": null,
+      "field label \u2014 \u201cBudget\u201d": null,
+      "header action \u2014 \u201cView Client\u201d": null,
+      "header action \u2014 \u201cMessage\u201d": {
+        "fontFamily": "Outfit_400Regular",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "letterSpacing": "normal",
+        "color": "rgb(242, 236, 224)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(0, 0, 0)",
+        "gap": "normal",
+        "__rect": {
+          "w": 51,
+          "h": 18,
+          "x": 168,
+          "y": 195
+        }
+      },
+      "stage label \u2014 \u201cNeeds Scheduling\u201d": null,
+      "stage label \u2014 \u201cScheduled\u201d": {
+        "fontFamily": "Outfit_400Regular",
+        "fontSize": "15px",
+        "fontWeight": "400",
+        "letterSpacing": "normal",
+        "color": "rgb(201, 154, 91)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "paddingTop": "0px",
+        "paddingLeft": "0px",
+        "borderRadius": "0px",
+        "borderTopWidth": "0px",
+        "borderColor": "rgb(0, 0, 0)",
+        "gap": "normal",
+        "__rect": {
+          "w": 68,
+          "h": 21,
+          "x": 64,
+          "y": 530
+        }
+      },
+      "stage label \u2014 \u201cWaiver Verified\u201d": null,
+      "stage label \u2014 \u201cSession Complete\u201d": null,
+      "stage label \u2014 \u201cProject Complete\u201d": null
+    },
+    "web_390": "inquiry-detail-web-390.png",
+    "web_1440": "inquiry-detail-web-1440.png",
+    "mobile_390": "inquiry-detail-mobile-390.png",
+    "composite": "inquiry-detail-composite.png",
+    "diff_pct": 8.6,
+    "diff": "inquiry-detail-diff.png"
+  }
+]
