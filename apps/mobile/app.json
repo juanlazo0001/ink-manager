@@ -77,7 +77,8 @@
           "savePhotosPermission": "Ink Manager saves photos from client conversations to your photo library when you choose to save them."
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true,

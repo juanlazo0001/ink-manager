@@ -1,0 +1,21 @@
+{
+  "//": [
+    "Test files only, and separate from the app config on purpose.",
+    "",
+    "`src/**/*.test.ts` runs under `tsx --test`, so it needs node:test,",
+    "node:assert and the rest of the Node globals. Adding `types: [node]`",
+    "to the APP config would have been one line shorter and wrong: it",
+    "injects Buffer, setImmediate and friends into every screen, so a",
+    "mistake that crashes on a device would typecheck cleanly here.",
+    "",
+    "The app config excludes these files; this one is the only place they",
+    "are checked, and `npm run typecheck:test` is in the standard bar."
+  ],
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["src/**/*.test.ts"],
+  "exclude": []
+}

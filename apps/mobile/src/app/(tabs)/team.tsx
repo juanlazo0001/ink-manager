@@ -44,7 +44,29 @@ export default function TeamScreen() {
   const token = session?.token ?? null;
   const studioId = session?.profile.studioId ?? null;
 
-  const [tab, setTab] = useState<Tab>('staff');
+  /*
+   * ─── ROLE-AWARE TABS (session BD) ─────────────────────────────────
+   *
+   * The Staff tab needs `GET /studios/:id/users`, which is gated on
+   * `team.manage` and 403s for FRONT_DESK. Mobile fetched it
+   * unconditionally, so the whole screen — Artists included — errored
+   * for a non-owner. Web has never had that problem because it hides
+   * the tab AND skips the fetch:
+   *
+   *     .filter(([tab]) => tab === 'artists' || isOwner)
+   *     if (!isOwner || !user?.studioId) return       // its load effect
+   *
+   * Both halves are mirrored here. Hiding the tab alone would have left
+   * the failing request in place.
+   *
+   * OWNER, not `team.manage`: the app has no per-key permission list for
+   * this on the client, and OWNER is what web tests. A FRONT_DESK who
+   * has been granted `team.manage` therefore sees Artists only — one
+   * capability narrower than the API would allow, which is the safe
+   * direction and matches web exactly.
+   */
+  const canSeeStaff = session?.profile.role === 'OWNER';
+  const [tab, setTab] = useState<Tab>(() => (session?.profile.role === 'OWNER' ? 'staff' : 'artists'));
   const [users, setUsers] = useState<TeamUser[] | null>(null);
   /*
    * The ARTIST profile, which `GET /users` does not carry — bio,
@@ -94,13 +116,20 @@ export default function TeamScreen() {
     if (!token || !studioId) return;
     setError(null);
     try {
-      const [u, a] = await Promise.all([fetchTeamUsers(token, studioId), fetchArtists(token)]);
-      setUsers(u);
+      /* Artists for everyone; the roster only for a caller the route
+         will actually answer. Requesting it anyway and swallowing the
+         403 would still cost a round trip and would hide a real
+         permission change behind a catch. */
+      const [a, u] = await Promise.all([
+        fetchArtists(token),
+        canSeeStaff ? fetchTeamUsers(token, studioId) : Promise.resolve<TeamUser[]>([]),
+      ]);
       setArtistProfiles(a);
+      setUsers(u);
     } catch (err) {
       setError(screenErrorMessage(err, "The team didn't load."));
     }
-  }, [token, studioId]);
+  }, [token, studioId, canSeeStaff]);
 
   useEffect(() => {
     void load();
@@ -142,7 +171,11 @@ export default function TeamScreen() {
       */}
       <ScreenTitle
         title="Team"
-        counts={countLine([staff.length, 'person', 'people'], [profiles.length, 'artist'])}
+        counts={
+          canSeeStaff
+            ? countLine([staff.length, 'person', 'people'], [profiles.length, 'artist'])
+            : countLine([profiles.length, 'artist'])
+        }
         action={
           canInvite ? (
             <TitleAction Icon={PlusIcon} label="Invite team member" onPress={() => setInviteOpen(true)} />
@@ -157,14 +190,21 @@ export default function TeamScreen() {
         the wrong shape for a PAGE's primary navigation, which is what
         these two are.
       */}
-      <UnderlineTabs
-        tabs={[
-          { key: 'staff', label: 'Staff' },
-          { key: 'artists', label: 'Artists' },
-        ]}
-        value={tab}
-        onChange={setTab}
-      />
+      {/* One tab renders nothing at all rather than a permanently
+          selected single option — the same rule SegmentedControl already
+          applies, and web shows a lone "Artists" tab for the same reader
+          because its strip is a plain map. A control with no alternative
+          is chrome. */}
+      {canSeeStaff ? (
+        <UnderlineTabs
+          tabs={[
+            { key: 'staff', label: 'Staff' },
+            { key: 'artists', label: 'Artists' },
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
+      ) : null}
 
       {error ? (
         <StateMessage
@@ -179,7 +219,9 @@ export default function TeamScreen() {
         <ScrollView contentContainerStyle={styles.content}>
           {/* ITEM 4: gone — the selected segment already names the list, and
               repeating it underneath said the same thing twice. */}
-          {tab === 'staff' ? (
+          {/* `canSeeStaff &&` so a stale 'staff' tab value can never
+              render an empty roster to someone who is not allowed one. */}
+          {canSeeStaff && tab === 'staff' ? (
             <View style={styles.roster}>
               {staff.map((u, i) => (
                 <Appear key={u.id} index={i}>

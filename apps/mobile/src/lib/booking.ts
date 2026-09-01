@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { zonedTimeToUtc } from '@/lib/studioTime';
 
 /**
  * Booking, from the inquiry screen.
@@ -92,21 +93,51 @@ export function createConsultation(
 
 /* ─── time handling ─────────────────────────────────────────────────
  *
- * A booking is a REAL INSTANT judged against a studio's wall clock, not
- * a calendar date — CLAUDE.md's two conventions, and this is squarely
- * the second one. The date and time are collected separately (as web
- * does, via `combineDateAndTime`) and combined in the DEVICE's local
- * zone, which is the zone the person tapping is standing in.
+ * ─── CORRECTED IN SESSION BD. THE PREVIOUS NOTE HERE WAS WRONG. ─────
  *
- * `new Date(y, m-1, d, hh, mm)` is local-midnight-style construction —
- * the LOCAL convention — and `.toISOString()` then expresses that exact
- * instant in UTC. That is correct here precisely because this is an
- * instant and not a calendar date: the same moment, written in the
- * transport's zone.
+ * It argued that combining the date and time in the DEVICE's zone was
+ * right "because this is an instant and not a calendar date". The first
+ * half is true and the conclusion does not follow. A booking IS a real
+ * instant — and CLAUDE.md's rule for exactly that case is that it must
+ * be resolved against `StudioSettings.timezone`, never the device's own
+ * clock.
+ *
+ * WHAT THE OLD CODE ACTUALLY DID. Staff pick "9:00" meaning nine in the
+ * morning AT THE STUDIO. `new Date(y, m-1, d, 9, 0)` builds nine in the
+ * morning WHERE THE PHONE IS. Those are the same instant only while the
+ * phone happens to sit in the studio's zone, which is the case that
+ * never fails in testing and the only case anybody tested.
+ *
+ * AND THE SERVER ALREADY DISAGREED WITH IT. `POST /appointments` checks
+ * `isSameCalendarDay(start, end, studioSettings.timezone)` — the API has
+ * always judged these instants on the STUDIO's calendar. So a booking
+ * made from a device one zone away could be rejected for spanning two
+ * days when it spans none, or accepted onto the wrong day entirely. The
+ * two halves were using different clocks.
+ *
+ * THE FIX is `zonedTimeToUtc`, which this app already had: it resolves a
+ * civil date and wall time in a named IANA zone to the correct instant,
+ * DST included, by measuring the zone's offset AT that instant rather
+ * than assuming a fixed one.
+ *
+ * The timezone is now a required argument rather than an optional one
+ * with a device fallback. A fallback here is precisely the silent-wrong
+ * -day behaviour the repo's rule exists to prevent, and callers already
+ * hold the value — `useStudioTimeZone` fetches it once per app run and
+ * reports whether it is real or standing in.
+ *
+ * NOTE FOR A FUTURE SESSION: apps/web has the SAME defect and is out of
+ * this session's scope. `DateAndTimeRangeFields.tsx`'s own
+ * `combineDateAndTime` does `new Date(\`${date}T${time}:00\`)` — a
+ * datetime string with no offset, which JS parses in the browser's local
+ * zone. Same bug, same fix.
  */
 
-/** `YYYY-MM-DD` + `HH:MM` -> an ISO instant, or null if either is malformed. */
-export function combineDateAndTime(date: string, time: string): string | null {
+/**
+ * `YYYY-MM-DD` + `HH:MM` in the STUDIO's zone -> an ISO instant.
+ * Null if either part is malformed.
+ */
+export function combineDateAndTime(date: string, time: string, timeZone: string): string | null {
   const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.trim());
   const t = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
   if (!d || !t) return null;
@@ -120,11 +151,20 @@ export function combineDateAndTime(date: string, time: string): string | null {
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   if (hour > 23 || minute > 59) return null;
 
-  const dt = new Date(year, month - 1, day, hour, minute, 0, 0);
-  if (Number.isNaN(dt.getTime())) return null;
-  // Catches a rolled-over date -- new Date(2026, 1, 31) is 3 March.
-  if (dt.getMonth() !== month - 1 || dt.getDate() !== day) return null;
-  return dt.toISOString();
+  /*
+   * Rolled-over dates (31 February) are caught here, before the zone
+   * conversion, using a UTC probe rather than a local one. `Date.UTC`
+   * normalises the same way the local constructor does, and doing the
+   * check in UTC keeps this validation independent of both the device
+   * zone and the studio's — a malformed date is malformed everywhere.
+   */
+  const probe = new Date(Date.UTC(year, month - 1, day, hour, minute, 0, 0));
+  if (Number.isNaN(probe.getTime())) return null;
+  if (probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) return null;
+
+  const padded = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  const instant = zonedTimeToUtc(`${d[1]}-${d[2]}-${d[3]}`, padded, timeZone);
+  return Number.isNaN(instant.getTime()) ? null : instant.toISOString();
 }
 
 export interface BookingDraft {
@@ -141,10 +181,10 @@ export interface BookingDraft {
  * Validation, mirroring what the route enforces so the form can refuse
  * in place: valid dates, and start strictly before end.
  */
-export function validateBooking(draft: BookingDraft): string | null {
+export function validateBooking(draft: BookingDraft, timeZone: string): string | null {
   if (!draft.artistId) return 'Choose an artist.';
-  const start = combineDateAndTime(draft.date, draft.startTime);
-  const end = combineDateAndTime(draft.date, draft.endTime);
+  const start = combineDateAndTime(draft.date, draft.startTime, timeZone);
+  const end = combineDateAndTime(draft.date, draft.endTime, timeZone);
   if (!start) return 'Enter a date and start time (YYYY-MM-DD and HH:MM).';
   if (!end) return 'Enter an end time (HH:MM).';
   if (new Date(start).getTime() >= new Date(end).getTime()) {
@@ -157,13 +197,14 @@ export function validateBooking(draft: BookingDraft): string | null {
 export function buildBookingBody(
   draft: BookingDraft,
   ids: { clientId: string; inquiryId: string },
+  timeZone: string,
 ): Omit<CreateAppointmentInput, 'appointmentType'> & { appointmentType: 'CONSULTATION' } {
   return {
     artistId: draft.artistId!,
     clientId: ids.clientId,
     inquiryId: ids.inquiryId,
-    startTime: combineDateAndTime(draft.date, draft.startTime)!,
-    endTime: combineDateAndTime(draft.date, draft.endTime)!,
+    startTime: combineDateAndTime(draft.date, draft.startTime, timeZone)!,
+    endTime: combineDateAndTime(draft.date, draft.endTime, timeZone)!,
     ...(draft.notes.trim() ? { notes: draft.notes.trim() } : {}),
     appointmentType: 'CONSULTATION',
   };

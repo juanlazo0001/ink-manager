@@ -1,4 +1,4 @@
-import cron from "node-cron";
+import cron, { type ScheduledTask } from "node-cron";
 import { prisma } from "../prisma";
 import { JobStatus } from "../../../generated/prisma/enums";
 import type { Prisma } from "../../../generated/prisma/client";
@@ -131,16 +131,90 @@ export function computeSlot(date: Date, slotMinutes: number): Date {
   return new Date(Math.floor(date.getTime() / slotMs) * slotMs);
 }
 
+/**
+ * Whether this process should run the cron scheduler at all.
+ *
+ * ─── WHY THIS EXISTS ────────────────────────────────────────────────
+ *
+ * `startScheduler()` used to be called unconditionally at boot, in every
+ * environment. That is not a tidiness problem: the reminder ticker runs
+ * every 15 minutes and calls `sendClientSms`, so ANY developer running
+ * `npm run dev:api` against the dev database opened a path to texting
+ * real phone numbers on a timer. `SMS_DRY_RUN=true` was the workaround,
+ * and it treats the symptom — it is one forgotten env var away from
+ * sending, and it only covers SMS, not e-mail polls or any other job a
+ * future registration adds.
+ *
+ * The cause is that a background worker was started by a process whose
+ * job is to serve HTTP. This is the cause fixed: OFF unless the
+ * environment says otherwise.
+ *
+ * ─── THE RULE ───────────────────────────────────────────────────────
+ *
+ *   ENABLE_SCHEDULER=true    on,  whatever NODE_ENV says
+ *   ENABLE_SCHEDULER=false   off, whatever NODE_ENV says
+ *   unset                    on IFF NODE_ENV === "production"
+ *
+ * The explicit override wins in both directions on purpose. "On" is what
+ * a staging environment or a dedicated worker dyno needs; "off" is what
+ * lets production run a second replica that serves HTTP without doubling
+ * every scheduled job.
+ *
+ * ─── THE DEPENDENCY THIS INTRODUCES, STATED PLAINLY ─────────────────
+ *
+ * Defaulting on `NODE_ENV === "production"` means production must
+ * actually set it. Four existing call sites already depend on exactly
+ * that — `clientSms.ts` force-disables dry-run there, `publicUrl.ts`
+ * refuses its dev fallbacks, `prisma.ts` and `auth.ts` both branch on it
+ * — so if it were unset in production those would already be misbehaving
+ * in more visible ways. That is an inference from the codebase, not a
+ * reading of the deploy config, which does not live in this repo.
+ *
+ * So the disabled path LOGS, loudly, rather than returning in silence:
+ * if production ever lands there, the boot log says so on the first
+ * line rather than being discovered when a reminder does not arrive.
+ * Setting `ENABLE_SCHEDULER=true` on the production service removes the
+ * dependency entirely and is the recommended belt.
+ */
+export function schedulerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const explicit = env.ENABLE_SCHEDULER?.trim().toLowerCase();
+  if (explicit === "true" || explicit === "1") return true;
+  if (explicit === "false" || explicit === "0") return false;
+  return env.NODE_ENV === "production";
+}
+
 // Registers a cron.schedule tick for every registered job. Called once at
 // process boot (see index.ts), after every job module's own import has run
 // registerJob -- see jobs/index.ts for the import order that guarantees
 // this.
-export function startScheduler(): void {
+//
+// Returns the tasks it registered — empty when the guard declined.
+//
+// A HANDLE, not just a count, because until this returned something the
+// timers it created could not be stopped by anything: the first version
+// of the guard's own test hung the runner, since a registered cron task
+// keeps the event loop alive forever. A caller that starts jobs should
+// be able to stop them, and now can.
+export function startScheduler(env: NodeJS.ProcessEnv = process.env): ScheduledTask[] {
+  if (!schedulerEnabled(env)) {
+    console.log(
+      `[jobs] scheduler NOT started (NODE_ENV=${env.NODE_ENV ?? "unset"}, ` +
+        `ENABLE_SCHEDULER=${env.ENABLE_SCHEDULER ?? "unset"}). ` +
+        `Background jobs, including client SMS reminders, will not run in this process. ` +
+        `Set ENABLE_SCHEDULER=true to override.`,
+    );
+    return [];
+  }
+
+  const tasks: ScheduledTask[] = [];
   for (const job of listJobs()) {
     const slotMinutes = job.slotMinutes ?? 1440;
-    cron.schedule(job.schedule, () => {
-      void runJob(job.name, computeSlot(new Date(), slotMinutes));
-    });
+    tasks.push(
+      cron.schedule(job.schedule, () => {
+        void runJob(job.name, computeSlot(new Date(), slotMinutes));
+      }),
+    );
     console.log(`[jobs] scheduled "${job.name}": ${job.schedule}`);
   }
+  return tasks;
 }
