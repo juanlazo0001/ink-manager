@@ -8,6 +8,7 @@ import { inquiryClientName, isClosedStatus, statusLabel } from '@/lib/inquiryDis
 import { relativeStamp } from '@/lib/time';
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { InquiryStatusChip } from '@/components/StatusChip';
+import { projectStageLabel } from '@/lib/projectStage';
 import { colors, hairline, radius, space, type } from '@/theme';
 
 /**
@@ -51,6 +52,18 @@ export interface InquiryRowData {
    * `StaffInquiryListItem`, and always was.
    */
   thumbnailUrl?: string | null;
+  /*
+   * The project-stage inputs. `GET /inquiries` already returns both —
+   * confirmed against a live response, which carries `sessions` and
+   * `projectCompletedAt` but NOT `appointmentId`, which is why the
+   * derivation accepts either link.
+   *
+   * Optional so the artist list, fixtures and the parity harness can
+   * build a row without them.
+   */
+  projectCompletedAt?: string | null;
+  sessions?: { checkedOutAt?: string | null; liabilityWaiver?: { status: string } | null }[];
+
   /** The next session an artist has to show up for. Projects tab only. */
   nextSessionAt?: string | null;
 }
@@ -541,7 +554,15 @@ export function InquiryRow({ inquiry, onPress }: { inquiry: InquiryRowData; onPr
             solid surfaces it already appears on.
           */}
           <View style={styles.chipBacking}>
-            <InquiryStatusChip status={inquiry.status} />
+            {/* Web's list and Kanban card both show the derived stage
+                for a converted project (`InquiryKanbanCard`), falling
+                back to the status. Same here, from the same helper the
+                detail header uses, so a row and the page it opens can
+                never disagree. */}
+            <InquiryStatusChip
+              status={inquiry.status}
+              label={projectStageLabel(inquiry) ?? undefined}
+            />
           </View>
           <Text style={styles.stamp}>{relativeStamp(inquiry.updatedAt)}</Text>
         </View>

@@ -48,6 +48,22 @@ export interface StaffInquiryListItem {
   referenceImages: string[];
   /** Set once the project is wrapped up — part of the derived pipeline stage. */
   projectCompletedAt: string | null;
+  /**
+   * The other half of the derived pipeline stage, and it was on the wire
+   * before it was declared here: `GET /inquiries` returns `sessions` on
+   * every staff row (verified against a live response), while this type
+   * listed only `projectCompletedAt` — so a client reading rows through
+   * it could compute the stage web computes only by accident.
+   *
+   * `startTime` is what the Projects tab sorts by; `checkedOutAt` and the
+   * waiver are what the stage derives from.
+   */
+  sessions: {
+    id: string;
+    startTime: string;
+    checkedOutAt: string | null;
+    liabilityWaiver: { status: string } | null;
+  }[];
   client: InquiryClientRef | null;
   assignedArtist: InquiryArtistRef | null;
   appointment: { startTime: string } | null;

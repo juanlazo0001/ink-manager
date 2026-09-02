@@ -103,8 +103,29 @@ export function StatusChip({
 }
 
 /** The same chip, keyed off an inquiry/project status. */
-export function InquiryStatusChip({ status, style }: { status: string; style?: StyleProp<ViewStyle> }) {
-  return <StatusChip tone={statusTone(status) as ChipTone} label={statusLabel(status)} style={style} />;
+export function InquiryStatusChip({
+  status,
+  label,
+  style,
+}: {
+  status: string;
+  /**
+   * Overrides the label while keeping the status's colours — web's
+   * `<StatusPill status={stage} label={PROJECT_STAGE_LABELS[stage]} />`,
+   * which is how a converted project shows "Session Complete" instead of
+   * "SCHEDULING". The TONE still comes from `status`, so a stage chip
+   * cannot invent a colour the palette has no meaning for.
+   */
+  label?: string;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <StatusChip
+      tone={statusTone(status) as ChipTone}
+      label={label ?? statusLabel(status)}
+      style={style}
+    />
+  );
 }
 
 const styles = StyleSheet.create({
