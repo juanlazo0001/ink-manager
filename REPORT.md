@@ -37867,3 +37867,71 @@ follow-up rather than left for someone to rediscover.
 
 `session/bj-waiver-reminders`, commit `10db32c`. Touches `apps/api` and `schema.prisma`, so per the
 standing rule it is **not** auto-merged and waits for the owner.
+
+
+# Session BJ (addendum) — running the job found a bug the whole build missed
+
+The section above reported the feature verified on 273 passing tests, falsifiability probes, a
+two-timezone proof, live CRUD, and a browser round trip. All of that was true, and **the ticker was
+still broken**. Recording this because the gap is the interesting part.
+
+## The bug
+
+`customReminderTicker.ts` filtered candidate appointments with:
+
+    where: { ..., sends: { none: { reminderId: reminder.id } } }
+
+The relation on `Appointment` is `reminderSends`, not `sends`. The job threw
+`PrismaClientValidationError: Unknown argument 'sends'` on **every** tick — the feature would not
+have sent a single reminder in production.
+
+Nothing caught it:
+
+- `tsc` on `apps/api`: clean. Re-checked deliberately by reintroducing the wrong name — **0
+  errors**. Prisma 7's generated `AppointmentWhereInput` does not reject unknown keys at compile
+  time.
+- The 13 unit tests: they cover `lib/reminderRules.ts`, which is pure and has no query in it. That
+  separation is good design and it is exactly why they could not see this.
+- The 273-test suite, both production builds, the CRUD checks and the browser round trip: none of
+  them execute the job. The routes write reminder *rows*; only the ticker reads appointments.
+
+Every green signal was real and none of them touched the broken line. This is now a rule in
+CLAUDE.md: **a full green build is not evidence a Prisma query is correct — only running it is.**
+
+## The end-to-end run (dev, `SMS_DRY_RUN=true`, nothing sent to Twilio)
+
+Method: aim the seeded waiver reminder at a real CONFIRMED Dev Studio appointment
+(`cms9uaxs50006r8i253ns3b4a`, 2026-11-05, 64 days out), run the job three times on stepped JobRun
+slots with the send window retuned to each, and restore every mutation afterwards.
+
+| run | setup | result |
+|---|---|---|
+| 1 | waiver absent (outstanding) | 3 appointments selected, all `skippedNoConsent`, `skippedConditionNotMet: 0` |
+| 2 | unchanged, later slot | identical — no double-attempt |
+| 3 | **waiver forced SIGNED**, dedup row cleared | `skippedNoConsent` **3 → 2**, `skippedConditionNotMet` **0 → 1** |
+
+Run 3 is the discriminator. The only thing that changed was one waiver's status, and exactly one
+appointment moved out of the attempted bucket into "condition not met". That is the WAIVER_UNSIGNED
+precondition working on live data, and it is falsifiable: a condition that did nothing would have
+left the counts identical.
+
+Afterwards the reminder was restored to `offsetDays=1 sendTime=10:00`, the waiver to PENDING, and
+the dedup rows deleted. No appointment or client data was modified.
+
+## What this run does NOT prove — stated plainly
+
+**The dedup write was not exercised.** Every candidate stopped at the A2P consent gate
+(`skippedNoConsent`), and a dedup row is written only after a *successful* send. So the
+`AppointmentReminderSend` write path, and the "already sent, skip it" filter, are covered by the
+unique constraint and by code inspection — not by an observed send. Proving them would mean granting
+SMS consent to a dev client, which is A2P-sensitive data this session chose not to touch.
+
+Note that `not_connected` never appeared, so the studio's Twilio integration does resolve; consent is
+the only thing missing. **The first real production send is therefore the first time the dedup write
+runs for real.** If that matters before merge, the way to close it is a consenting labeled dev
+fixture, deliberately created and cleaned up — not a re-read of the code.
+
+## Status
+
+Fix committed on the same branch. `apps/api` typechecks, `apps/web` builds, 273/273 still pass, and
+the job now runs to completion against dev.

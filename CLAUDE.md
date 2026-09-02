@@ -179,6 +179,13 @@ Concise operating rules, not a project history — see REPORT.md for history.
   fresh `npm ci` + build passes from that clean state.
 - An uncommitted-but-imported file has broken production twice in this repo's history. A diff
   review is not sufficient on its own — confirm with an actual clean-checkout build.
+- **A wrong field name inside a Prisma `where`/`include` is NOT caught by `tsc`.** Measured in
+  Package BJ: `prisma.appointment.findMany({ where: { sends: { none: ... } } })` — where the real
+  relation is `reminderSends` — compiled with **zero** TypeScript errors and threw
+  `PrismaClientValidationError: Unknown argument 'sends'` at runtime, on every tick. A full green
+  build is therefore not evidence that a query is correct; the only thing that proves a Prisma query
+  is running it. Any new query needs at least one execution against a real database before its
+  session claims it works.
 - "Typecheck passed" means the **full production build** (`tsc -b && vite build` for `apps/web`,
   `tsc` for `apps/api`) — not `tsc --noEmit -p .` alone. `--noEmit` on its own has already missed a
   real error (`ConversationsPanel.tsx`'s separate `Record<Tone, string>` maps needing a new `hold`

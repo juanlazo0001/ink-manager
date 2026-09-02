@@ -107,7 +107,7 @@ async function runReminder(
       inquiryProject: { status: { not: InquiryStatus.ON_HOLD } },
       // Existence of a send row IS the dedup (see the model comment). Doing
       // it in the query rather than per-row keeps one round trip.
-      sends: { none: { reminderId: reminder.id } },
+      reminderSends: { none: { reminderId: reminder.id } },
     },
     include: {
       client: true,
