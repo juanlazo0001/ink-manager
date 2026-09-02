@@ -37702,3 +37702,168 @@ directly — that proves the write path, not the drag.
 ## Database
 
 No schema change, migration or backfill. Dev writes only, all reverted.
+
+
+# Session BJ — the waiver chase, and reminders a studio can add itself
+
+Brief: "1) add a reminder for the liability waiver to be sent and signed 24 hours before their
+appointment 2) ability to add reminders in Defaults on the web app".
+
+## What was already there (checked before building)
+
+Both items were checked against the running code first, because two earlier sessions' briefs
+described gaps that turned out not to reproduce.
+
+**Item 1 was partly there and the interesting half was missing.** `reminderTicker.ts` already
+imports `ensureLiabilityWaiver` and injects a `waiverLink` into client reminders, and Dev Studio's
+shipped `clientWeekBefore` template already reads "Please complete your waiver here:
+{{waiverLink}}". So waivers were already being *linked*. What no reminder did was check whether the
+waiver had ever been **signed** — all three client reminders fire on a fixed cadence regardless.
+A client who signed the day they booked gets chased anyway; a client who never signs gets chased no
+harder than anyone else. That, not the link, is the thing item 1 asked for.
+
+**Item 2 had no mechanism at all.** `StudioSettings.reminderTemplates` and `reminderSendTimes` are
+JSON blobs with *fixed keys* — seven templates, four send times — and `Settings.tsx` renders them
+from a hardcoded `REMINDER_TEMPLATE_FIELDS` array. A studio could reword a reminder and retime it.
+It could not add one.
+
+The two items are therefore the same feature. Item 1 is a reminder that needs a *precondition* the
+old engine cannot express; item 2 is "let the set grow". Building them separately would have meant
+a hardcoded fourth reminder *and* a general mechanism, so the waiver chase is instead the first row
+on the new mechanism — which also means a studio can retime, reword or switch it off without a
+deploy.
+
+## What shipped
+
+**Schema** (migration `20260902120000_studio_reminders`, additive only):
+
+- `StudioReminder` — label, audience (CLIENT/ARTIST), condition (NONE/WAIVER_UNSIGNED), `offsetDays`,
+  `sendTime`, body, enabled, plus `isSystem`/`systemKey` for seeded rows.
+- `AppointmentReminderSend` — one row per (appointment, reminder) that sent. Existence *is* the
+  dedup, unique on the pair, because a studio-defined reminder cannot have a `*SentAt` column of its
+  own the way the three built-ins do.
+
+**`lib/reminderRules.ts`** — the pure decisions: `waiverIsOutstanding`, `conditionHolds`,
+`appointmentIsDue`. Deliberately its own module: the ticker imports prisma, twilio and the realtime
+layer at module load, so anything co-located with it can only be tested against a live database.
+The first attempt did co-locate them, and the test run died on the import graph; that is why they
+moved.
+
+**`lib/jobs/customReminderTicker.ts`** — its own registered job on the same 15-minute cadence, so it
+gets its own Run Now in Settings → System and a failure never marks the built-in cadence's JobRun
+failed. Reuses `isWithinSendWindow` and the civil-date helpers, so the two engines cannot drift on
+what "1 day before" means. Only calls `ensureLiabilityWaiver` when the body actually contains
+`{{waiverLink}}` — that helper *creates* a waiver record as a side effect, so calling it
+unconditionally would manufacture waivers for reminders that never mention one.
+
+**`routes/studioReminders.ts`** — CRUD behind `settings.manageDefaults`, scoped on the **record's**
+own `studioId`. A PATCH is re-validated against the **merged** row, not just the submitted fields:
+flipping `audience` to ARTIST on a body that uses `{{waiverLink}}` is rejected, instead of leaving a
+reminder that would text a literal `{{waiverLink}}` to a real phone.
+
+**`components/StudioRemindersCard.tsx`** — a "Your Reminders" card under Settings → Defaults, below
+the existing built-in card: list, add, edit, delete, and a one-field enable/disable toggle for the
+in-a-hurry case.
+
+**`scripts/seed-waiver-reminder.ts`** — seeds the waiver chase per studio: CLIENT, WAIVER_UNSIGNED,
+1 day before, 10:00 local. Idempotent on `(studioId, systemKey)`, so a re-run never overwrites a
+studio's own rewording or its decision to switch the reminder off.
+
+## An interpretation to confirm
+
+The brief says "24 hours before". This ships as **the day before at a configurable local time**
+(default 10:00), not a rolling T-24h. Every reminder in this system targets a *civil date* in the
+studio's timezone and fires at a chosen local time, which is what stops a 06:00 appointment from
+generating a 06:00 text the previous morning. A true rolling T-24h would need a different engine and
+would text people at whatever hour their appointment happens to fall. If the owner does want literal
+T-24h, say so and it becomes a separate condition rather than a reinterpretation of this one.
+
+## Verification
+
+- **273/273** API tests pass (full suite), including 13 new ones.
+- **Falsifiability, per CLAUDE.md.** Both fixes were defeated and the suite re-run:
+  `waiverIsOutstanding` rewritten as "a waiver row exists, so they signed" → **2 fail**;
+  `appointmentIsDue` rewritten as an instant subtraction → **3 fail**; restored → **13 pass**.
+- **Two-timezone proof.** One pair of fixed instants (appointment `2026-09-03T02:00Z`, now
+  `2026-09-02T14:00Z`) that reads as *today* in `America/New_York` and *tomorrow* in `Asia/Tokyo`.
+  A correct implementation gives **opposite** answers for the same two instants, which is what pins
+  it to the studio's zone rather than the dev box's. The 12-hour gap between those instants is also
+  what kills the naive `(start - now) / 24h` implementation. A DST case is included: the 23-hour
+  spring-forward day is still one civil day.
+- **Live CRUD against dev** — creation, unknown-placeholder rejection, `waiverLink` rejected on an
+  ARTIST reminder, malformed `sendTime` rejected, fractional `offsetDays` rejected, narrow PATCH
+  preserving the body, the merged-recheck rejecting an audience flip, another studio's reminder
+  returning 404 on both PATCH and DELETE.
+- **Browser round trip** — created through the actual form, confirmed present, confirmed it survives
+  a full page reload (so it persisted rather than looking right optimistically), deleted again, with
+  the seeded waiver row left untouched.
+- Full production builds pass: `tsc` for `apps/api`, `tsc -b && vite build` for `apps/web`.
+
+## A real bug the render-only check missed
+
+The first browser pass verified that the card and modal *rendered*, and passed. Driving the form
+then failed: Save was resolved and "visible", but a Settings card behind it intercepted the click.
+
+Cause: `<Modal>` was rendered as a **child** of the card's `div.card-surface`. Under the
+editorial-gold theme that class sets `backdrop-filter: blur(...)`, which makes the card a containing
+block for `position: fixed` descendants — so the modal's fixed layer was sized to the card's box
+instead of the viewport, and its buttons sat underneath page content. CLAUDE.md already documents
+this exact trap for portalled background layers; this is the same mechanism reached from a different
+direction. Fixed by making the modal a sibling of the card, and the round trip then passed.
+
+Worth recording as method, not just as a fix: **"it rendered" and "it works" are different
+assertions, and only the second one catches this class of bug.**
+
+## Backfill status — READ THIS BEFORE MERGING
+
+Per CLAUDE.md's backfill rule, stated explicitly:
+
+- **Seeded on DEV ONLY** — `hopper.proxy.rlwy.net:35513`, **128 studios**, 128 rows created; a
+  second run created 0, confirming idempotency.
+- **PRODUCTION IS NOT SEEDED.** `tokaido.proxy.rlwy.net:18346` has not been touched. Until the seed
+  runs there, `migrate deploy` on the Railway deploy will create the *tables* and no studio will
+  have the waiver reminder — item 1 will not exist in production. That is a deliberate, separate,
+  unfinished step, and it needs an explicit go-ahead because it switches on a **new outbound SMS**
+  for every production studio at once:
+
+      cd apps/api
+      npx tsx -r dotenv/config scripts/seed-waiver-reminder.ts dotenv_config_path=.env.production --dry-run
+      # then without --dry-run
+
+## Two hazards found in the tooling, now in CLAUDE.md
+
+- **`prisma migrate diff` wants to drop a table nobody owns.** These databases contain a
+  `migrations` table in `public` belonging to a third-party library (rows `add-db-functions-ind`,
+  `add-db-functions-sessions`, written 2026-09-01). It is not in `schema.prisma`, so a live-datasource
+  diff faithfully reports it as extra and emits `DROP TABLE "migrations";` **at the top of the
+  generated migration**. It was removed by hand here, and the migration file says so inline. This
+  will recur for every future schema change generated this way. The path that would not see it,
+  `--from-migrations`, needs a `shadowDatabaseUrl` this repo does not set.
+- **`prisma format` is not a formatting no-op.** It reflowed column alignment across models this
+  change never touched and rewrote the file from CRLF to LF, turning a 103-line additive diff into
+  165 insertions / 62 deletions. Reverted; `prisma validate` checks the schema without rewriting it.
+- Prisma 7 also renamed the diff flags to `--from-config-datasource` / `--to-schema`.
+
+## Deliberately not done
+
+The built-in cadence was left exactly as it is. Unifying it with the new row model would rewrite the
+live client-SMS send path for every existing studio and require backfilling every studio's current
+templates and send times into rows — real risk, on the one part of this system that texts real
+people, for no behaviour that was asked for. The cost is that Defaults now shows two reminder
+groups, and that is the honest trade. Recorded in the schema comment and the component header as a
+follow-up rather than left for someone to rediscover.
+
+## Open items carried forward (unchanged from BI)
+
+- `apps/web`'s `DateAndTimeRangeFields.tsx` still has the device-local timezone defect mobile's
+  booking had.
+- `GET /studios/:id/users` still gates a roster READ on the `team.manage` WRITE permission; there is
+  no `team.view` key.
+- Deleting an inquiry that has notes still fails — `InquiryNote.inquiry` has no `onDelete`.
+- Push notification live receipt still needs an EAS development build.
+- Three stale local branches and the dirty `prepay-onhold` worktree.
+
+## Branch
+
+`session/bj-waiver-reminders`, commit `10db32c`. Touches `apps/api` and `schema.prisma`, so per the
+standing rule it is **not** auto-merged and waits for the owner.
