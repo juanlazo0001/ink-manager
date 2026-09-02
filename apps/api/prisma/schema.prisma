@@ -347,6 +347,7 @@ model Studio {
   customPolicyTranslations    CustomPolicyTranslation[]
   serviceTranslations         ServiceTranslation[]
   flashPieceTranslations      FlashPieceTranslation[]
+  reminders                   StudioReminder[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -1736,6 +1737,11 @@ model Appointment {
   reminderWeekSentAt        DateTime?
   reminderNightBeforeSentAt DateTime?
   reminderMorningOfSentAt   DateTime?
+  // Package BJ: dedup for STUDIO-CONFIGURED reminders. The three
+  // columns above are the built-in cadence's dedup and stay as they
+  // are; a studio-defined reminder can't have a column of its own
+  // (there are arbitrarily many), so those dedup by row instead.
+  reminderSends             AppointmentReminderSend[]
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
@@ -3398,4 +3404,101 @@ model UserConversationState {
   @@index([conversationId])
   // Serves the pin-cap count (userId + isPinned) directly.
   @@index([userId, isPinned])
+}
+
+// ---------------------------------------------------------------------------
+// Package BJ: studio-configured reminders.
+//
+// The original reminder system (StudioSettings.reminderTemplates /
+// reminderSendTimes) is a FIXED set -- seven templates and four send times
+// under hardcoded JSON keys, editable but not extensible. These two models
+// add reminders a studio can create itself, and they are ADDITIVE: the
+// built-in cadence (week-before / night-before / morning-of / artist digest
+// / estimate follow-up) is untouched and still runs from those JSON blobs.
+//
+// Unifying the two was considered and deliberately not done in this package:
+// it would rewrite the live client-SMS send path for every existing studio
+// and require a backfill of every studio's current templates and times into
+// rows, for no behavior the owner asked for. The cost is that Defaults shows
+// two reminder groups. See REPORT.md.
+// ---------------------------------------------------------------------------
+
+enum ReminderAudience {
+  CLIENT
+  ARTIST
+}
+
+// A precondition evaluated per-appointment at send time. NONE is an
+// unconditional reminder (the cadence the built-ins already provide).
+// WAIVER_UNSIGNED is the reason this enum exists: the built-in reminders can
+// embed a {{waiverLink}} but fire whether or not the waiver was ever signed,
+// so "chase the client only while the waiver is actually outstanding" was not
+// expressible before this.
+enum ReminderCondition {
+  NONE
+  WAIVER_UNSIGNED
+}
+
+model StudioReminder {
+  id    String @id @default(cuid())
+  label String
+
+  audience  ReminderAudience  @default(CLIENT)
+  condition ReminderCondition @default(NONE)
+
+  // Whole days before the appointment's start date, compared as CIVIL DATES
+  // in the studio's own timezone (never as a 24h instant subtraction) -- 1
+  // means "the day before", 0 means "the day of". Same convention as the
+  // built-in cadence's reminderWeekBeforeDays/reminderNightBeforeDays.
+  offsetDays Int
+  // "HH:MM" in the studio's timezone, matched by isWithinSendWindow against
+  // the 15-minute ticker exactly as reminderSendTimes' four slots are.
+  sendTime   String
+
+  // Plain-text SMS with {{placeholder}} tokens, rendered by the same
+  // renderTemplate as the built-ins -- one render implementation, not two.
+  body String
+
+  enabled Boolean @default(true)
+
+  // Seeded by the package's own backfill rather than authored by the studio.
+  // The studio can edit or disable it like any other; it is marked only so
+  // the backfill is re-runnable without creating duplicates, and so the UI
+  // can explain where it came from.
+  isSystem Boolean @default(false)
+  // Stable identity for a seeded reminder, unique per studio. Null for
+  // anything a studio created itself.
+  systemKey String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  sends AppointmentReminderSend[]
+
+  @@unique([studioId, systemKey])
+  @@index([studioId])
+}
+
+// One row per (appointment, reminder) that actually sent. Existence IS the
+// dedup -- the unique constraint is what stops a second 15-minute tick inside
+// the same send window from re-sending, the same job the built-in cadence's
+// reminder*SentAt columns do for their three.
+model AppointmentReminderSend {
+  id     String   @id @default(cuid())
+  sentAt DateTime @default(now())
+
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  // Cascade: deleting a reminder the studio no longer wants shouldn't be
+  // blocked by its own send history, and the history has no meaning without
+  // the reminder it refers to.
+  reminderId String
+  reminder   StudioReminder @relation(fields: [reminderId], references: [id], onDelete: Cascade)
+
+  @@unique([appointmentId, reminderId])
+  @@index([reminderId])
 }

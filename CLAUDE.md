@@ -9,6 +9,23 @@ Concise operating rules, not a project history — see REPORT.md for history.
   Use `prisma migrate diff` to generate the SQL, then `prisma migrate deploy` to apply it.
 - **Never accept a database reset, ever.** If any tool or prompt offers to reset the dev database,
   decline. There is no scenario in this repo where that's the right call.
+- **Always read `migrate diff`'s SQL before applying it — it will try to DROP a table you did not
+  touch.** This repo's databases contain a `migrations` table in `public` that belongs to a
+  third-party library (rows named `add-db-functions-*`), not to Prisma. It is not in
+  `schema.prisma`, so `prisma migrate diff --from-config-datasource` — which diffs the LIVE
+  database — faithfully reports it as "extra" and emits `DROP TABLE "migrations";` at the top of
+  every generated migration. Delete that statement by hand before `migrate deploy`; keeping it
+  would drop another library's migration tracker. Confirmed in Package BJ, and it will recur for
+  every future schema change generated this way.
+- The alternative generation path that would not see it, `--from-migrations`, needs
+  `datasource.shadowDatabaseUrl` in `prisma.config.ts`, which this repo does not set. So the
+  live-datasource diff plus a manual read of the SQL is the working procedure, not a shortcut.
+- Prisma 7 renamed the flags: `--from-config-datasource` / `--to-schema` (the older
+  `--from-schema-datasource` / `--to-schema-datamodel` fail with a usage dump).
+- **Do not run `prisma format`.** It reflows column alignment across models you never touched and
+  rewrites the file's CRLF line endings to LF — in Package BJ it turned a 103-line additive diff
+  into 165 insertions / 62 deletions of unrelated whitespace. Use `prisma validate`, which checks
+  the schema without rewriting it, and align new blocks by hand to match their neighbours.
 
 ## REPORT.md
 

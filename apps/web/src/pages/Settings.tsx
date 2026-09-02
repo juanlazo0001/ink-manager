@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'r
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import Modal from '../components/Modal'
+import StudioRemindersCard from '../components/StudioRemindersCard'
 import RichTextEditor from '../components/RichTextEditor'
 import PhoneInput from '../components/PhoneInput'
 import IntakeFormsManager from '../components/IntakeFormsManager'
@@ -2952,6 +2953,14 @@ export default function Settings() {
                 )}
               </div>
             </div>
+          )}
+
+          {activeTab === 'defaults' && canViewPolicies && policies && (
+            <StudioRemindersCard
+              canManage={canManageDefaults}
+              isEditorial={isEditorial}
+              timezoneLabel={timezoneLabel(policies.timezone)}
+            />
           )}
 
           {activeTab === 'policies' && canViewPolicies && (

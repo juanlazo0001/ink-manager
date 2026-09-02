@@ -25,6 +25,7 @@ import { publicRouter as depositsRouter, staffRouter as depositFormsRouter } fro
 import uploadsRouter from "./routes/uploads";
 import auditRouter from "./routes/audit";
 import { publicRouter as studioSettingsPublicRouter, staffRouter as studioSettingsStaffRouter } from "./routes/studioSettings";
+import { studioRemindersRouter } from "./routes/studioReminders";
 import { publicRouter as giftCardsPublicRouter, staffRouter as giftCardsStaffRouter } from "./routes/giftCards";
 import scanRouter from "./routes/scan";
 import { publicRouter as waiversPublicRouter, staffRouter as waiversStaffRouter } from "./routes/waivers";
@@ -144,6 +145,7 @@ app.use("/audit", auditRouter);
 // must be reachable before the staff router's requireAuth.
 app.use("/studio-settings", studioSettingsPublicRouter);
 app.use("/studio-settings", studioSettingsStaffRouter);
+app.use("/studio-reminders", studioRemindersRouter);
 // Public router first: /gift-cards/view/:code must match before the
 // staff router's /gift-cards/:id would otherwise swallow it.
 app.use("/gift-cards", giftCardsPublicRouter);

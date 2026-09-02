@@ -6,6 +6,7 @@
 import "./giftCardExpirationSweep";
 import "./coldLeadSweep";
 import "./reminderTicker";
+import "./customReminderTicker";
 import "./emailPoller";
 import "./smsDeliveryStatusReconcile";
 import "./pushReceiptCheck";
