@@ -54,6 +54,7 @@ import ConversationsPanel from './components/ConversationsPanel'
 import TopBar from './components/TopBar'
 import ViewAsBanner from './components/ViewAsBanner'
 import ErrorBoundary from './components/ErrorBoundary'
+import DropdownDebugOverlay from './components/DropdownDebugOverlay'
 
 // The authenticated app shell (AppShellLayout: persistent Sidebar +
 // every protected page) is ONE first-path-segment set -- keying the
@@ -257,6 +258,10 @@ function App() {
       <ErrorBoundary label="App">
         <AppRoutes />
       </ErrorBoundary>
+      {/* Renders nothing unless the URL carries ?dropdownDebug=1 -- a
+          geometry readout for diagnosing dropdown placement on a real
+          phone, where simulating iOS has proved unreliable. */}
+      <DropdownDebugOverlay />
       <ViewAsBanner />
       <TopBar />
       <ConversationsPanel />

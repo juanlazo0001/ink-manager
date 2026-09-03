@@ -235,7 +235,7 @@ export default function ArtistWelcomeWizard() {
                 <img
                   src="/branding/logo-white-512.png"
                   alt="Ink Manager"
-                  className="h-10 w-auto object-contain"
+                  className="mx-auto block h-10 w-auto object-contain"
                 />
                 <h1 className="mt-3 text-xl font-bold text-fg">Welcome! Let's set up your artist profile.</h1>
                 <p className="mt-1 text-sm text-fg-secondary">

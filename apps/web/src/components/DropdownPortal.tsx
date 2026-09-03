@@ -24,6 +24,38 @@ interface DropdownPortalProps {
 
 const VIEWPORT_MARGIN = 8
 
+// The region the user can actually SEE, which on a phone is not the window.
+//
+// iOS Safari changes the visual viewport in two situations this component
+// keeps meeting, and in NEITHER of them does window.innerWidth/innerHeight
+// change:
+//   - the software keyboard opens (shrinks height, shifts offsetTop);
+//   - focusing an input under 16px auto-zooms (shrinks width AND height,
+//     and shifts offsetLeft/offsetTop as the page pans).
+//
+// `position: fixed` resolves against the LAYOUT viewport, and
+// getBoundingClientRect() is in those same coordinates, so offsetLeft/
+// offsetTop are what translate between "where the user is looking" and
+// "where a fixed element has to be put". Every read below goes through here
+// so the two axes cannot drift apart again -- the vertical axis was made
+// visualViewport-aware first and the horizontal one was left on
+// window.innerWidth, which is its own bug on a zoomed page.
+function visibleBand() {
+  const vv = window.visualViewport
+  const left = vv?.offsetLeft ?? 0
+  const top = vv?.offsetTop ?? 0
+  const width = vv?.width ?? window.innerWidth
+  const height = vv?.height ?? window.innerHeight
+  return {
+    left: left + VIEWPORT_MARGIN,
+    right: left + width - VIEWPORT_MARGIN,
+    top: top + VIEWPORT_MARGIN,
+    bottom: top + height - VIEWPORT_MARGIN,
+    width,
+    height,
+  }
+}
+
 // Validation pass finding: the Send-channel picker's own menu shipped
 // completely invisible the first time -- floating unstyled text
 // overlapping whatever was underneath it -- because this component
@@ -81,21 +113,10 @@ export default function DropdownPortal({
 
     function place() {
       const rect = anchor!.getBoundingClientRect()
+      const band = visibleBand()
 
-      // The VISIBLE band, which is not the same as the window on a phone.
-      // When iOS raises the keyboard, window.innerHeight does not change --
-      // only visualViewport does. `position: fixed` resolves against the
-      // LAYOUT viewport, so a panel placed from window.innerHeight happily
-      // lands behind the keyboard, or off-screen entirely. visualViewport's
-      // offsetTop/height describe where the user can actually see.
-      const vv = window.visualViewport
-      const viewTop = vv?.offsetTop ?? 0
-      const viewHeight = vv?.height ?? window.innerHeight
-      const bandTop = viewTop + VIEWPORT_MARGIN
-      const bandBottom = viewTop + viewHeight - VIEWPORT_MARGIN
-
-      const spaceBelow = bandBottom - rect.bottom - 4
-      const spaceAbove = rect.top - 4 - bandTop
+      const spaceBelow = band.bottom - rect.bottom - 4
+      const spaceAbove = rect.top - 4 - band.top
       // Only flip to opening upward if there's genuinely more room that
       // way -- a trigger with little room on EITHER side (a short
       // viewport, not just a low-on-the-page trigger) should still just
@@ -105,23 +126,39 @@ export default function DropdownPortal({
 
       const height = Math.max(0, Math.min(maxHeightCap, openUpward ? spaceAbove : spaceBelow))
 
-      // Always positioned by `top`, then CLAMPED into the band. The previous
+      // Always positioned by `top`, then CLAMPED into the band. An earlier
       // version anchored upward with `bottom: innerHeight - rect.top + 4`,
       // which goes NEGATIVE as soon as the anchor sits below the visible
-      // area -- exactly what happens with the keyboard up -- and a negative
-      // bottom pushes the panel off the bottom of the screen. Measured at
-      // top:554 in a 330px-tall viewport: present in the DOM, with all 19
-      // options, and completely invisible. Same lesson as the mobile
-      // tapback row in CLAUDE.md: an offset from the anchor is not a
-      // position until it has been clamped against what else is on screen.
+      // area -- exactly what the keyboard causes -- and a negative bottom
+      // pushes the panel off the bottom of the screen. Measured at top:554
+      // in a 330px-tall viewport: present in the DOM, with all 19 options,
+      // and completely invisible. Same lesson as the mobile tapback row in
+      // CLAUDE.md: an offset from the anchor is not a position until it has
+      // been clamped against what else is on screen.
       const rawTop = openUpward ? rect.top - 4 - height : rect.bottom + 4
-      const top = Math.min(Math.max(rawTop, bandTop), Math.max(bandTop, bandBottom - height))
+      const top = Math.min(Math.max(rawTop, band.top), Math.max(band.top, band.bottom - height))
+
+      // Horizontal now gets the SAME band. Clamping this axis against
+      // window.innerWidth while the vertical axis used visualViewport was
+      // its own defect: on a zoomed page the visible strip starts at
+      // visualViewport.offsetLeft, so a panel at the anchor's rect.left can
+      // sit outside it entirely while looking perfectly in-bounds by
+      // innerWidth.
+      const bandWidth = Math.max(0, band.right - band.left)
+
+      // CSS `right` is measured from the LAYOUT viewport's right edge, which
+      // is what documentElement.clientWidth describes -- not innerWidth, and
+      // not the band.
+      const layoutWidth = document.documentElement.clientWidth
 
       setStyle({
         position: 'fixed',
         top,
-        ...(align === 'start' ? { left: rect.left } : { right: window.innerWidth - rect.right }),
-        ...(matchWidth ? { width: rect.width } : {}),
+        ...(align === 'start'
+          ? { left: Math.max(band.left, Math.min(rect.left, band.right)) }
+          : { right: Math.max(0, layoutWidth - Math.min(rect.right, band.right)) }),
+        ...(matchWidth ? { width: Math.min(rect.width, bandWidth) } : {}),
+        maxWidth: bandWidth,
         maxHeight: height,
       })
     }
@@ -182,7 +219,8 @@ export default function DropdownPortal({
     const panel = panelRef.current
     if (!panel) return
 
-    const available = window.innerWidth - VIEWPORT_MARGIN * 2
+    const band = visibleBand()
+    const available = Math.max(0, band.right - band.left)
     const rect = panel.getBoundingClientRect()
 
     let nextLeft = style.left
@@ -191,12 +229,14 @@ export default function DropdownPortal({
 
     if (rect.width > available) nextMaxWidth = available
 
-    if (rect.left < VIEWPORT_MARGIN) {
-      nextLeft = VIEWPORT_MARGIN
+    // Corrections are expressed as a `left` inside the band, never as the
+    // left/right ping-pong this used to do -- see the loop note above.
+    if (rect.left < band.left) {
+      nextLeft = band.left
       nextRight = undefined
-    } else if (rect.right > window.innerWidth - VIEWPORT_MARGIN) {
-      nextRight = VIEWPORT_MARGIN
-      nextLeft = undefined
+    } else if (rect.right > band.right) {
+      nextLeft = Math.max(band.left, band.right - Math.min(rect.width, available))
+      nextRight = undefined
     }
 
     // The guard that makes this terminate. setStyle always produces a new
