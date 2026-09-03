@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "dev:web": "npm run dev --workspace=apps/web",
-    "dev:api": "npm run dev --workspace=apps/api"
+    "dev:api": "npm run dev --workspace=apps/api",
+    "check:imports": "node scripts/check-untracked-imports.mjs"
   }
 }

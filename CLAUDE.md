@@ -179,6 +179,14 @@ Concise operating rules, not a project history — see REPORT.md for history.
   fresh `npm ci` + build passes from that clean state.
 - An uncommitted-but-imported file has broken production twice in this repo's history. A diff
   review is not sufficient on its own — confirm with an actual clean-checkout build.
+- **`npm run check:imports` is part of the standard bar, and it is the cheap version of that
+  clean-checkout build.** It resolves every relative import against `git ls-files` rather than
+  against the filesystem — i.e. against what a fresh `git clone` would see — so an imported file
+  that exists only on this machine fails the check instead of failing production. Targets covered
+  by `.gitignore` are excluded via `git check-ignore`, so the generated Prisma client (137 correct
+  imports of a gitignored directory that `postinstall` recreates) does not produce noise.
+  Demonstrated red-then-green in Package BK on both a synthetic plant and three genuinely
+  uncommitted files it caught on its first run.
 - **A wrong field name inside a Prisma `where`/`include` is NOT caught by `tsc`.** Measured in
   Package BJ: `prisma.appointment.findMany({ where: { sends: { none: ... } } })` — where the real
   relation is `reminderSends` — compiled with **zero** TypeScript errors and threw
@@ -190,6 +198,32 @@ Concise operating rules, not a project history — see REPORT.md for history.
   `tsc` for `apps/api`) — not `tsc --noEmit -p .` alone. `--noEmit` on its own has already missed a
   real error (`ConversationsPanel.tsx`'s separate `Record<Tone, string>` maps needing a new `hold`
   key) that only the real `vite build` caught, after passing silently all session.
+
+## Debugging a crash you cannot reproduce
+
+- **The web ErrorBoundary reports itself now — use it before guessing.** A crash caught by
+  `apps/web/src/components/ErrorBoundary.tsx` POSTs `{message, stack, componentStack, boundary,
+  url, userAgent, viewport, appCommit, appBuiltAt}` to `POST /client-errors`, which logs it to the
+  Railway stream and stores a `ClientErrorReport` row. It also renders a **Details** disclosure on
+  the crash screen showing the message, the component stack and the build commit, so the person
+  hitting it can screenshot something useful.
+- **The bundle knows which commit it is.** `apps/web/vite.config.ts` defines `__APP_COMMIT__` /
+  `__APP_BUILT_AT__`, surfaced through `src/lib/buildInfo.ts`. "Is production running the code I
+  think it is?" is now a five-second check in the Details panel — it previously took downloading
+  the production bundle and grepping it for strings that only exist after a given commit, which is
+  genuinely how that question was answered once.
+- **Reproduce in the right ENGINE before concluding anything.** Package BK's crash was reported on
+  iOS Safari and had been investigated entirely in Chromium. Playwright ships WebKit:
+  `pw.webkit.launch()` with `pw.devices["iPhone 13"]` gives the Safari UA, a 390-wide viewport and
+  touch, and `tap()` rather than `click()`. That said, **Playwright WebKit is not iOS Safari** — no
+  real virtual keyboard, a different WebKit build, and none of the iOS-version-specific API gaps —
+  so a clean WebKit run narrows the field without clearing it.
+- **The deployed frontend can be tested against a LOCAL api with zero production writes**: load
+  the real `web.inkmanager.app` URL in Playwright and `page.route()` the API host to
+  `localhost:4000`, fulfilling with permissive CORS headers. That runs the exact deployed bytes
+  against dev data. Note the deployed bundle calls the raw Railway host
+  (`ink-manager-production-f981.up.railway.app`), **not** `api.inkmanager.app` — routing the wrong
+  host silently yields a 404 page rather than an error.
 
 ## Motion verification protocol
 

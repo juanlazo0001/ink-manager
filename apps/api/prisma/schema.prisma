@@ -348,6 +348,7 @@ model Studio {
   serviceTranslations         ServiceTranslation[]
   flashPieceTranslations      FlashPieceTranslation[]
   reminders                   StudioReminder[]
+  clientErrorReports          ClientErrorReport[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -544,6 +545,7 @@ model User {
   // Kept so "who assigned this to me" survives on the row rather than
   // only in the rendered sentence.
   actedNotifications Notification[] @relation("NotificationActor")
+  clientErrorReports ClientErrorReport[]
   pushTokens         PushToken[]
 
   initiatedTransfers        ArtistTransfer[]          @relation("TransferInitiatedBy")
@@ -3501,4 +3503,49 @@ model AppointmentReminderSend {
 
   @@unique([appointmentId, reminderId])
   @@index([reminderId])
+}
+
+// ---------------------------------------------------------------------------
+// Package BK: browser crash reports.
+//
+// The web ErrorBoundary rendered "let us know" and captured nothing, which
+// made a crash on a device nobody in the room owns unreproducible BY
+// CONSTRUCTION -- a specialties-field crash on production iOS Safari survived
+// a full session of investigation across two engines and two builds because no
+// error text ever reached anyone.
+//
+// appCommit is the field that matters most in a year: it answers "which build
+// was this?" without downloading the production bundle and grepping it for
+// marker strings, which is genuinely how that question was answered once.
+//
+// Both FKs are nullable and neither is required: the crashes most worth seeing
+// happen on public, unauthenticated pages (invite acceptance, waiver signing).
+// ---------------------------------------------------------------------------
+model ClientErrorReport {
+  id      String @id @default(cuid())
+  message String
+
+  stack          String?
+  componentStack String?
+  // Which ErrorBoundary caught it ("App", "ClientDetail", ...).
+  boundary       String?
+
+  url       String?
+  userAgent String?
+  viewport  String?
+
+  // The build the browser was running. See apps/web/src/lib/buildInfo.ts.
+  appCommit  String?
+  appBuiltAt String?
+
+  createdAt DateTime @default(now())
+
+  studioId String?
+  studio   Studio? @relation(fields: [studioId], references: [id])
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+  @@index([appCommit])
 }

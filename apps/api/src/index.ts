@@ -26,6 +26,7 @@ import uploadsRouter from "./routes/uploads";
 import auditRouter from "./routes/audit";
 import { publicRouter as studioSettingsPublicRouter, staffRouter as studioSettingsStaffRouter } from "./routes/studioSettings";
 import { studioRemindersRouter } from "./routes/studioReminders";
+import { clientErrorsRouter } from "./routes/clientErrors";
 import { publicRouter as giftCardsPublicRouter, staffRouter as giftCardsStaffRouter } from "./routes/giftCards";
 import scanRouter from "./routes/scan";
 import { publicRouter as waiversPublicRouter, staffRouter as waiversStaffRouter } from "./routes/waivers";
@@ -146,6 +147,9 @@ app.use("/audit", auditRouter);
 app.use("/studio-settings", studioSettingsPublicRouter);
 app.use("/studio-settings", studioSettingsStaffRouter);
 app.use("/studio-reminders", studioRemindersRouter);
+// Package BK: browser crash reports. Public by design -- the crashes most
+// worth seeing happen on unauthenticated pages.
+app.use("/client-errors", clientErrorsRouter);
 // Public router first: /gift-cards/view/:code must match before the
 // staff router's /gift-cards/:id would otherwise swallow it.
 app.use("/gift-cards", giftCardsPublicRouter);
