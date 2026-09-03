@@ -38351,3 +38351,62 @@ servers left running.
 ## Status
 
 Branch `session/bn-dropdown-visible-logo`, commit `1cac0e9`.
+
+
+# Session BO — the same dropdown, a third time, and the instrument that should end it
+
+## What was still wrong
+
+BN made the **vertical** axis visualViewport-aware and left the **horizontal** one on
+`window.innerWidth`. That is its own defect on a zoomed page: Safari's focus auto-zoom does not
+merely shrink the visual viewport, it **pans** it, so the visible strip begins at
+`visualViewport.offsetLeft`. A panel placed at the anchor's `rect.left` can therefore sit entirely
+outside what the user can see while looking perfectly in-bounds by `innerWidth` — present in the
+DOM, correct by every desktop measure, invisible on the phone.
+
+Both axes now read from a single `visibleBand()` helper (`offsetLeft`/`offsetTop`/`width`/`height`),
+so they cannot drift apart again. The two-pass placement is kept, because a panel's width is not
+knowable until it renders unless `matchWidth` pins it — but **both** passes now clamp against the
+band rather than one using the band and the other using the window.
+
+**Demonstrated:** with the visual viewport panned to `offsetLeft 60`, the panel moves to `left 68`
+(band edge + margin) instead of remaining at the anchor's `49`, which is outside the band. Vertical
+keyboard behaviour and the desktop baseline are unchanged in the same run.
+
+## The honest part
+
+**This field has now been fixed three times from a simulation, and the owner has had to report it
+three times.** Each fix was correct about a real defect — the #185 loop, the negative `bottom`, and
+now the un-panned horizontal axis — and each time the model of iOS Safari was one property short of
+the device. Chromium was never going to show any of them, and Playwright's WebKit models the engine
+but not the platform: no focus auto-zoom, no software keyboard, no visual-viewport panning.
+
+So this session also ships the thing that stops the loop.
+
+## `?dropdownDebug=1`
+
+A read-only geometry overlay, mounted app-wide but rendering **nothing** without the query flag,
+`pointer-events: none`, and refreshed on `visualViewport` resize/scroll. It prints:
+
+- `window` size vs `visualViewport` size, offset and **scale**
+- the anchor's box and the panel's box
+- a verdict: **INSIDE band** / **OUTSIDE band**
+
+Which converts "the dropdown is not popping up correctly" into numbers from the actual device. If
+the placement is still wrong, the next round starts from a measurement instead of a fourth guess.
+Verified off by default and on with the flag. **Remove once the placement is confirmed good
+on-device.**
+
+## Also
+
+The wizard logo is centred in the card — measured, image midpoint 195 against card midpoint 195.
+
+## Verification
+
+`npm run check:imports` OK — and it earned its keep for the third time, catching the new overlay as
+an uncommitted import before the commit. `apps/api` `tsc`; `apps/web` `tsc -b && vite build`. Probe
+accounts removed from dev; no servers left running.
+
+## Status
+
+Branch `session/bo-dropdown-visualviewport`, commit `0dd6a06`.
