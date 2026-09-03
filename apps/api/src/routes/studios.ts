@@ -1016,12 +1016,33 @@ async function gatherStaffDeletionSummary(userId: string) {
   // workflow history worth protecting, not just an FK technicality.
   let artistAppointments = 0;
   let artistAssignedInquiries = 0;
+  // Everything below RESTRICTs on Artist and so must be cleared before it can
+  // be deleted. They are counted here so the delete-preview can say what is
+  // about to go, and so artistTransfers can be BLOCKED rather than destroyed.
+  let artistTransfers = 0;
+  let artistMemberships = 0;
+  let artistResidencies = 0;
+  let artistServices = 0;
+  let artistFlashPieces = 0;
   if (artist) {
-    [artistAppointments, artistAssignedInquiries] = await Promise.all([
+    [
+      artistAppointments,
+      artistAssignedInquiries,
+      artistTransfers,
+      artistMemberships,
+      artistResidencies,
+      artistServices,
+      artistFlashPieces,
+    ] = await Promise.all([
       prisma.appointment.count({ where: { artistId: artist.id } }),
       prisma.inquiry.count({
         where: { OR: [{ assignedArtistId: artist.id }, { preferredArtistId: artist.id }] },
       }),
+      prisma.artistTransfer.count({ where: { artistId: artist.id } }),
+      prisma.studioMembership.count({ where: { artistId: artist.id } }),
+      prisma.residency.count({ where: { artistId: artist.id } }),
+      prisma.artistService.count({ where: { artistId: artist.id } }),
+      prisma.flashPiece.count({ where: { artistId: artist.id } }),
     ]);
   }
 
@@ -1029,6 +1050,13 @@ async function gatherStaffDeletionSummary(userId: string) {
     isArtist: !!artist,
     artistAppointments,
     artistAssignedInquiries,
+    // Hard-blocks the delete (see blockedByArtistTransfers).
+    artistTransfers,
+    // Deleted with the artist -- surfaced so the preview is honest about it.
+    artistMemberships,
+    artistResidencies,
+    artistServices,
+    artistFlashPieces,
     // Preserved (nullable author/creator), not destroyed:
     giftCardsIssued,
     inquiryNotes,
@@ -1049,6 +1077,19 @@ async function gatherStaffDeletionSummary(userId: string) {
 
 function blockedByArtistHistory(summary: { isArtist: boolean; artistAppointments: number; artistAssignedInquiries: number }) {
   return summary.isArtist && (summary.artistAppointments > 0 || summary.artistAssignedInquiries > 0);
+}
+
+// A transfer is the record of this artist moving between TWO studios, and
+// ArtistTransferClient hangs off it. Deleting those rows to clear the way for
+// an artist delete would silently erase the other studio's own audit trail,
+// which is not this route's to destroy -- so it refuses, the same way it
+// refuses for appointment history, and says to deactivate instead.
+//
+// Blocking (rather than cascading) is also strictly better than what shipped
+// before: previously this case reached artist.delete() and died on a raw
+// P2003 the caller saw as a generic 500.
+function blockedByArtistTransfers(summary: { isArtist: boolean; artistTransfers: number }) {
+  return summary.isArtist && summary.artistTransfers > 0
 }
 
 // OWNER only, always available regardless of attached history (except the
@@ -1082,6 +1123,10 @@ router.get("/:studioId/users/:userId/delete-preview", requireAuth, requirePermis
     isSelf: userId === req.user!.userId,
     isLastActiveOwner,
     blockedByArtistHistory: blockedByArtistHistory(summary),
+    // Must be reported here as well as enforced on DELETE: without it the
+    // preview would promise "this will permanently remove..." and the delete
+    // would then refuse, which is worse than either answer on its own.
+    blockedByArtistTransfers: blockedByArtistTransfers(summary),
   });
 });
 
@@ -1144,6 +1189,15 @@ router.delete("/:studioId/users/:userId", requireAuth, requirePermission("team.m
     });
   }
 
+  if (blockedByArtistTransfers(summary)) {
+    return res.status(400).json({
+      error:
+        `This artist has ${summary.artistTransfers} studio transfer(s) on record, which another studio's ` +
+        `history also depends on -- deleting them isn't supported here. ` +
+        `Deactivate their account instead (Edit → uncheck "Active").`,
+    });
+  }
+
   await prisma.$transaction(async (tx) => {
     // Ephemeral, per-user records with no value once the account is gone.
     await tx.taskDismissal.deleteMany({ where: { userId } });
@@ -1167,10 +1221,39 @@ router.delete("/:studioId/users/:userId", requireAuth, requirePermission("team.m
     await tx.personalTask.deleteMany({ where: { userId } });
 
     // Confirmed zero appointment/inquiry history above -- safe to remove
-    // the Artist profile itself along with its own ephemeral digest log.
-    if (summary.isArtist) {
-      await tx.artistReminderLog.deleteMany({ where: { artist: { userId } } });
-      await tx.artist.delete({ where: { userId } });
+    // the Artist profile itself along with everything that hangs off it.
+    //
+    // Every one of these RESTRICTs on Artist, so a missing line here is not a
+    // leak, it is a P2003 that fails the whole delete. That is exactly what
+    // was happening in production: this block deleted only the reminder log
+    // and then called artist.delete(), while StudioMembership -- which EVERY
+    // artist has, because it is how an artist belongs to a studio at all --
+    // still pointed at the row. Artist mobility added that table after this
+    // route was written and this path was never revisited, so permanently
+    // deleting any artist raised RestrictViolation.
+    //
+    // Order is derived from the live FK graph, deepest first: Residency
+    // blocks BOTH Artist and StudioMembership, so it has to precede both.
+    // Re-read inside the transaction and bail if it is somehow absent. This is
+    // NOT defensive noise: `deleteMany({ where: { artistId: undefined } })` is
+    // a delete with NO FILTER in Prisma, so a null id here would empty these
+    // tables for every studio. The id must be a real string or nothing runs.
+    const artistRow = summary.isArtist
+      ? await tx.artist.findUnique({ where: { userId }, select: { id: true } })
+      : null;
+
+    if (artistRow) {
+      const artistId = artistRow.id;
+      await tx.residency.deleteMany({ where: { artistId } });
+      await tx.studioMembership.deleteMany({ where: { artistId } });
+      await tx.artistService.deleteMany({ where: { artistId } });
+      // FlashPieceTranslation cascades with its piece, and Inquiry.flashPieceId
+      // is SET NULL -- an inquiry that referenced a flash design survives
+      // without it, same "content survives with a null reference" rule the
+      // rest of this route follows.
+      await tx.flashPiece.deleteMany({ where: { artistId } });
+      await tx.artistReminderLog.deleteMany({ where: { artistId } });
+      await tx.artist.delete({ where: { id: artistId } });
     }
 
     // GiftCard.issuedById, InquiryNote.authorId, AppointmentPhoto.

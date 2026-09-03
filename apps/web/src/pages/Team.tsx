@@ -90,9 +90,15 @@ interface StaffDeletePreview {
   dismissedDuplicatePairs: number
   prefillDrafts: number
   importBatches: number
+  artistTransfers: number
+  artistMemberships: number
+  artistResidencies: number
+  artistServices: number
+  artistFlashPieces: number
   isSelf: boolean
   isLastActiveOwner: boolean
   blockedByArtistHistory: boolean
+  blockedByArtistTransfers: boolean
 }
 
 const DELETE_CONFIRM_TEXT = 'DELETE'
@@ -2067,13 +2073,36 @@ export default function Team() {
             </div>
           )}
 
-          {deletePreview && !deletePreview.isLastActiveOwner && !deletePreview.blockedByArtistHistory && (
+          {deletePreview &&
+            !deletePreview.isLastActiveOwner &&
+            !deletePreview.blockedByArtistHistory &&
+            deletePreview.blockedByArtistTransfers && (
+              <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
+                This artist has {deletePreview.artistTransfers} studio transfer
+                {deletePreview.artistTransfers === 1 ? '' : 's'} on record, which another studio's history also
+                depends on — deleting them isn't supported here. Deactivate their account instead (Edit → uncheck
+                "Active").
+              </div>
+            )}
+
+          {deletePreview &&
+            !deletePreview.isLastActiveOwner &&
+            !deletePreview.blockedByArtistHistory &&
+            !deletePreview.blockedByArtistTransfers && (
             <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3 text-sm">
               <p className="mb-2 text-xs font-medium uppercase tracking-wider text-fg-muted">
                 This will permanently remove
               </p>
               <ul className="space-y-1 text-fg-secondary">
                 <li>The account itself, and its Artist profile{deletePreview.isArtist ? '' : ' (n/a)'}</li>
+                {deletePreview.isArtist && (
+                  <li>
+                    Their studio membership{deletePreview.artistMemberships === 1 ? '' : 's'}
+                    {deletePreview.artistResidencies > 0 && `, ${deletePreview.artistResidencies} residency record${deletePreview.artistResidencies === 1 ? '' : 's'}`}
+                    {deletePreview.artistServices > 0 && `, ${deletePreview.artistServices} service assignment${deletePreview.artistServices === 1 ? '' : 's'}`}
+                    {deletePreview.artistFlashPieces > 0 && `, and ${deletePreview.artistFlashPieces} flash piece${deletePreview.artistFlashPieces === 1 ? '' : 's'}`}
+                  </li>
+                )}
                 <li>
                   {deletePreview.personalTasksOwn} of their own personal task
                   {deletePreview.personalTasksOwn === 1 ? '' : 's'}
