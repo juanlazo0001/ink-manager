@@ -38069,3 +38069,96 @@ exit 0).
 - **The original crash is not fixed, because it was never reproduced.** What is shipped is the
   ability to diagnose it the moment it next happens: the owner will be able to tap **Details** and
   screenshot the message and the build commit, and the same report will already be in the database.
+
+
+# Session BL — permanently deleting an artist was impossible
+
+Not a briefed session. Found while checking why the BK deploy had not landed: the production API's
+own logs were throwing, live.
+
+```
+Invalid `prisma.artist.delete()` invocation:
+  at async /app/dist/src/routes/studios.js:993:13
+  code: 'P2003'   (RestrictViolation)
+```
+
+## The defect
+
+`DELETE /studios/:studioId/users/:userId` guards on appointment and inquiry history, deletes the
+ephemeral per-user rows, then clears `ArtistReminderLog` and calls `artist.delete()`. Five other
+tables still referenced the row, every one of them `RESTRICT`:
+
+`StudioMembership` · `Residency` · `ArtistService` · `FlashPiece` · `ArtistTransfer`
+
+`StudioMembership` is the decisive one. An artist belongs to a studio *through* a membership, so
+**every** artist has at least one — which means permanently deleting **any** artist failed, always.
+Black Hive's seven artists held fifteen memberships between them.
+
+This is the repo's recurring shape: artist mobility introduced `StudioMembership` after this route
+was written, and the deletion path was never revisited. Stale code meeting a new foreign key.
+
+## The fix
+
+Ordering was taken from querying the **live FK graph**, not from memory — `Residency` blocks *both*
+`Artist` and `StudioMembership`, so it has to precede both. Removed with the profile, in order:
+`Residency` → `StudioMembership` → `ArtistService` → `FlashPiece` → `ArtistReminderLog` → `Artist`.
+
+`FlashPiece` is safe to delete: `FlashPieceTranslation` cascades with it, and `Inquiry.flashPieceId`
+is `SET NULL`, so an inquiry that referenced a design survives without it — the same "content
+survives with a null reference" rule the rest of the route already follows.
+
+**`ArtistTransfer` is BLOCKED, not cascaded.** A transfer is the record of this artist moving
+between *two* studios, and `ArtistTransferClient` hangs off it. Deleting those rows to clear the way
+would silently erase a second studio's audit trail, which is not this route's to destroy. It now
+refuses with a readable 400 pointing at deactivation — which is also strictly better than what
+shipped before, where this case reached `artist.delete()` and died on a P2003 the caller saw as a
+generic failure.
+
+The **preview** route reports `blockedByArtistTransfers` as well. Without that the dialog would
+promise *"this will permanently remove…"* and the delete would then refuse — worse than either
+answer on its own. `Team.tsx` renders the new block, and now also names what goes with the profile
+(memberships, residencies, service assignments, flash pieces) rather than just *"its Artist
+profile"*.
+
+## A much worse bug, nearly shipped inside the fix
+
+The first version passed `artistId ?? undefined` into `deleteMany`. **In Prisma an `undefined`
+filter means NO filter** — a null id would have emptied `Residency`, `StudioMembership`,
+`ArtistService` and `FlashPiece` for *every studio in the database*. Caught on re-reading my own
+edit before running it. The artist row is now re-read inside the transaction and nothing runs unless
+it is a real string, with the reasoning written at the call site so nobody "simplifies" it back.
+
+## Verification
+
+Tests are **integration** — real database, real router, real Express server — because the defect is
+a foreign-key constraint and a mocked Prisma would have happily passed the broken version. Fixtures
+are suffixed per run and torn down.
+
+| test | purpose |
+|---|---|
+| artist with a studio membership deletes | **the regression** |
+| artist with services and flash pieces deletes | the other RESTRICTs |
+| a non-artist staff member deletes | positive sibling |
+| artist with a transfer is refused, 400 | the guard this adds |
+
+**Falsifiability probe**: restoring the old two-line block turns the two artist-delete tests **red
+(2 fail)** while the non-artist delete and the transfer guard stay **green**; restoring the fix
+returns **4/4**. That is the signature of tests that fail on *this* defect and not on something
+else — a blanket refusal would have passed the two blocking tests and failed the two deletes.
+
+Also caught by running rather than reading: my first assertions expected `204`. The route answers
+`200 {"success":true}`. The tests were wrong, not the code — corrected to assert what it really
+does.
+
+- **277/277** API tests (273 before, +4 new). `api tsc`, `web tsc -b && vite build`,
+  `npm run check:imports` all clean.
+
+## Status
+
+Branch `session/bl-artist-delete-restrict`, commit `939f96f`.
+
+**Not deployed, and cannot be**: the Railway trial has expired (`Your trial has expired. Please
+select a plan to continue using Railway.`), which is also why BK never deployed — the API's most
+recent deployment is still `2026-09-02 19:08:57`, and no deployment was created for either push.
+Production keeps serving the old build, so **this fix does not reach the owner until a Railway plan
+is selected**. Until then, deleting an artist in production still fails.
