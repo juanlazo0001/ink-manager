@@ -38410,3 +38410,82 @@ accounts removed from dev; no servers left running.
 ## Status
 
 Branch `session/bo-dropdown-visualviewport`, commit `0dd6a06`.
+
+
+# Session BP — 16px inputs on mobile, and the parity run for it
+
+## The change
+
+`SpecialtiesInput`'s field and the onboarding wizard's bio textarea are now `text-base` on mobile,
+unchanged (`text-sm`) from the `sm` breakpoint up.
+
+This removes the **condition** behind three rounds of dropdown-placement bugs instead of defending
+against it a fourth time. iOS Safari auto-zooms when a focused input is under 16px; that zoom
+shrinks *and pans* the visual viewport, which is what kept putting `DropdownPortal`'s panel where
+the owner could not see it. No zoom, no shifted viewport, nothing to clamp against.
+
+**Both fields, deliberately.** Changing only the specialties input would not have worked: iOS zooms
+on the FIRST small field focused and does not undo it, so tapping Bio first left the page zoomed by
+the time the dropdown opened. A fix that leaves the neighbouring field at 14px is one that still
+fails half the time.
+
+### Measured across breakpoints (Chromium, one session)
+
+| viewport | specialties | bio |
+|---|---|---|
+| 390 | **16px** | **16px** |
+| 640 | 14px | 14px |
+| 1440 | 14px | 14px |
+
+Mobile clears Safari's threshold; the desktop design is untouched. Re-checked in WebKit on an
+iPhone profile: input 16px, panel 292x256 at top 251, all 19 options rendered.
+
+## Parity run
+
+Per CLAUDE.md's rule that a session changing a screen's visual design runs `tools/parity`:
+
+**12 screens, 0 drift findings** (role: owner).
+
+| screen | drift | pixel diff |
+|---|---|---|
+| Dashboard | 0 | 15.8% |
+| Pipeline | 0 | 17.2% |
+| Inquiry detail | 0 | 8.5% |
+| Clients | 0 | 19.8% |
+| Client detail | 0 | 8.9% |
+| Chat thread | 0 | 3.7% |
+| Tasks | 0 | 11.7% |
+| Schedule | 0 | 15.7% |
+| Flash gallery | 0 | 22.2% |
+| Team | 0 | 10.0% |
+| Settings | 0 | 10.6% |
+
+Pixel difference is context, not a verdict — two renderers are never identical, and the value tables
+are what decide. Those are clean. Run output is at `tools/parity/out/2026-09-03/owner/index.html`;
+that directory is gitignored on purpose, so the numbers live here rather than in the diff.
+
+**Stated plainly: the harness does not cover the screens this change touches.** `SpecialtiesInput`
+lives on `ArtistCreate`, `ArtistDetail` and the onboarding wizard, none of which are in the
+manifest, and the wizard has no mobile counterpart to compare against at all. So the run is a
+**no-regression check on the twelve covered screens**, not a measurement of this change — the
+breakpoint table above is what actually validates it. Reporting a clean parity run as if it
+validated this edit would be exactly the "it matches web" assertion the harness exists to replace.
+
+**No `expected-divergences.md` entry was added**, because no compared screen renders this component
+and the harness found nothing to declare. An entry for a divergence the harness cannot see would be
+noise in the manifest that a later session would have to reason about.
+
+## Not done
+
+The rest of the app's 14px inputs still zoom on iOS. A single global rule
+(`input, textarea, select { font-size: 16px }` under the mobile breakpoint) would close the class
+everywhere, but it is a far larger visual change than this request and would want its own parity
+pass across all twelve screens.
+
+Also still outstanding: `?dropdownDebug=1` from BO is still shipped. It should come out once the
+owner confirms the dropdown behaves on-device — which this change is intended to make
+straightforward, since with no zoom there is no shifted viewport to get wrong.
+
+## Status
+
+Branch `session/bp-input-16px-parity`, commit `a01053c`.
