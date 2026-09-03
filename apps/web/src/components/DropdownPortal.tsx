@@ -127,16 +127,57 @@ export default function DropdownPortal({
   // nudges it back on-screen -- guarded to only fire once the overflow
   // actually happens, so it's a no-op (no extra render) for every panel
   // that already fit.
+  // CRASHED PRODUCTION (React #185, "Maximum update depth exceeded"), iOS
+  // Safari only, reported from a real iPhone via the ErrorBoundary's new
+  // crash reporting. The version below used to write a NEW style object
+  // unconditionally while depending on `style`, so for a panel that CANNOT
+  // fit the viewport it ping-ponged forever: nudging it right made the left
+  // edge overflow, nudging it left made the right edge overflow, and each
+  // pass re-ran this effect.
+  //
+  // Why only iOS: the specialties input is 14px, under Safari's 16px
+  // threshold, so focusing it AUTO-ZOOMS the page. That shrinks
+  // window.innerWidth while the matchWidth panel keeps the anchor's layout
+  // width -- and a panel wider than the viewport is exactly the unfittable
+  // case. No desktop engine does that zoom, which is why Chromium and even
+  // Playwright's WebKit never reproduced it.
+  //
+  // Two changes make it converge: clamp the WIDTH (a panel constrained to
+  // the available space can satisfy both edges at once, so there is nothing
+  // to oscillate between), and only write when a value actually CHANGES.
   useLayoutEffect(() => {
     if (!open || !style) return
     const panel = panelRef.current
     if (!panel) return
+
+    const available = window.innerWidth - VIEWPORT_MARGIN * 2
     const rect = panel.getBoundingClientRect()
+
+    let nextLeft = style.left
+    let nextRight = style.right
+    let nextMaxWidth = style.maxWidth
+
+    if (rect.width > available) nextMaxWidth = available
+
     if (rect.left < VIEWPORT_MARGIN) {
-      setStyle((prev) => (prev ? { ...prev, left: VIEWPORT_MARGIN, right: undefined } : prev))
+      nextLeft = VIEWPORT_MARGIN
+      nextRight = undefined
     } else if (rect.right > window.innerWidth - VIEWPORT_MARGIN) {
-      setStyle((prev) => (prev ? { ...prev, right: VIEWPORT_MARGIN, left: undefined } : prev))
+      nextRight = VIEWPORT_MARGIN
+      nextLeft = undefined
     }
+
+    // The guard that makes this terminate. setStyle always produces a new
+    // object and this effect depends on `style`, so an unconditional write
+    // is an infinite render loop by construction -- no matter how correct
+    // the geometry above is.
+    if (nextLeft === style.left && nextRight === style.right && nextMaxWidth === style.maxWidth) {
+      return
+    }
+
+    setStyle((prev) =>
+      prev ? { ...prev, left: nextLeft, right: nextRight, maxWidth: nextMaxWidth } : prev,
+    )
   }, [open, style])
 
   useEffect(() => {
