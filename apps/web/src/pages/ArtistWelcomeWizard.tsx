@@ -250,7 +250,13 @@ export default function ArtistWelcomeWizard() {
                     value={bio}
                     onChange={(e) => setBio(e.target.value)}
                     placeholder="A short bio about you and your work…"
-                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    // 16px on mobile, unchanged from 640px up -- same reason as
+                    // the specialties input below it. Fixing only that one
+                    // would not have removed the zoom on this screen: iOS zooms
+                    // on the FIRST small field focused and does not undo it, so
+                    // tapping Bio first left the page zoomed by the time the
+                    // dropdown opened.
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-base text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent sm:text-sm"
                   />
                 </div>
 

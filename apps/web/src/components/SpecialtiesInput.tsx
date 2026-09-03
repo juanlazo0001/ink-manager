@@ -106,7 +106,13 @@ export default function SpecialtiesInput({ value, onChange }: SpecialtiesInputPr
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           onKeyDown={handleKeyDown}
           placeholder="Search or add a specialty…"
-          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          // 16px on mobile, unchanged from 640px up. iOS Safari AUTO-ZOOMS
+          // the page when a focused input is under 16px, and that zoom is
+          // what shrinks and pans the visual viewport underneath this
+          // field's dropdown -- the root condition behind three rounds of
+          // placement bugs (see DropdownPortal). Removing the trigger is
+          // cheaper than defending against it forever.
+          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-base text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent sm:text-sm"
         />
 
         <DropdownPortal
