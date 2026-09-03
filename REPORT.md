@@ -37935,3 +37935,137 @@ fixture, deliberately created and cleaned up — not a re-read of the code.
 
 Fix committed on the same branch. `apps/api` typechecks, `apps/web` builds, 273/273 still pass, and
 the job now runs to completion against dev.
+
+
+# Session BK — the crash that would not reproduce, and what to ship instead
+
+Brief: the specialties crash is on PRODUCTION (`web.inkmanager.app`) in iOS Safari; the prior
+investigation tested Chromium only. Four parts: settle what is deployed, reproduce in WebKit, make
+crashes self-reporting regardless of cause, and prevent the "imported but never committed" class.
+
+## Part 1 — what is deployed (settled)
+
+The deployed bundle is `index-DAuc4Wgb.js`. Two independent markers place it:
+
+- DropdownPortal's post-`cbb7cf4` default panel classes (`rounded-xl border border-border
+  bg-surface-raised p-1 shadow-xl`) — **present**.
+- The BJ reminder strings merged earlier the same day (`Your Reminders`, `Only if the waiver is
+  still unsigned`) — **present**.
+
+**Production is running current `main`.** The stale-deploy theory from the previous session is
+dead, and no redeploy was required. This also means the crash is real and engine-specific rather
+than a version skew.
+
+## Part 2 — reproduced in the right engine, and it did not crash
+
+Playwright ships WebKit, so the engine was testable. Every run used
+`pw.webkit.launch()` with the `iPhone 13` descriptor — Safari UA, 390-wide viewport, touch enabled,
+and `tap()` rather than `click()`.
+
+Two targets:
+
+1. **A local production build**, through the genuine invite flow (invite row written directly to
+   dev, no email sent): accept → `/welcome` → tap specialties.
+2. **The real deployed bytes.** `web.inkmanager.app` was loaded directly and its API host routed to
+   the local dev API via `page.route()` with permissive CORS on the fulfilled responses. That runs
+   the exact shipped JavaScript against dev data with **zero production writes** — worth recording
+   as a technique. One trap: the deployed bundle calls the raw Railway host
+   (`ink-manager-production-f981.up.railway.app`), **not** `api.inkmanager.app`; routing the wrong
+   host silently produces an "invite link is invalid" page rather than an error.
+
+Sequence exercised: tap, type, pick a suggestion, custom value + Enter, viewport shrink to simulate
+the keyboard, landscape rotate, tap outside. **No crash in any run, and zero console captures.**
+
+Two things that looked like findings and were not:
+
+- **CSP violations** appeared in WebKit (`Refused to apply a stylesheet…`) and never in Chromium.
+  Production sends **no CSP header at all**, and the same messages appear on the working local
+  build, so they are not the production difference.
+- **"tap suggestion" timed out** after shrinking the viewport to 380px. Measured rather than
+  assumed: the anchor sits at y=479 in a 380px viewport, i.e. off-screen, because a synthetic
+  `set_viewport_size` does not perform the scroll-into-view that real iOS Safari does on focus.
+  **A probe artifact, not a product bug.**
+
+**Honest limit: Playwright WebKit is not iOS Safari.** Different build, no real virtual keyboard,
+and none of the iOS-version-specific API gaps. A clean WebKit run narrows the field; it does not
+clear it. That is precisely why Part 3 was the right thing to ship.
+
+## Part 3 — never fly blind again
+
+The ErrorBoundary said *"let us know"* and captured **nothing**. That is the actual defect behind
+this whole episode: a crash on a device nobody in the room owns was unreproducible **by
+construction**, and two sessions were spent on archaeology that a single error string would have
+ended.
+
+Now:
+
+- `componentDidCatch` POSTs `{message, stack, componentStack, boundary, url, userAgent, viewport,
+  appCommit, appBuiltAt, timestamp}` to **`POST /client-errors`**, which logs to the Railway stream
+  *and* stores a `ClientErrorReport` row.
+- The crash screen gained a **Details** disclosure showing the message, the component stack and the
+  build commit — left-aligned and scrollable, because it exists to be screenshotted on a phone.
+- `vite.config.ts` defines `__APP_COMMIT__` / `__APP_BUILT_AT__` (surfaced via
+  `src/lib/buildInfo.ts`), so Part 1's bundle-grepping archaeology becomes a five-second check
+  forever.
+
+Deliberate choices worth keeping:
+
+- **The reporter does not use `apiFetch`.** That helper throws on non-2xx, redirects on 401 and
+  JSON-parses the response — a reporter that can throw inside an error handler turns one crash into
+  two. It is plain `fetch` with `keepalive`, deduped per message per page load, swallowing every
+  failure.
+- **The route is `optionalAuth`, not `requireAuth`.** The crashes most worth seeing happen on
+  public pages — invite acceptance, waiver signing, estimate views — where there is no token. An
+  authenticated report additionally records who it happened to.
+- Rate-limited through `makeLimiter` on the shared Postgres store, per CLAUDE.md.
+
+**Exercised end to end in WebKit**, not asserted: a deliberate render crash was planted, the build
+run, and the whole chain observed — crash screen → Details showing the message and `build
+1ed07847b53b` → `POST /client-errors` → **204** → a row in the database carrying the component
+stack, the iPhone user agent, `390x664`, and both `studioId` and `userId`. The plant was then
+reverted and the tree confirmed clean.
+
+## Part 4 — preventing the class
+
+`scripts/check-untracked-imports.mjs` resolves every relative import against **`git ls-files`**
+rather than the filesystem — that is, against what a fresh `git clone` would see — without paying
+for an actual clone. Wired in as `npm run check:imports` and added to CLAUDE.md's verification bar.
+
+Two refinements the first runs forced:
+
+- **`.gitignore` awareness.** The first run reported 141 problems, 137 of which were correct
+  imports of the *gitignored* generated Prisma client that `postinstall` recreates. Rather than
+  hardcoding directory names, unresolved targets are batched through one `git check-ignore --stdin`
+  call, so the check follows `.gitignore` as it changes. (It also needed repo-relative POSIX paths
+  — `check-ignore` silently matches nothing when fed absolute Windows paths.)
+- **Comment stripping.** Once the file was tracked it flagged its own doc-block examples. A
+  commented-out import is not a real import, so comments are stripped before matching — and the
+  planted case was re-run afterwards to prove the stripping had not blinded it.
+
+**It earned its place on its first run**, catching three genuinely uncommitted files belonging to
+this very commit — `buildInfo.ts`, `reportClientError.ts`, `clientErrors.ts`. That is exactly the
+failure that has broken production twice. Demonstrated red-then-green twice: on those three files,
+and on a deliberately planted untracked module (fails, exit 1; removed, `OK (611 files scanned)`,
+exit 0).
+
+## Verification
+
+- `npm run check:imports` — OK, 611 files.
+- `apps/api`: `tsc` clean; **273/273** tests pass.
+- `apps/web`: `tsc -b && vite build` clean.
+- WebKit/iPhone regression on the specialties flow after all changes: still no crash.
+- Migration `20260903090000_client_error_reports` applied to **DEV** (`hopper`). Additive only.
+  The generated SQL again contained `DROP TABLE "migrations"` for the third-party tracker, exactly
+  as CLAUDE.md now warns — stripped by hand, and the file says so inline. **The rule written last
+  session paid for itself on the very next migration.**
+
+## Status and what is NOT done
+
+- Branch `session/bk-specialties-webkit`, commit `0c4b8b8`, pushed. Touches `apps/api` and
+  `schema.prisma`, so per the standing rule it is **not** auto-merged.
+- **Production still has no `ClientErrorReport` table and no reporting**, because that arrives with
+  a deploy, and deploys happen on merge to `main`. Until then the next crash is as silent as the
+  last one. That is the argument for merging this promptly even though it fixes no visible bug.
+- **The original crash is not fixed, because it was never reproduced.** What is shipped is the
+  ability to diagnose it the moment it next happens: the owner will be able to tap **Details** and
+  screenshot the message and the build commit, and the same report will already be in the database.
