@@ -38260,3 +38260,94 @@ one field.
 ## Status
 
 Branch `session/bm-dropdown-update-loop`, commit `c6ee544`.
+
+
+# Session BN — the waiver seed, the invisible dropdown, and the wizard's fake spinner
+
+## 1. Waiver reminder seeded on PRODUCTION
+
+Run against `tokaido.proxy.rlwy.net:18346` (**production**), after a confirming dry run:
+
+```
+studios          : 10
+already had one  : 0
+created          : 10
+```
+
+A second run created **0**, confirming idempotency on `(studioId, systemKey)`. All ten rows verified
+present and `enabled`, `WAIVER_UNSIGNED`, `offsetDays 1`, `10:00` local. Item 1 of Package BJ is now
+actually live for every production studio — the reminder goes out the day before an appointment,
+only while that appointment's waiver is still unsigned.
+
+Recording the database explicitly, per CLAUDE.md: **production**, ten studios, ten rows. Dev was
+seeded separately on 2026-09-02 (128 studios).
+
+## 2. The specialties dropdown opened and showed nothing
+
+BM stopped the crash; the owner then reported the field no longer errored but produced no options.
+
+**The panel was in the DOM the whole time, with all 19 options.** It was placed off-screen.
+`place()` anchored an upward-opening panel with:
+
+```ts
+bottom: window.innerHeight - rect.top + 4
+```
+
+which goes **negative** the moment the anchor sits below the visible area — and a negative `bottom`
+pushes the panel off the bottom of the screen. Measured on the deployed geometry: **top 554 in a
+330px-tall viewport**.
+
+The trigger is the keyboard, and the reason it is iOS-specific is precise: **raising the keyboard
+does not change `window.innerHeight` on iOS** — only `visualViewport` does — while `position: fixed`
+resolves against the *layout* viewport. The old code therefore sized and placed the panel using a
+viewport that no longer existed.
+
+The fix takes the visible band from `visualViewport` (`offsetTop + height`, falling back to
+`innerHeight`), always positions by `top` rather than flipping to `bottom`, and **clamps** that top
+into the band. It also subscribes to `visualViewport`'s `resize`/`scroll`, which are the only events
+the keyboard fires — without them the panel is placed once from pre-keyboard geometry and never
+corrected.
+
+This is the same lesson CLAUDE.md already records for the mobile tapback row, now proven on web:
+**an offset from the anchor is not a position until it has been clamped against what else is on
+screen.**
+
+### Verified red/green on the deployed geometry
+
+WebKit, iPhone profile, overriding `visualViewport` the way the keyboard does:
+
+| condition | before | after |
+|---|---|---|
+| baseline | top 220, on-screen | top 220, on-screen |
+| zoom only (w 200) | top 220, on-screen | top 220, on-screen |
+| **zoom + keyboard** (w 200, h 330) | **top 554 — OFF-SCREEN** | **top 66 — on-screen** |
+| **keyboard only** (h 330) | **top 554 — OFF-SCREEN** | **top 66 — on-screen** |
+
+All four render 19 options throughout; the difference is purely *where*. Baseline and zoom-only are
+unchanged, which is exactly why this never appeared on desktop — and why BM's probe, which shrank
+only the **width**, saw a perfectly usable panel. Modelling the keyboard required overriding
+`visualViewport`, not `innerHeight`.
+
+## 3. The wizard's "loading icon" was a SparkleIcon
+
+The artist onboarding wizard opened with `SparkleIcon` — a ring of radiating lines — at 24px in
+gold, top-left. It reads as a **spinner**, and an invited artist's very first screen is the worst
+possible place to look like it is still loading.
+
+Replaced with the Ink Manager logo: the same `/branding/logo-white-512.png` every other entry screen
+uses (invite accept, sign-in, confirm email). Verified rendered at **107x40 with naturalWidth > 0**
+— an actual image, not a broken one — and screenshotted in WebKit.
+
+**Left alone:** the identical `SparkleIcon` on the wizard's final "done" step. It is centred and
+celebratory rather than occupying the spot a loading indicator would, and the report was
+specifically about the top-left one. Trivial to change if it reads the same way in use.
+
+## Verification
+
+`npm run check:imports` OK · `apps/api` `tsc` · `apps/web` `tsc -b && vite build` · both fixes
+screenshotted in WebKit on an iPhone profile. All probe accounts and invites removed from dev; no
+servers left running.
+
+## Status
+
+Branch `session/bn-dropdown-visible-logo`, commit `1cac0e9`.
