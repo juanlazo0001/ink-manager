@@ -38162,3 +38162,101 @@ select a plan to continue using Railway.`), which is also why BK never deployed 
 recent deployment is still `2026-09-02 19:08:57`, and no deployment was created for either push.
 Production keeps serving the old build, so **this fix does not reach the owner until a Railway plan
 is selected**. Until then, deleting an artist in production still fails.
+
+
+# Session BM — the specialties crash, found and fixed
+
+Two sessions ago this crash could not be reproduced in four browser/build combinations, and BK
+shipped instrumentation instead of a guess. The owner tapped **Details** on the crash screen and
+sent the contents. It named the bug in one line.
+
+```
+Minified React error #185
+build 32227d59ab11 · 2026-09-03T11:32:44.923Z
+... motion.div@https://web.inkmanager.app/assets/index-B9fiUpcz.js:19:9591 ...
+```
+
+React **#185** is *"Maximum update depth exceeded"* — an infinite render loop. The stack pointed at
+a framer-motion `motion.div` under `AnimatePresence`, which is `DropdownPortal`.
+
+## Root cause
+
+`DropdownPortal`'s horizontal-overflow correction depended on `style` **and** called `setStyle` with
+a brand-new object unconditionally:
+
+```ts
+useLayoutEffect(() => {
+  ...
+  if (rect.left < VIEWPORT_MARGIN)        setStyle(prev => ({ ...prev, left: 8,  right: undefined }))
+  else if (rect.right > innerWidth - 8)   setStyle(prev => ({ ...prev, right: 8, left: undefined }))
+}, [open, style])
+```
+
+For a panel that **cannot fit** the viewport this never converges:
+
+1. left edge overflows → anchor it left → new object → effect re-runs
+2. now the right edge overflows → anchor it right → new object → effect re-runs
+3. now the left edge overflows again → **forever**
+
+The old comment claimed it was *"a no-op for every panel that already fit"*. That was true — and
+there was no guard of any kind for a panel that **cannot** fit. Another accurate-when-written
+comment that stopped being the whole story, the defect class this repo keeps producing.
+
+## Why iOS Safari only — and why the previous session's WebKit run was clean
+
+The specialties input is **`text-sm` (14px)**, under Safari's 16px threshold, so **focusing it
+auto-zooms the page**. The zoom shrinks `window.innerWidth` while the `matchWidth` panel keeps the
+anchor's *layout* width — producing exactly the unfittable panel above.
+
+No desktop engine performs that zoom. **Neither does Playwright's WebKit.** That is precisely why
+BK's WebKit run against both a local build and the real deployed bytes came back clean, and why that
+session reported an honest non-reproduction rather than inventing a cause. The engine was right; the
+missing ingredient was iOS's focus zoom.
+
+## The fix
+
+Two changes, either of which alone would stop the loop; together they also make the panel *correct*
+rather than merely non-crashing:
+
+- **Clamp the panel's WIDTH** to `innerWidth - 2 * margin`. A panel constrained to the available
+  space can satisfy both edges at once, so there is nothing left to oscillate between.
+- **Only write when a value actually changes.** `setStyle` always produces a new object and this
+  effect depends on `style`, so an unconditional write is an infinite loop *by construction*, no
+  matter how correct the geometry is. This is the guard that makes it terminate.
+
+## Verified by reproducing it, not by reasoning
+
+Overriding `window.innerWidth` models Safari's zoom exactly — a viewport reported smaller than the
+laid-out page — so the bug becomes deterministic without a physical iPhone.
+
+| build | result |
+|---|---|
+| **pre-fix** (fix stashed, rebuilt) | **CRASHED** — `Minified React error #185` under `[ErrorBoundary:App]`, the owner's exact error |
+| **fixed** | no crash; dropdown opens, suggestions render |
+
+Geometry after the fix, under the same simulated zoom: `maxWidth 184px` against a reported 200px
+viewport, width 184, left edge on screen — **clamped and usable**, not just not-crashing. The
+ordinary un-zoomed interaction matrix (tap, type, pick, custom + Enter, rotate, tap outside) is
+unchanged.
+
+**277/277** API tests, `api tsc`, `web tsc -b && vite build`, `npm run check:imports` — all clean.
+
+## What this says about BK
+
+BK fixed nothing visible and was merged anyway. It paid for itself on its first real crash: the
+build stamp identified the exact deployed commit, the Details panel gave the error code and the
+component stack, and the two together turned a bug that had survived a full session of
+investigation into a ten-minute diagnosis. The argument for shipping instrumentation over a guess
+is now a matter of record rather than a hunch.
+
+## Deliberately not changed
+
+The **14px input that triggers the zoom**. Raising it to 16px (e.g. `text-base sm:text-sm`) would
+prevent Safari's auto-zoom outright and is worth doing on its own merits, but it is a visual design
+change and CLAUDE.md requires a parity run for those — out of scope for a crash fix. The loop fix
+makes the crash impossible regardless, and protects **every** dropdown in the app rather than this
+one field.
+
+## Status
+
+Branch `session/bm-dropdown-update-loop`, commit `c6ee544`.
