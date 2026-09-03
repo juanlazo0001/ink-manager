@@ -81,8 +81,21 @@ export default function DropdownPortal({
 
     function place() {
       const rect = anchor!.getBoundingClientRect()
-      const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_MARGIN
-      const spaceAbove = rect.top - VIEWPORT_MARGIN
+
+      // The VISIBLE band, which is not the same as the window on a phone.
+      // When iOS raises the keyboard, window.innerHeight does not change --
+      // only visualViewport does. `position: fixed` resolves against the
+      // LAYOUT viewport, so a panel placed from window.innerHeight happily
+      // lands behind the keyboard, or off-screen entirely. visualViewport's
+      // offsetTop/height describe where the user can actually see.
+      const vv = window.visualViewport
+      const viewTop = vv?.offsetTop ?? 0
+      const viewHeight = vv?.height ?? window.innerHeight
+      const bandTop = viewTop + VIEWPORT_MARGIN
+      const bandBottom = viewTop + viewHeight - VIEWPORT_MARGIN
+
+      const spaceBelow = bandBottom - rect.bottom - 4
+      const spaceAbove = rect.top - 4 - bandTop
       // Only flip to opening upward if there's genuinely more room that
       // way -- a trigger with little room on EITHER side (a short
       // viewport, not just a low-on-the-page trigger) should still just
@@ -90,14 +103,26 @@ export default function DropdownPortal({
       // where a user's thumb/eye already is.
       const openUpward = spaceBelow < 160 && spaceAbove > spaceBelow
 
+      const height = Math.max(0, Math.min(maxHeightCap, openUpward ? spaceAbove : spaceBelow))
+
+      // Always positioned by `top`, then CLAMPED into the band. The previous
+      // version anchored upward with `bottom: innerHeight - rect.top + 4`,
+      // which goes NEGATIVE as soon as the anchor sits below the visible
+      // area -- exactly what happens with the keyboard up -- and a negative
+      // bottom pushes the panel off the bottom of the screen. Measured at
+      // top:554 in a 330px-tall viewport: present in the DOM, with all 19
+      // options, and completely invisible. Same lesson as the mobile
+      // tapback row in CLAUDE.md: an offset from the anchor is not a
+      // position until it has been clamped against what else is on screen.
+      const rawTop = openUpward ? rect.top - 4 - height : rect.bottom + 4
+      const top = Math.min(Math.max(rawTop, bandTop), Math.max(bandTop, bandBottom - height))
+
       setStyle({
         position: 'fixed',
-        ...(openUpward
-          ? { bottom: window.innerHeight - rect.top + 4 }
-          : { top: rect.bottom + 4 }),
+        top,
         ...(align === 'start' ? { left: rect.left } : { right: window.innerWidth - rect.right }),
         ...(matchWidth ? { width: rect.width } : {}),
-        maxHeight: Math.max(0, Math.min(maxHeightCap, openUpward ? spaceAbove : spaceBelow)),
+        maxHeight: height,
       })
     }
 
@@ -108,9 +133,16 @@ export default function DropdownPortal({
     // of place under its trigger as soon as any ancestor scrolled.
     window.addEventListener('scroll', place, true)
     window.addEventListener('resize', place)
+    // The keyboard opening fires NEITHER of the two above on iOS -- it is a
+    // visualViewport event and nothing else. Without these the panel is
+    // placed once, from the pre-keyboard geometry, and never corrected.
+    window.visualViewport?.addEventListener('resize', place)
+    window.visualViewport?.addEventListener('scroll', place)
     return () => {
       window.removeEventListener('scroll', place, true)
       window.removeEventListener('resize', place)
+      window.visualViewport?.removeEventListener('resize', place)
+      window.visualViewport?.removeEventListener('scroll', place)
     }
   }, [open, anchorRef, align, matchWidth, maxHeightCap])
 

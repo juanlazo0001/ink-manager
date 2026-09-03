@@ -224,7 +224,19 @@ export default function ArtistWelcomeWizard() {
           >
             {step === 'bio' && (
               <div>
-                <SparkleIcon className="h-6 w-6 text-accent" />
+                {/* Was a SparkleIcon -- a ring of radiating lines, which at
+                    24px in gold reads as a loading spinner rather than a
+                    flourish, and an invited artist's very first screen is
+                    the worst place to look like it is still loading. The
+                    logo is also the more useful thing to show someone who
+                    has just accepted an invite to a product they have never
+                    seen. Same asset every other unauthenticated-entry screen
+                    uses (invite accept, sign-in, confirm-email). */}
+                <img
+                  src="/branding/logo-white-512.png"
+                  alt="Ink Manager"
+                  className="h-10 w-auto object-contain"
+                />
                 <h1 className="mt-3 text-xl font-bold text-fg">Welcome! Let's set up your artist profile.</h1>
                 <p className="mt-1 text-sm text-fg-secondary">
                   A bio and a few specialties help clients (and your studio) get to know your work. Every step here
