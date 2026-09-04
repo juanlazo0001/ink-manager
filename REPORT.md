@@ -38489,3 +38489,130 @@ straightforward, since with no zoom there is no shifted viewport to get wrong.
 ## Status
 
 Branch `session/bp-input-16px-parity`, commit `a01053c`.
+
+
+# Session BL-2 — ThreadAvatar's launch crash (branch `session/bl-thread-avatar-crash`)
+
+*Letter note: the brief called this BL, which an earlier session in this run already used for the
+artist-delete fix. Keeping the brief's branch name and disambiguating the section title, rather than
+having two BL entries.*
+
+## 1. Root cause — found by reading, not guarding
+
+```js
+const group = !!participants && participants.length > 0;     // TRUE for ONE
+...
+participants.length > 2 ? <count/> : <Avatar url={participants[1].avatarUrl} .../>
+```
+
+A one-element array takes the group path, fails `length > 2`, and dereferences
+`participants[1]` — undefined. The conversation list renders **every** row and React unmounts the
+whole tree when nothing catches, so one such thread killed the app **at launch**, not just the chat
+tab.
+
+**A one-element array is the common case, not an edge case.** `routes/conversations.ts` builds
+`participants` as everyone *except the viewer*, so **any two-person group** gives both of its members
+exactly one.
+
+**When it became possible:** `6a9bd93` (chat-ux-07-b, 2026-08-26), and it was wrong in that
+commit's first version — the duo-stack was written assuming two while the test required one. Not a
+payload regression; no wire shape changed under it. The brief's hypotheses (deleted client, system
+thread, departed participant, a pin/mute payload change) are all ruled out by that history.
+
+## 2. I could not reproduce the owner's crash — stated plainly
+
+Both databases were checked read-only for the only shape that can trigger it:
+
+| database | GROUP threads | members | verdict |
+|---|---|---|---|
+| production | 2 | 1 and 3 | both safe |
+| dev | 1 | 4 | safe |
+
+The owner's own thread has **3 members**, which gives every viewer `participants=2` — handled
+correctly by the duo-stack. A 1-member thread yields `participants=[]`, which never enters the group
+branch.
+
+So: a real, trivially reachable launch crash is fixed, but **whether it is the crash reported is
+unconfirmed.** Creating one group with one other person is enough to trigger it, so it may have been
+hit and the thread since changed — but that is speculation, and this report will not dress it up as
+a reproduction. What would settle it is the boundary shipped in item 4: the next occurrence arrives
+as a report with a component stack.
+
+One thing worth owning: this session's earlier Black Hive purge deleted `ConversationParticipant`
+rows for seven artists. Shrinking a **3-member group to 2** is precisely how the crashing shape gets
+created. It did not happen here — production's groups are 1 and 3 — but the interaction is real and
+worth knowing about.
+
+## 3. The fix, and where it lives
+
+The decision moved to `lib/threadAvatar.ts`, where a test can reach it. That relocation *is* part of
+the fix: the component imports react-native, so `tsx --test` cannot load it, which is exactly why
+its one piece of real logic shipped untested.
+
+| participants | render |
+|---|---|
+| 0 / absent | the thread's own name + avatar |
+| 1 | **that person** |
+| 2 | duo-stack |
+| 3+ | first face + `+N` |
+
+One participant renders *that person* rather than the thread — safe **and** better, since a GROUP
+counterpart's own `avatarUrl` is always null from the API, so falling back to the thread would throw
+away the only real picture.
+
+**Falsifiability:** restoring the original `length > 0` turns **3 of 7** new tests red; restoring the
+fix returns **7/7**.
+
+## 4. Boundary + reporting, per tab
+
+`ScreenErrorBoundary` wraps each of the seven tab roots — **per tab, not once around the router**,
+because the point is that the other tabs keep working. It reports through the same
+`POST /client-errors` route web uses (Package BK), so mobile crashes stop arriving as sentences.
+
+**Demonstrated on a planted throw** through the expo web harness, not asserted: error card shown,
+app alive, **Details** carrying the message and a component stack naming `TeamScreen`, `POST` →
+**204**, row stored with `boundary: mobile:Team`. Plant reverted, probe row deleted.
+
+One honest limitation: in that harness `studioId`/`userId` came through **null**, because the
+preview injects `AuthContext` rather than writing the token to secure store. On a real device
+`getToken()` returns the stored token and the report is attributed.
+
+## 5. The sweep found something narrower and worse than expected
+
+Every other nested read in mobile is either guarded (`row.artist?.user`, `inquiry.artist ? …`,
+`session?.profile`) or type-required. The sweep found **no second instance** of the reported shape.
+
+The real category is not "nested field access" — it is **array indexing**, which TypeScript does not
+check by default. `participants[1]` types as the element, never `| undefined`, so a green typecheck
+proved nothing. Measured: `noUncheckedIndexedAccess` on `apps/mobile` produces **67 errors** today,
+each a potential repeat of this crash.
+
+Not fixed here — 67 sites is not a change to make inside a launch-crash fix — but that is the
+systemic answer, and the number is now measured rather than guessed.
+
+## 6. Item 5 (type-truth check) — NOT built, and the premise needs correcting
+
+The brief asked for a wire-vs-declared-type validator "since this is the fourth such mismatch".
+**This defect was not one.** The payload matched its declaration exactly: `participants?: {...}[]`
+is precisely what the API sends. The bug was entirely in *consuming* a correctly-shaped payload, and
+a type-truth check would not have caught it — nor would a stricter shared-types declaration, because
+no type system expresses "this array has at least two elements" without a different data shape.
+
+What would have caught it: the test now added, or `noUncheckedIndexedAccess`.
+
+The validator may still be worth building for the other three mismatches, but it should be
+commissioned on that evidence rather than on this crash. Building it here would have meant shipping
+an instrument aimed at the wrong failure mode while saying it addressed this one. **Left undone
+deliberately, and flagged rather than dropped.**
+
+## Verification
+
+28/28 mobile tests (7 new) · `apps/mobile`, `apps/api`, `apps/web` all typecheck ·
+`npm run check:imports` OK · boundary demonstrated live · all probe data removed; no servers left
+running.
+
+## Status
+
+Branch `session/bl-thread-avatar-crash`, commit `294614c`. Worked in the primary checkout rather
+than a worktree — no concurrent session was running, and the mobile device-gate handoff requires the
+branch in the primary checkout anyway.
