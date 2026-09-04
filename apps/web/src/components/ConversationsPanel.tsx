@@ -1697,7 +1697,16 @@ function ThreadView({
   const [attachments, setAttachments] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
   const [channel, setChannel] = useState<string>('SMS')
-  const [direction, setDirection] = useState<'INBOUND' | 'OUTBOUND'>('OUTBOUND')
+  /*
+   * Staff messages are always OUTBOUND. The composer briefly carried a
+   * 'Reply as' switch that could log a message as INBOUND -- scaffolding
+   * from testing the two-way render, never something studios should have
+   * been offered, and removed on the owner's instruction. The API still
+   * accepts INBOUND on a client thread (it is how a message that arrived
+   * some other way could be logged), so the field is still sent -- it is
+   * required -- just never anything else.
+   */
+  const direction = 'OUTBOUND' as const
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [showTemplates, setShowTemplates] = useState(false)
@@ -4071,11 +4080,10 @@ function ThreadView({
                   >
                     <ChannelDot channel={channel} />
                     <span className="font-bold text-fg">{channelLabel(channel)}</span>
-                    <span className="ml-0.5 font-medium text-fg-muted">
-                      {direction === 'OUTBOUND' ? 'Our reply' : 'Their message'}
-                    </span>
-                    {((channel === 'SMS' && integrationStatus?.sms) || (channel === 'EMAIL' && integrationStatus?.email)) &&
-                      direction === 'OUTBOUND' && <span className="ml-0.5 font-medium text-success">· Sends live</span>}
+                    {((channel === 'SMS' && integrationStatus?.sms) ||
+                      (channel === 'EMAIL' && integrationStatus?.email)) && (
+                      <span className="ml-0.5 font-medium text-success">· Sends live</span>
+                    )}
                   </button>
                   {showChannelModeMenu && (
                     <>
@@ -4084,7 +4092,7 @@ function ThreadView({
                         onClick={() => setShowChannelModeMenu(false)}
                         aria-hidden="true"
                       />
-                      <div className="absolute bottom-full right-0 z-20 mb-2 w-[210px] origin-bottom-right animate-scale-fade-in rounded-[14px] border border-border bg-surface-raised p-2.5 shadow-xl">
+                      <div className="absolute bottom-full right-0 z-20 mb-2 w-[248px] origin-bottom-right animate-scale-fade-in rounded-[14px] border border-border bg-surface-raised p-2.5 shadow-xl">
                         <p className="px-1.5 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-fg-muted">
                           Channel
                         </p>
@@ -4108,36 +4116,19 @@ function ThreadView({
                             >
                               <ChannelDot channel={c} />
                               {channelLabel(c)}
-                              {!available && <span className="ml-auto text-[10.5px]">Not connected</span>}
+                              {/* Names the fix, not just the state. The owner hit
+                                  exactly this: a client WITH an email address, an
+                                  Email row greyed out, and nothing saying it is the
+                                  STUDIO's own mailbox that is missing. */}
+                              {!available && (
+                                <span className="ml-auto whitespace-nowrap text-[10.5px] text-fg-muted">
+                                  Connect in Settings
+                                </span>
+                              )}
                             </button>
                           )
                         })}
 
-                        <div className="my-1.5 h-px bg-border" />
-
-                        <p className="px-1.5 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-fg-muted">
-                          Reply as
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => setDirection('OUTBOUND')}
-                          className={[
-                            'block w-full rounded-lg px-2.5 py-2 text-left text-sm font-medium',
-                            direction === 'OUTBOUND' ? 'bg-accent text-accent-fg' : 'text-fg-secondary hover:bg-surface',
-                          ].join(' ')}
-                        >
-                          Our reply
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDirection('INBOUND')}
-                          className={[
-                            'block w-full rounded-lg px-2.5 py-2 text-left text-sm font-medium',
-                            direction === 'INBOUND' ? 'bg-accent text-accent-fg' : 'text-fg-secondary hover:bg-surface',
-                          ].join(' ')}
-                        >
-                          Their message (log only)
-                        </button>
                       </div>
                     </>
                   )}
