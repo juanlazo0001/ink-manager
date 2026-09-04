@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
+import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { ScreenTitle, TitleAction } from '@/components/ScreenTitle';
 import { PlusIcon } from '@/components/icons';
 import { PhotoViewer } from '@/components/PhotoViewer';
@@ -48,7 +49,7 @@ import { colors, hairline, radius, space, tones, type } from '@/theme';
  * exactly one option. Web's own comment adds the solo-studio case:
  * filtering never narrows anything when there is one person.
  */
-export default function FlashGalleryScreen() {
+function FlashGalleryScreen() {
   const router = useRouter();
   const { session } = useAuth();
   const token = session?.token ?? null;
@@ -321,3 +322,20 @@ const styles = StyleSheet.create({
 
   pressed: { opacity: 0.6 },
 });
+
+/*
+ * The tab's entry point is the BOUNDARY, not the screen.
+ *
+ * One malformed record used to take the whole app down at launch: a list
+ * renders every row, React unmounts the entire tree when nothing catches,
+ * and so a single bad thread cost the person all five tabs. Wrapped per tab
+ * (not once around the router) so the other four keep working, and the
+ * failure is reported rather than merely survived.
+ */
+export default function FlashGalleryScreenRoute() {
+  return (
+    <ScreenErrorBoundary label="Flash">
+      <FlashGalleryScreen />
+    </ScreenErrorBoundary>
+  );
+}

@@ -2,6 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { Avatar, initialsOf } from '@/components/Avatar';
 import { ChannelBadge } from '@/components/ChannelBadge';
+import { threadAvatarLayout, type ThreadAvatarPerson } from '@/lib/threadAvatar';
 import { chat, colors, fonts } from '@/theme';
 
 /**
@@ -28,11 +29,7 @@ import { chat, colors, fonts } from '@/theme';
  * count (`+N`). Showing the second of five faces implies the group is two
  * people; a count says how many it actually is.
  */
-export interface ThreadAvatarPerson {
-  id: string;
-  name: string;
-  avatarUrl: string | null;
-}
+export type { ThreadAvatarPerson };
 
 /** §8: 40 back / 28 front in a list row. §9: 32 / 20 in the header. */
 export const THREAD_AVATAR_LIST = { back: 40, front: 28, box: 44 } as const;
@@ -55,16 +52,32 @@ export function ThreadAvatar({
   scale?: { back: number; front: number; box: number };
   ring?: string;
 }) {
-  const group = !!participants && participants.length > 0;
+  /*
+   * The one piece of real logic here lives in lib/threadAvatar.ts, where a
+   * test can reach it. It shipped wrong precisely because it could not:
+   * the duo-stack reads two participants while the group test required
+   * only one, so a one-participant thread dereferenced undefined and took
+   * the whole conversation list down at launch. See that module.
+   */
+  const layout = threadAvatarLayout(participants);
 
   return (
     <View style={[styles.box, { width: scale.box, height: scale.box }]}>
-      {group ? (
+      {layout.kind === 'single' ? (
+        <Avatar
+          url={layout.person ? layout.person.avatarUrl : avatarUrl}
+          initials={initialsOf(layout.person ? layout.person.name : name)}
+          size={scale.back}
+          ring={ring}
+          style={styles.back}
+          labelStyle={[styles.monogram, { fontSize: scale.back * 0.36 }]}
+        />
+      ) : (
         <>
           {/* First member, top-left. */}
           <Avatar
-            url={participants[0].avatarUrl}
-            initials={initialsOf(participants[0].name)}
+            url={layout.back.avatarUrl}
+            initials={initialsOf(layout.back.name)}
             size={scale.back}
             ring={ring}
             style={styles.back}
@@ -77,7 +90,7 @@ export function ThreadAvatar({
             the channel badge below.
           */}
           <View style={[styles.front, { borderRadius: scale.front, borderColor: chat.surface }]}>
-            {participants.length > 2 ? (
+            {layout.kind === 'overflow' ? (
               <View
                 style={[
                   styles.overflow,
@@ -85,28 +98,19 @@ export function ThreadAvatar({
                 ]}
               >
                 <Text style={[styles.overflowLabel, { fontSize: scale.front * 0.36 }]}>
-                  +{participants.length - 1}
+                  +{layout.count}
                 </Text>
               </View>
             ) : (
               <Avatar
-                url={participants[1].avatarUrl}
-                initials={initialsOf(participants[1].name)}
+                url={layout.front.avatarUrl}
+                initials={initialsOf(layout.front.name)}
                 size={scale.front}
                 labelStyle={[styles.monogram, { fontSize: scale.front * 0.36 }]}
               />
             )}
           </View>
         </>
-      ) : (
-        <Avatar
-          url={avatarUrl}
-          initials={initialsOf(name)}
-          size={scale.back}
-          ring={ring}
-          style={styles.back}
-          labelStyle={[styles.monogram, { fontSize: scale.back * 0.36 }]}
-        />
       )}
 
       {/* §8/§9: the lettered badge rides the composite's bottom-right —

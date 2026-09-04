@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
+import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { Appear } from '@/components/Appear';
 import { ArtistCard } from '@/components/ArtistCard';
 import { Avatar, initialsOf } from '@/components/Avatar';
@@ -38,7 +39,7 @@ type Tab = 'staff' | 'artists';
  * not in it: the API short-circuits every permission check for that role,
  * so an owner row would be a lie. Web states it in a banner; so does this.
  */
-export default function TeamScreen() {
+function TeamScreen() {
   const router = useRouter();
   const { session } = useAuth();
   const token = session?.token ?? null;
@@ -359,3 +360,20 @@ const styles = StyleSheet.create({
   noteText: { ...type.small, color: colors.fgMuted, flex: 1 },
   pressed: { opacity: 0.6 },
 });
+
+/*
+ * The tab's entry point is the BOUNDARY, not the screen.
+ *
+ * One malformed record used to take the whole app down at launch: a list
+ * renders every row, React unmounts the entire tree when nothing catches,
+ * and so a single bad thread cost the person all five tabs. Wrapped per tab
+ * (not once around the router) so the other four keep working, and the
+ * failure is reported rather than merely survived.
+ */
+export default function TeamScreenRoute() {
+  return (
+    <ScreenErrorBoundary label="Team">
+      <TeamScreen />
+    </ScreenErrorBoundary>
+  );
+}

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenShell } from '@/components/ScreenShell';
+import { ScreenErrorBoundary } from '@/components/ScreenErrorBoundary';
 import { ScreenTitle } from '@/components/ScreenTitle';
 import { AppointmentRow } from '@/components/AppointmentRow';
 import { DayStrip } from '@/components/DayStrip';
@@ -40,7 +41,7 @@ const UPCOMING_DAYS = 30;
 
 type Mode = 'day' | 'upcoming';
 
-export default function ScheduleScreen() {
+function ScheduleScreen() {
   const router = useRouter();
   const { session } = useAuth();
   const token = session?.token ?? null;
@@ -344,3 +345,20 @@ const styles = StyleSheet.create({
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
   separator: { height: hairline, backgroundColor: colors.borderSoft, marginLeft: space.lg + 52 + space.md },
 });
+
+/*
+ * The tab's entry point is the BOUNDARY, not the screen.
+ *
+ * One malformed record used to take the whole app down at launch: a list
+ * renders every row, React unmounts the entire tree when nothing catches,
+ * and so a single bad thread cost the person all five tabs. Wrapped per tab
+ * (not once around the router) so the other four keep working, and the
+ * failure is reported rather than merely survived.
+ */
+export default function ScheduleScreenRoute() {
+  return (
+    <ScreenErrorBoundary label="Schedule">
+      <ScheduleScreen />
+    </ScreenErrorBoundary>
+  );
+}
