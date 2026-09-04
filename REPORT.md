@@ -38489,3 +38489,79 @@ straightforward, since with no zoom there is no shifted viewport to get wrong.
 ## Status
 
 Branch `session/bp-input-16px-parity`, commit `a01053c`.
+
+
+# Session BQ — chat: email "unavailable", and the leftover "Reply as"
+
+## 1. Email is gated on the STUDIO's mailbox, not the client's address
+
+The chat composer's channel picker reads `GET /integrations/status`, which reports whether the
+**studio** has a connected integration per channel. It has never consulted the client's email
+address.
+
+Checked production read-only:
+
+| studio | channel | status |
+|---|---|---|
+| Black Hive Ink and Arts | SMS | CONNECTED |
+| Black Hive Ink and Arts | STRIPE | CONNECTED |
+
+There is **no EMAIL row at all**, so `email: false` is the correct answer and greying the row out is
+correct behaviour. **Not a bug** — but the label never said so. It read *"Not connected"*, which
+gives no hint that the missing piece is the studio's own mailbox, so a client who plainly has an
+email address looks like it ought to work.
+
+Now reads **"Connect in Settings"**, which names the fix. The path is **Settings → Integrations →
+Connect Gmail** (OWNER only), with a "Send test email" button once connected. If that button errors
+with *"Email integration isn't available right now"*, the server is missing `GMAIL_CLIENT_ID` /
+`GMAIL_CLIENT_SECRET` — an infrastructure step, not an app one.
+
+The picker widened 210px → 248px, because the longer hint wrapped onto two lines beside
+"Instagram". Measured after: all three hints render at 15px, one line each.
+
+### An inconsistency this exposed — flagged, not guessed at
+
+`SendChannelButton` (Client / Inquiry / Appointment / GiftCard detail) computes
+`emailAvailable = hasEmail` — **purely whether the client has an address, with no integration check
+at all** — while chat requires the integration. One of the two is wrong:
+
+- if chat is right, those four screens offer an Email send that cannot deliver;
+- if they are right, chat hides a channel that would work.
+
+Not changed here, because picking wrongly either hides a working channel or offers one that cannot
+send. It needs a decision, and it is the more consequential of the two findings.
+
+## 2. "Reply as" removed
+
+The composer offered **"Our reply" / "Their message (log only)"** — scaffolding from testing the
+two-way render, never meant for studios. Removed, along with the `direction` state and the
+"Our reply" text on the channel pill.
+
+`direction` is **still sent**, as a constant `'OUTBOUND'`, because the API requires it on client
+threads. Verified against the live payload:
+
+```json
+{"body":"BQ probe …","channel":"SMS","direction":"OUTBOUND"}
+```
+
+The API still *accepts* INBOUND — a direct INBOUND POST returns **201** — so the ability to log a
+message that arrived another way survives; it is simply no longer offered. Worth knowing in case it
+is wanted back for **PHONE**, where logging a call is a real workflow rather than test scaffolding.
+
+## Verification
+
+Driven in a browser against a real dev thread: no "Reply as", no "Their message", "Connect in
+Settings" on all three unconnected channels, hint heights 15px each, and the send path still posts
+the correct payload.
+
+One probe error worth recording: the first two send attempts fired no request at all, and I checked
+why rather than assuming a break — the composer sends by **button, not Enter**, and my locator was
+matching the wrong element. The 400 that the correct click then returned is a pre-existing
+`no_sms_consent` on that dev client, unrelated to this change. The one probe message created was
+deleted.
+
+`npm run check:imports` OK · `apps/web` `tsc -b && vite build` · no servers left running.
+
+## Status
+
+Branch `session/bq-email-channel-replyas`, commit `f2b8d03`.
