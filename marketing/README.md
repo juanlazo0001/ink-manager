@@ -1,6 +1,9 @@
 # Ink Manager — Marketing Site
 
-Static marketing page served at https://inkmanager.app (canonical: www.inkmanager.app)
+Static marketing page served at https://inkmanager.app -- the apex IS the canonical
+host, and every page sets `rel=canonical` to it. `www.inkmanager.app` has no service
+mapped to it at Railway and returns an edge 404 on every path, so do not point
+anything at www without mapping that host first.
 
 - `index.html` — the homepage (self-contained; images in `assets/`)
 - `privacy/index.html`, `terms/index.html` — Ink Manager's own platform-level Privacy

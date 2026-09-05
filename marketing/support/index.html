@@ -6,11 +6,10 @@
 <meta name="robots" content="index, follow" />
 <title>Support — Ink Manager</title>
 <meta name="description" content="Help for tattoo and permanent makeup studios and solo artists using Ink Manager. Contact support, plus answers on getting started, texting clients, client forms, sign-in, and account deletion." />
-<!-- Apex, not www, deliberately: www.inkmanager.app currently serves nothing
-     (Railway edge 404 on every path, homepage included), and this URL is the
-     one going into App Store Connect. The homepage canonical is apex too;
-     privacy/ and terms/ still point at www and are wrong in the same way,
-     but which host is meant to be canonical is an owner/DNS decision. -->
+<!-- Apex, not www: www.inkmanager.app has no service mapped to it and returns
+     an edge 404 on every path, so a www canonical aims crawlers at a dead host.
+     Every page on this site uses the apex for that reason. Verified 2026-09-04;
+     if www is ever mapped at Railway, this is the decision to revisit. -->
 <link rel="canonical" href="https://inkmanager.app/support" />
 <meta name="theme-color" content="#0C0A08" />
 <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png" />
