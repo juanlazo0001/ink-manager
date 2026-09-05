@@ -38565,3 +38565,34 @@ deleted.
 ## Status
 
 Branch `session/bq-email-channel-replyas`, commit `f2b8d03`.
+
+# Marketing: www canonicals closed out
+
+Closes items 2 and 3 of the addendum above, which are now stale where they say
+"open" — this file being append-only, they are closed here rather than edited
+there.
+
+At the owner's direction, `privacy/index.html` and `terms/index.html` now set
+`rel=canonical` to the apex, matching `index.html` and `support/index.html`. All
+four pages agree. `marketing/README.md` line 3, which described `www` as the
+canonical host, is corrected to say the apex is — with the reason, so the claim
+does not quietly rot again. The support page comment that asserted privacy and
+terms were still wrong was replaced rather than left to lie.
+
+The premise was re-verified before the change rather than carried over from four
+days earlier: `www.inkmanager.app` still returns a Railway edge 404 on every path
+(`application/json`, `max-age=5` — no service mapped to the host), while the apex
+serves all four pages 200.
+
+Verified locally against the real `serve` config — `/`, `/privacy`, `/terms`,
+`/support` all 200, each reporting its own apex canonical — then re-verified on
+production after the deploy, all four apex. `/privacy` was re-rendered in a
+browser (title, `h1`, four nav items, zero horizontal overflow) rather than only
+curled.
+
+**Still open, and untouched by this:** whether `www.inkmanager.app` should be
+mapped to the marketing service at Railway at all. That is a DNS/hosting decision,
+not a repo one. If it is ever mapped, these four canonical tags are the thing to
+revisit, and each carries an inline comment saying so.
+
+Commit: `977f9af`.
